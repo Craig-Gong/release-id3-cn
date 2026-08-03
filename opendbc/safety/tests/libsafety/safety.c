@@ -331,7 +331,7 @@ void init_tests(void){
   invalid_steer_req_count = 0;
 
   // assumes autopark on safety mode init to avoid a fault. get rid of that for testing
-  tesla_autopark = false;
+  tesla_summon = false;
 
   ignition_can = false;
   ignition_can_cnt = 0U;

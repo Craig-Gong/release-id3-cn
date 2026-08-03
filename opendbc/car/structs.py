@@ -164,5 +164,14 @@ class CarControlSP:
 
 
 @auto_dataclass
+class TeslaRoadContext:
+  available: bool = auto_field()
+  trafficLightColor: int = auto_field()
+  stopLineDistance: float = auto_field()
+
+
+@auto_dataclass
 class CarStateSP:
   speedLimit: float = auto_field()
+  flags: int = auto_field()
+  teslaRoadContext: TeslaRoadContext = field(default_factory=TeslaRoadContext)

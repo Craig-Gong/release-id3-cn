@@ -5,7 +5,7 @@ import numpy as np
 
 from opendbc.car.lateral import get_max_angle_delta_vm, get_max_angle_vm
 from opendbc.car.tesla.teslacan import get_steer_ctrl_type
-from opendbc.car.tesla.values import CarControllerParams, TeslaSafetyFlags, TeslaFlags, CANBUS
+from opendbc.car.tesla.values import CANBUS, CarControllerParams, STEER_DISENGAGE_THRESHOLD, TeslaSafetyFlags, TeslaFlags
 from opendbc.car.tesla.carcontroller import get_safety_CP
 from opendbc.car.structs import CarParams
 from opendbc.car.vehicle_model import VehicleModel
@@ -19,6 +19,14 @@ from opendbc.sunnypilot.car.tesla.values import TeslaSafetyFlagsSP
 MSG_DAS_steeringControl = 0x488
 MSG_APS_eacMonitor = 0x27d
 MSG_DAS_Control = 0x2b9
+MSG_VCLEFT_SWITCH_STATUS = 0x3C2
+MSG_DAS_BODY_CONTROLS = 0x3E9
+MSG_UI_TRIP_PLANNING = 0x082
+MSG_UI_AUTOPILOT_CONTROL = 0x3FD
+MSG_EPAS3S_SYS_STATUS = 0x370
+MSG_ISA_CHIME_SUPPRESS = 0x399
+OBSERVED_SPEED_WHEEL_IDLE = bytes.fromhex("010000c000000000")
+OBSERVED_BODY_CONTROLS_IDLE = bytes.fromhex("008802000000b026")
 
 
 def round_angle(apply_angle, can_offset=0):
@@ -33,7 +41,10 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
 
   RELAY_MALFUNCTION_ADDRS = {0: (MSG_DAS_steeringControl, MSG_APS_eacMonitor)}
   FWD_BLACKLISTED_ADDRS = {2: [MSG_DAS_steeringControl, MSG_APS_eacMonitor]}
-  TX_MSGS = [[MSG_DAS_steeringControl, 0], [MSG_APS_eacMonitor, 0], [MSG_DAS_Control, 0]]
+  TX_MSGS = [[MSG_DAS_steeringControl, 0], [MSG_APS_eacMonitor, 0], [MSG_DAS_Control, 0],
+             [MSG_VCLEFT_SWITCH_STATUS, CANBUS.vehicle], [MSG_DAS_BODY_CONTROLS, CANBUS.vehicle],
+             [MSG_UI_TRIP_PLANNING, 0], [MSG_UI_AUTOPILOT_CONTROL, 0],
+             [MSG_EPAS3S_SYS_STATUS, 0], [MSG_ISA_CHIME_SUPPRESS, 0]]
 
   STANDSTILL_THRESHOLD = 0.1
   GAS_PRESSED_THRESHOLD = 3
@@ -67,6 +78,7 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
   def setUp(self):
     self.VM = VehicleModel(get_safety_CP())
     self.packer = CANPackerSafety("tesla_model3_party")
+    self.packer_adas = CANPackerSafety("tesla_model3_vehicle")
     self.define = CANDefine("tesla_model3_party")
     self.acc_states = {d: v for v, d in self.define.dv["DAS_control"]["DAS_accState"].items()}
     self.autopark_states = {d: v for v, d in self.define.dv["DI_state"]["DI_autoparkState"].items()}
@@ -89,8 +101,10 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
       self.__class__.cnt_angle_cmd += 1
     return self.packer.make_can_msg_safety("DAS_steeringControl", bus, values)
 
-  def _angle_meas_msg(self, angle: float, hands_on_level: int = 0, eac_status: int = 1, eac_error_code: int = 0):
+  def _angle_meas_msg(self, angle: float, hands_on_level: int = 0, eac_status: int = 1, eac_error_code: int = 0,
+                      torsion_bar_torque: float = 0.0):
     values = {"EPAS3S_internalSAS": angle, "EPAS3S_handsOnLevel": hands_on_level,
+              "EPAS3S_torsionBarTorque": torsion_bar_torque,
               "EPAS3S_eacStatus": eac_status, "EPAS3S_eacErrorCode": eac_error_code,
               "EPAS3S_sysStatusCounter": self.cnt_epas % 16}
     self.__class__.cnt_epas += 1
@@ -116,8 +130,8 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
     return self.packer.make_can_msg_safety("ESP_B", 0, values)
 
   def _user_gas_msg(self, gas):
-    values = {"DI_accelPedalPos": gas}
-    return self.packer.make_can_msg_safety("DI_systemStatus", 0, values)
+    values = {"DI_accelPedalPressed": gas > 0}
+    return self.packer.make_can_msg_safety("DI_speed", 0, values)
 
   def _pcm_status_msg(self, enable, autopark_state=0):
     values = {
@@ -126,7 +140,7 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
     }
     return self.packer.make_can_msg_safety("DI_state", 0, values)
 
-  def _long_control_msg(self, set_speed, acc_state=0, jerk_limits=(0, 0), accel_limits=(0, 0), aeb_event=0, bus=0):
+  def _long_control_msg(self, set_speed, acc_state=0, jerk_limits=(0, 0), accel_limits=(0, 0), aeb_event=0, bus=0, counter=None):
     values = {
       "DAS_setSpeed": set_speed,
       "DAS_accState": acc_state,
@@ -136,7 +150,166 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
       "DAS_accelMin": accel_limits[0],
       "DAS_accelMax": accel_limits[1],
     }
+    if counter is not None:
+      values["DAS_controlCounter"] = counter
     return self.packer.make_can_msg_safety("DAS_control", bus, values)
+
+  @staticmethod
+  def _speed_wheel_msg(right_ticks=0, data=OBSERVED_SPEED_WHEEL_IDLE):
+    payload = bytearray(data)
+    payload[3] = (payload[3] & 0xC0) | (right_ticks & 0x3F)
+    return libsafety_py.make_CANPacket(MSG_VCLEFT_SWITCH_STATUS, CANBUS.vehicle, payload)
+
+  @staticmethod
+  def _body_control_msg(turn_request=0, reason=0, counter=11, data=OBSERVED_BODY_CONTROLS_IDLE):
+    payload = bytearray(data)
+    payload[1] = (payload[1] & 0xFC) | turn_request
+    payload[2] = (payload[2] & 0xE1) | ((reason & 0xF) << 1)
+    payload[6] = (payload[6] & 0x0F) | ((counter & 0xF) << 4)
+    payload[7] = (0xE9 + 0x03 + sum(payload[:7])) & 0xFF
+    return libsafety_py.make_CANPacket(MSG_DAS_BODY_CONTROLS, CANBUS.vehicle, payload)
+
+  def _enable_turn_signal_validation(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.HAS_VEHICLE_BUS | TeslaSafetyFlagsSP.TURN_SIGNAL_VALIDATION)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+
+  def _enable_speed_button_validation(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.HAS_VEHICLE_BUS | TeslaSafetyFlagsSP.SPEED_BUTTON_VALIDATION)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+
+  def _enable_auto_speed_limit(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.HAS_VEHICLE_BUS | TeslaSafetyFlagsSP.AUTO_SPEED_LIMIT)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+
+  def test_turn_signal_validation_requires_flag(self):
+    self.assertFalse(self._tx(self._body_control_msg(1, 8, 12)))
+
+  def test_turn_signal_validation_replays_only_fresh_rx_template(self):
+    self._enable_turn_signal_validation()
+    self.assertFalse(self._tx(self._body_control_msg(1, 8, 12)))
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 11)))
+    self.assertTrue(self._tx(self._body_control_msg(1, 8, 12)))
+    self.assertFalse(self._tx(self._body_control_msg(2, 8, 12)))
+
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 12)))
+    self.assertTrue(self._tx(self._body_control_msg(3, 4, 13)))
+
+  def test_turn_signal_validation_allows_continuous_fresh_same_direction_frames(self):
+    self._enable_turn_signal_validation()
+    for index in range(20):
+      counter = (11 + index) & 0xF
+      self.assertTrue(self._rx(self._body_control_msg(0, 0, counter)))
+      self.assertTrue(self._tx(self._body_control_msg(1, 8, (counter + 1) & 0xF)))
+
+    # Cancellation resets the session and permits the other direction.
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 1)))
+    self.assertTrue(self._tx(self._body_control_msg(3, 4, 2)))
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 2)))
+    self.assertTrue(self._tx(self._body_control_msg(2, 8, 3)))
+
+  def test_turn_signal_validation_times_out_until_cancel(self):
+    self._enable_turn_signal_validation()
+    self.safety.set_timer(100)
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 11)))
+    self.assertTrue(self._tx(self._body_control_msg(1, 8, 12)))
+
+    self.safety.set_timer(12_000_101)
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 12)))
+    self.assertFalse(self._tx(self._body_control_msg(1, 8, 13)))
+
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 13)))
+    self.assertTrue(self._tx(self._body_control_msg(3, 4, 14)))
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 14)))
+    self.assertTrue(self._tx(self._body_control_msg(2, 8, 15)))
+
+  def test_turn_signal_validation_rejects_direction_change_without_cancel(self):
+    self._enable_turn_signal_validation()
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 11)))
+    self.assertTrue(self._tx(self._body_control_msg(1, 8, 12)))
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 12)))
+    self.assertFalse(self._tx(self._body_control_msg(2, 8, 13)))
+
+  def test_turn_signal_validation_has_independent_safety_frame_cap(self):
+    self._enable_turn_signal_validation()
+    for index in range(64):
+      counter = index & 0xF
+      self.assertTrue(self._rx(self._body_control_msg(0, 0, counter)))
+      self.assertTrue(self._tx(self._body_control_msg(1, 8, (counter + 1) & 0xF)))
+
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 0)))
+    self.assertFalse(self._tx(self._body_control_msg(1, 8, 1)))
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 1)))
+    self.assertTrue(self._tx(self._body_control_msg(3, 4, 2)))
+
+  def test_turn_signal_validation_rejects_mutated_fields_and_bad_checksum(self):
+    self._enable_turn_signal_validation()
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 11)))
+    mutated = self._body_control_msg(1, 8, 12)
+    mutated[0].data[4] ^= 1
+    mutated[0].data[7] = (0xE9 + 0x03 + sum(mutated[0].data[i] for i in range(7))) & 0xFF
+    self.assertFalse(self._tx(mutated))
+
+    bad_checksum = self._body_control_msg(1, 8, 12)
+    bad_checksum[0].data[7] ^= 0xFF
+    self.assertFalse(self._tx(bad_checksum))
+
+  def test_turn_signal_validation_rejects_stale_template(self):
+    self._enable_turn_signal_validation()
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 11)))
+    self.safety.set_timer(1_500_001)
+    self.assertFalse(self._tx(self._body_control_msg(1, 8, 12)))
+
+  def test_turn_signal_validation_allows_while_controls_allowed(self):
+    self._enable_turn_signal_validation()
+    self.assertTrue(self._rx(self._body_control_msg(0, 0, 11)))
+    self.safety.set_controls_allowed(True)
+    self.assertTrue(self._tx(self._body_control_msg(1, 8, 12)))
+
+  def test_speed_button_validation_replays_only_fresh_rx_template(self):
+    self._enable_speed_button_validation()
+    self.assertFalse(self._tx(self._speed_wheel_msg(1)))
+    self.assertTrue(self._rx(self._speed_wheel_msg(0)))
+    self.assertTrue(self._tx(self._speed_wheel_msg(1)))
+    self.assertFalse(self._tx(self._speed_wheel_msg(-1)))
+    self.safety.set_timer(250_001)
+    self.assertTrue(self._rx(self._speed_wheel_msg(0)))
+    self.assertTrue(self._tx(self._speed_wheel_msg(-1)))
+    self.safety.set_timer(1_750_002)
+    self.assertFalse(self._tx(self._speed_wheel_msg(1)))
+
+  def test_speed_button_validation_requires_vehicle_bus_flag(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.SPEED_BUTTON_VALIDATION)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+    self.assertTrue(self._rx(self._speed_wheel_msg(0)))
+    self.assertFalse(self._tx(self._speed_wheel_msg(1)))
+
+  def test_speed_button_validation_rejects_other_field_changes(self):
+    self._enable_speed_button_validation()
+    self.assertTrue(self._rx(self._speed_wheel_msg(0)))
+    mutated = self._speed_wheel_msg(1)
+    mutated[0].data[4] ^= 1
+    self.assertFalse(self._tx(mutated))
+
+  def test_speed_button_validation_allows_while_controls_allowed(self):
+    self._enable_speed_button_validation()
+    self.assertTrue(self._rx(self._speed_wheel_msg(0)))
+    self.safety.set_controls_allowed(True)
+    self.assertTrue(self._tx(self._speed_wheel_msg(1)))
+
+  def test_auto_speed_limit_requires_controls_allowed(self):
+    self._enable_auto_speed_limit()
+    self.assertTrue(self._rx(self._speed_wheel_msg(0)))
+    self.assertFalse(self._tx(self._speed_wheel_msg(1)))
+    self.safety.set_controls_allowed(True)
+    self.assertTrue(self._tx(self._speed_wheel_msg(1)))
 
   def _accel_msg(self, accel: float):
     # For common.LongitudinalAccelSafetyTest
@@ -232,6 +405,24 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
           self.assertNotEqual(should_disengage, self.safety.get_controls_allowed())
           self.assertFalse(self.safety.get_steering_disengage_prev())
 
+  def test_steering_wheel_torque_disengage(self):
+    for torsion_bar_torque, should_disengage in (
+      (-STEER_DISENGAGE_THRESHOLD - 0.01, True),
+      (-STEER_DISENGAGE_THRESHOLD, False),
+      (STEER_DISENGAGE_THRESHOLD, False),
+      (STEER_DISENGAGE_THRESHOLD + 0.01, True),
+    ):
+      self.safety.set_controls_allowed(True)
+
+      self.assertTrue(self._rx(self._angle_meas_msg(0, torsion_bar_torque=torsion_bar_torque)))
+      self.assertNotEqual(should_disengage, self.safety.get_controls_allowed())
+      self.assertEqual(should_disengage, self.safety.get_steering_disengage_prev())
+
+      # Should not recover
+      self.assertTrue(self._rx(self._angle_meas_msg(0)))
+      self.assertNotEqual(should_disengage, self.safety.get_controls_allowed())
+      self.assertFalse(self.safety.get_steering_disengage_prev())
+
   def test_autopark_summon_while_enabled(self):
     # We should not respect Autopark that activates while controls are allowed
     self._rx(self._pcm_status_msg(True, 0))
@@ -272,7 +463,7 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
       self.assertEqual(self.LONGITUDINAL, self._tx(self._long_control_msg(0, acc_state=self.acc_states["ACC_ON"])))
 
   def test_steering_control_type(self):
-    # Only angle control is allowed (no LANE_KEEP_ASSIST or EMERGENCY_LANE_KEEP)
+    # Angle control and LANE_KEEP_ASSIST are allowed (no EMERGENCY_LANE_KEEP)
     self.safety.set_controls_allowed(True)
     for steer_control_type in range(4):
       should_tx = steer_control_type in (self.steer_control_types["NONE"],
@@ -283,7 +474,7 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
   def test_stock_lkas_passthrough(self):
     # TODO: make these generic passthrough tests
     no_lkas_msg = self._angle_cmd_msg(0, state=False)
-    no_lkas_msg_cam = self._angle_cmd_msg(0, state=True, bus=2)
+    no_lkas_msg_cam = self._angle_cmd_msg(0, state=self.steer_control_types['NONE'], bus=2)
     lkas_msg_cam = self._angle_cmd_msg(0, state=self.steer_control_types['LANE_KEEP_ASSIST'], bus=2)
 
     # stock system sends no LKAS -> no forwarding, and OP is allowed to TX
@@ -412,6 +603,130 @@ class TestTeslaLongitudinalSafety(TestTeslaSafetyBase):
 
   RELAY_MALFUNCTION_ADDRS = {0: (MSG_DAS_steeringControl, MSG_APS_eacMonitor, MSG_DAS_Control)}
   FWD_BLACKLISTED_ADDRS = {2: [MSG_DAS_steeringControl, MSG_APS_eacMonitor, MSG_DAS_Control]}
+
+  def test_four_finger_requires_python_handoff_decision(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.HAS_VEHICLE_BUS)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+    packer_adas = CANPackerSafety("tesla_model3_vehicle")
+    touch = packer_adas.make_can_msg_safety("UI_status2", CANBUS.vehicle, {"UI_activeTouchPoints": 4})
+    handoff = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                     accel_limits=(0, 0), aeb_event=3, bus=0, counter=3)
+
+    self.assertTrue(self._rx(touch))
+    self.assertEqual(-1, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+    self.assertFalse(self._tx(handoff))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+
+    op_cmd = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                    accel_limits=(0, 0), bus=0, counter=4)
+    self.assertTrue(self._tx(op_cmd))
+    self.assertEqual(-1, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+
+  def test_dynamic_stock_handoff_is_atomic(self):
+    param_sp = TeslaSafetyFlagsSP.DYNAMIC_AUTO_STOCK
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(param_sp)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+    self.assertTrue(self._rx(self._pcm_status_msg(True, 0)))
+    self.safety.set_controls_allowed(True)
+
+    for stock_counter in (3, 6):
+      stock = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                     accel_limits=(0, 0), bus=2, counter=stock_counter)
+      handoff = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                       accel_limits=(0, 0), aeb_event=3, bus=0, counter=stock_counter)
+      self.assertTrue(self._rx(stock))
+      self.assertEqual(-1, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+
+      self.assertFalse(self._tx(handoff))
+      self.assertEqual(0, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+
+      op_counter = (stock_counter + 1) % 8
+      op_cmd = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                      accel_limits=(0, 0), bus=0, counter=op_counter)
+      self.assertTrue(self._tx(op_cmd))
+      self.assertEqual(-1, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+
+  def test_ap_hybrid_uses_atomic_stock_handoff_permission(self):
+    self.assertNotEqual(TeslaSafetyFlagsSP.DYNAMIC_AUTO_STOCK, TeslaSafetyFlagsSP.AP_HYBRID_HANDOFF)
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.AP_HYBRID_HANDOFF)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+
+    stock = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                   accel_limits=(0, 0), bus=2, counter=3)
+    handoff = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                     accel_limits=(0, 0), aeb_event=3, bus=0, counter=3)
+    self.assertTrue(self._rx(stock))
+    self.assertEqual(-1, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+    self.assertFalse(self._tx(handoff))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+
+  def test_ap_hybrid_lateral_handoff_is_atomic(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.AP_HYBRID_LATERAL_HANDOFF)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+    self.safety.set_controls_allowed(True)
+    self.safety.set_controls_allowed_lateral(True)
+
+    stock = self._angle_cmd_msg(0, True, bus=2)
+    handoff = self._angle_cmd_msg(0, 3, bus=0)
+    self.assertTrue(self._rx(stock))
+    self.assertEqual(-1, self.safety.safety_fwd_hook(2, MSG_DAS_steeringControl))
+
+    self.assertFalse(self._tx(handoff))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, MSG_DAS_steeringControl))
+
+    sp_takeover = self._angle_cmd_msg(0, True, bus=0)
+    self.assertTrue(self._tx(sp_takeover))
+    self.assertEqual(-1, self.safety.safety_fwd_hook(2, MSG_DAS_steeringControl))
+
+  def test_rejected_sp_lateral_takeover_keeps_oem_forwarding_open(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.AP_HYBRID_LATERAL_HANDOFF)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+    self.safety.set_controls_allowed(True)
+    self.safety.set_controls_allowed_lateral(True)
+
+    handoff = self._angle_cmd_msg(0, 3, bus=0)
+    self.assertFalse(self._tx(handoff))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, MSG_DAS_steeringControl))
+
+    rejected_takeover = self._angle_cmd_msg(self.STEER_ANGLE_MAX + 10, True, bus=0)
+    self.assertFalse(self._tx(rejected_takeover))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, MSG_DAS_steeringControl))
+
+    safe_inactive_takeover = self._angle_cmd_msg(0, False, bus=0)
+    self.assertTrue(self._tx(safe_inactive_takeover))
+    self.assertEqual(-1, self.safety.safety_fwd_hook(2, MSG_DAS_steeringControl))
+
+  def test_rejected_sp_takeover_keeps_oem_forwarding_open(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.DYNAMIC_AUTO_STOCK)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+
+    handoff = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                     accel_limits=(0, 0), aeb_event=3, bus=0, counter=3)
+    rejected_takeover = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                               accel_limits=(1.0, 1.0), bus=0, counter=4)
+    safe_takeover = self._long_control_msg(50, acc_state=self.acc_states["ACC_ON"],
+                                           accel_limits=(0.0, 0.0), bus=0, counter=4)
+    self.assertFalse(self._tx(handoff))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+
+    self.safety.set_controls_allowed(False)
+    self.assertFalse(self._tx(rejected_takeover))
+    self.assertEqual(0, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
+
+    self.assertTrue(self._tx(safe_takeover))
+    self.assertEqual(-1, self.safety.safety_fwd_hook(2, MSG_DAS_Control))
 
   def test_no_aeb(self):
     for aeb_event in range(4):

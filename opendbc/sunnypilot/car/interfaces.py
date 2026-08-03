@@ -87,6 +87,11 @@ def setup_interfaces(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
   _initialize_custom_longitudinal_tuning(CI, CP, CP_SP, params_dict)
   _initialize_coop_steering(CP, CP_SP, params_dict)
   _initialize_tesla_mads_screen_button(CP, CP_SP, params_dict)
+  _initialize_tesla_dynamic_auto_stock(CP, CP_SP, params_dict)
+  _initialize_tesla_ap_hybrid(CP, CP_SP, params_dict)
+  _initialize_tesla_turn_signal_validation(CP, CP_SP, params_dict)
+  _initialize_tesla_speed_button_validation(CP, CP_SP, params_dict)
+  _initialize_tesla_auto_speed_limit(CP, CP_SP, params_dict)
   _initialize_radar_tracks(CP, CP_SP, can_recv, can_send)
   _initialize_stop_and_go(CP, CP_SP, params_dict)
   _initialize_toyota(CP, CP_SP, params_dict)
@@ -117,7 +122,7 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
 def _initialize_tesla_mads_screen_button(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
                                          params_dict: dict[str, str]) -> None:
   if CP.brand == 'tesla' and CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
-    selection = int(params_dict.get("TeslaMadsScreenButton", MadsScreenButtonType.OFF))
+    selection = int(params_dict.get("TeslaMadsScreenButton", MadsScreenButtonType.THREE_FINGER))
     if selection == MadsScreenButtonType.THREE_FINGER:
       CP_SP.flags |= TeslaFlagsSP.MADS_SCREEN_BUTTON_3_FINGER.value
       CP_SP.safetyParam |= TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_3_FINGER
@@ -127,6 +132,48 @@ def _initialize_tesla_mads_screen_button(CP: structs.CarParams, CP_SP: structs.C
     elif selection == MadsScreenButtonType.FIVE_FINGER:
       CP_SP.flags |= TeslaFlagsSP.MADS_SCREEN_BUTTON_5_FINGER.value
       CP_SP.safetyParam |= TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_5_FINGER
+
+
+def _initialize_tesla_dynamic_auto_stock(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
+                                         params_dict: dict[str, str]) -> None:
+  if CP.brand == 'tesla' and CP.openpilotLongitudinalControl:
+    dynamic_auto_stock = int(params_dict.get("DynamicAutoStock", 0)) == 1
+    if dynamic_auto_stock:
+      CP_SP.flags |= TeslaFlagsSP.DYNAMIC_AUTO_STOCK.value
+      CP_SP.safetyParam |= TeslaSafetyFlagsSP.DYNAMIC_AUTO_STOCK
+
+
+def _initialize_tesla_ap_hybrid(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
+                                params_dict: dict[str, str]) -> None:
+  if CP.brand == 'tesla' and CP.openpilotLongitudinalControl and int(params_dict.get("TeslaApHybrid", 0)) == 1:
+    CP_SP.flags |= TeslaFlagsSP.AP_HYBRID.value
+    if int(params_dict.get("TeslaDynamicApLongitudinal", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.DYNAMIC_AP_LONGITUDINAL.value
+    CP_SP.safetyParam |= TeslaSafetyFlagsSP.AP_HYBRID_HANDOFF | TeslaSafetyFlagsSP.AP_HYBRID_LATERAL_HANDOFF
+
+
+def _initialize_tesla_turn_signal_validation(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
+                                             params_dict: dict[str, str]) -> None:
+  if (CP.brand == 'tesla' and CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS and
+      int(params_dict.get("TeslaTurnSignalValidation", 0)) == 1):
+    CP_SP.flags |= TeslaFlagsSP.TURN_SIGNAL_VALIDATION.value
+    CP_SP.safetyParam |= TeslaSafetyFlagsSP.TURN_SIGNAL_VALIDATION
+
+
+def _initialize_tesla_speed_button_validation(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
+                                              params_dict: dict[str, str]) -> None:
+  if (CP.brand == 'tesla' and CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS and
+      int(params_dict.get("TeslaSpeedButtonValidation", 0)) == 1):
+    CP_SP.flags |= TeslaFlagsSP.SPEED_BUTTON_VALIDATION.value
+    CP_SP.safetyParam |= TeslaSafetyFlagsSP.SPEED_BUTTON_VALIDATION
+
+
+def _initialize_tesla_auto_speed_limit(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
+                                       params_dict: dict[str, str]) -> None:
+  if (CP.brand == 'tesla' and CP.openpilotLongitudinalControl and
+      CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS and int(params_dict.get("TeslaAutoSpeedLimit", 0)) == 1):
+    CP_SP.flags |= TeslaFlagsSP.AUTO_SPEED_LIMIT.value
+    CP_SP.safetyParam |= TeslaSafetyFlagsSP.AUTO_SPEED_LIMIT
 
 
 def _initialize_radar_tracks(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
