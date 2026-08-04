@@ -836,7 +836,6 @@ class TestTeslaVehicleBusSafety(TestTeslaSafetyBase):
     """Configured finger count must match received touch-point count to register a MADS button press."""
     configs = [
       (TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_3_FINGER, 3),
-      (TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_4_FINGER, 4),
       (TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_5_FINGER, 5),
     ]
     for config_flag, config_count in configs:

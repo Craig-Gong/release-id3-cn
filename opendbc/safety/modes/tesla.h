@@ -591,7 +591,6 @@ static safety_config tesla_init(uint16_t param) {
 
   const uint16_t TESLA_PARAM_SP_VEHICLE_BUS = 1;
   const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER = 2;
-  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_4_FINGER = 4;
   const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_5_FINGER = 8;
   const uint16_t TESLA_PARAM_SP_DYNAMIC_AUTO_STOCK = 16;
   const uint16_t TESLA_PARAM_SP_AP_HYBRID_HANDOFF = 64;
@@ -604,8 +603,6 @@ static safety_config tesla_init(uint16_t param) {
 
   if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER)) {
     tesla_mads_screen_button_fingers = 3U;
-  } else if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_4_FINGER)) {
-    tesla_mads_screen_button_fingers = 4U;
   } else if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_5_FINGER)) {
     tesla_mads_screen_button_fingers = 5U;
   } else {

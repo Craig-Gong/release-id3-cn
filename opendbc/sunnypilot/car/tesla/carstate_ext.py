@@ -72,6 +72,7 @@ class CarStateExt:
     self.tesla_ap_hybrid_active = False
     self.tesla_stock_lateral_active = False
     self.prev_touch_points_for_long = 0
+    self._touch_longitudinal_switch_enabled = True
     self._dyn_enter_frames = 0
     self._dyn_exit_frames = 0
     self._dyn_cooldown_frames = 0
@@ -203,6 +204,7 @@ class CarStateExt:
       self._dyn_curve_to_sp_enabled = p.get_bool("DynamicAutoStockCurveToSP")
       self._dyn_high = max(0, min(155, int(p.get("DynamicAutoStockSpeedKph", return_default=True) or 80)))
       self._dyn_low = max(0, min(155, int(p.get("DynamicAutoStockSpeedLowKph", return_default=True) or 70)))
+      self._touch_longitudinal_switch_enabled = p.get_bool("TeslaTouchLongitudinalSwitch")
     except Exception:
       self._dyn_enabled = False
       self._ap_hybrid_enabled = False
@@ -211,6 +213,7 @@ class CarStateExt:
       self._dyn_curve_to_sp_enabled = True
       self._dyn_high = 80
       self._dyn_low = 70
+      self._touch_longitudinal_switch_enabled = True
     self._dyn_high = (self._dyn_high // 5) * 5
     self._dyn_low = (self._dyn_low // 5) * 5
     if self._dyn_high == 0:
@@ -697,8 +700,6 @@ class CarStateExt:
       finger_count = None
       if self.CP_SP.flags & TeslaFlagsSP.MADS_SCREEN_BUTTON_3_FINGER:
         finger_count = 3
-      elif self.CP_SP.flags & TeslaFlagsSP.MADS_SCREEN_BUTTON_4_FINGER:
-        finger_count = 4
       elif self.CP_SP.flags & TeslaFlagsSP.MADS_SCREEN_BUTTON_5_FINGER:
         finger_count = 5
 
@@ -710,7 +711,8 @@ class CarStateExt:
 
       prev_touch_long = self.prev_touch_points_for_long
       self.prev_touch_points_for_long = self.active_touch_points
-      if not ap_hybrid_session_active and prev_touch_long != 4 and self.active_touch_points == 4:
+      if (self._touch_longitudinal_switch_enabled and not ap_hybrid_session_active and
+          prev_touch_long != 4 and self.active_touch_points == 4):
         self._toggle_stock_longitudinal_from_touch(ret, speed_kph)
 
     self._update_dynamic_manual_override(ret.cruiseState.enabled)

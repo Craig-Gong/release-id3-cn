@@ -123,12 +123,11 @@ def _initialize_tesla_mads_screen_button(CP: structs.CarParams, CP_SP: structs.C
                                          params_dict: dict[str, str]) -> None:
   if CP.brand == 'tesla' and CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
     selection = int(params_dict.get("TeslaMadsScreenButton", MadsScreenButtonType.THREE_FINGER))
+    if selection == 3:  # migrate legacy 5-finger value from when 4-finger option existed
+      selection = MadsScreenButtonType.FIVE_FINGER
     if selection == MadsScreenButtonType.THREE_FINGER:
       CP_SP.flags |= TeslaFlagsSP.MADS_SCREEN_BUTTON_3_FINGER.value
       CP_SP.safetyParam |= TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_3_FINGER
-    elif selection == MadsScreenButtonType.FOUR_FINGER:
-      CP_SP.flags |= TeslaFlagsSP.MADS_SCREEN_BUTTON_4_FINGER.value
-      CP_SP.safetyParam |= TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_4_FINGER
     elif selection == MadsScreenButtonType.FIVE_FINGER:
       CP_SP.flags |= TeslaFlagsSP.MADS_SCREEN_BUTTON_5_FINGER.value
       CP_SP.safetyParam |= TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_5_FINGER

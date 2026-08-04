@@ -11,7 +11,6 @@ class TeslaFlagsSP(IntFlag):
   HAS_VEHICLE_BUS = 1  # Multi-finger infotainment press signal is present on the VEHICLE bus with the deprecated Tesla harness installed
   COOP_STEERING = 2  # Coop steering
   MADS_SCREEN_BUTTON_3_FINGER = 4
-  MADS_SCREEN_BUTTON_4_FINGER = 8
   MADS_SCREEN_BUTTON_5_FINGER = 16
   STOCK_LONGITUDINAL_ACTIVE = 32  # Runtime toggle: 4-finger touch switches to stock (OEM) longitudinal control
   DYNAMIC_AUTO_STOCK = 64
@@ -30,14 +29,12 @@ class TeslaFlagsSP(IntFlag):
 class MadsScreenButtonType:
   OFF = 0
   THREE_FINGER = 1
-  FOUR_FINGER = 2
-  FIVE_FINGER = 3
+  FIVE_FINGER = 2
 
 
 class TeslaSafetyFlagsSP:
   HAS_VEHICLE_BUS = 1
   MADS_SCREEN_BUTTON_3_FINGER = 2
-  MADS_SCREEN_BUTTON_4_FINGER = 4
   MADS_SCREEN_BUTTON_5_FINGER = 8
   DYNAMIC_AUTO_STOCK = 16
   AP_HYBRID_HANDOFF = 64
