@@ -67,6 +67,29 @@ BO_ 568 UI_driverAssistMapData: 8 UI
  SG_ UI_pmmEnabled : 50|1@1+ (1,0) [0|1] "" DAS
  SG_ UI_scaEnabled : 51|1@1+ (1,0) [0|1] "" DAS
 
+BO_ 521 DAS_longControl: 8 DAS
+ SG_ DAS_longControlStack M : 61|3@1+ (1,0) [0|7] "" UI
+ SG_ DAS_longControlChecksum : 0|8@1+ (1,0) [0|255] "" UI
+ SG_ DAS_longControlCounter : 8|3@1+ (1,0) [0|7] "" UI
+ SG_ DAS_gearRequest : 11|2@1+ (1,0) [0|3] "" UI
+ SG_ DAS_torqueProfiler_accelMinPed m2 : 14|9@1+ (0.04,-15) [-15|5.44] "m/s2" UI
+ SG_ DAS_torqueProfiler_accelMaxPed m2 : 23|9@1+ (0.04,-15) [-15|5.44] "m/s2" UI
+ SG_ DAS_torqueProfiler_targetSpeedPed m2 : 32|12@1+ (0.1,0) [0|409.5] "kph" UI
+ SG_ DAS_torqueProfiler_jerkMinPed m2 : 44|9@1+ (0.03,-15.232) [-15.232|0.098] "m/s3" UI
+ SG_ DAS_torqueProfiler_jerkMaxPed m2 : 53|8@1+ (0.059,0) [0|15.045] "m/s3" UI
+ SG_ DAS_velocityProfile_accelFwd_t0 m3 : 13|11@1- (0.012,-0.216) [-12.504|12.06] "m/s2" UI
+ SG_ DAS_velocityProfile_jerkFwd_t0t1 m3 : 24|8@1- (0.12,0) [-15.36|15.24] "m/s3" UI
+ SG_ DAS_velocityProfile_futureTargetSpeedFwd m3 : 32|12@1- (0.08,80.08) [-83.76|243.84] "kph" UI
+ SG_ DAS_velocityProfile_jerkFwd_t1t2 m3 : 44|8@1- (0.12,0) [-15.36|15.24] "m/s3" UI
+ SG_ DAS_velocityProfile_maxAllowedTargetErrorReg m3 : 52|6@1- (0.1,1.1) [-2.1|4.2] "kph" UI
+ SG_ DAS_velocityProfile_calcDelay m3 : 58|3@1+ (0.0066666667,0) [0|0.046666667] "s" UI
+ SG_ DAS_aebControl_active m4 : 16|2@1+ (1,0) [0|3] "" UI
+ SG_ DAS_aebControl_targetAccelDis m4 : 18|11@1- (0.01,-7.5) [-17.74|2.73] "m/s2" UI
+ SG_ DAS_pedalControl_accelPedalPos m5 : 16|12@1+ (0.025,0) [0|102.375] "%" UI
+ SG_ DAS_pedalControl_brakeTorqueCommand m5 : 32|13@1+ (3.5,0) [0|28668.5] "Nm" UI
+ SG_ DAS_torqueControl_sysTorqueCommandFwd m6 : 16|15@1- (2,0) [-32768|32766] "Nm" UI
+ SG_ DAS_torqueControl_standstillRequest m6 : 32|1@1+ (1,0) [0|1] "" UI
+
 BO_ 586 DAS_visualDebug: 8 DAS
  SG_ DAS_autosteerVehiclesUsage : 4|2@1+ (1,0) [0|3] "" UI
  SG_ DAS_autosteerHPPUsage : 6|2@1+ (1,0) [0|3] "" UI
@@ -207,6 +230,19 @@ BO_ 536 UI_driverAssistRoadSign: 8 UI
  SG_ UI_roadSignCounter : 52|4@1+ (1,0) [0|15] "" DAS
  SG_ UI_roadSignChecksum : 56|8@1+ (1,0) [0|255] "" DAS
 
+BO_ 574 PARK_oocStatus: 8 APP
+ SG_ PARK_oocDistance : 0|9@1+ (1,0) [0|511] "cm" UI
+ SG_ PARK_oocConfidence : 9|7@1+ (1,0) [0|127] "" UI
+ SG_ PARK_oocDirectEchoOnly : 16|1@1+ (1,0) [0|1] "" UI
+ SG_ PARK_oocVehicleX : 17|7@1+ (4,-114) [-114|394] "cm" UI
+ SG_ PARK_oocVehicleY : 24|7@1+ (2,-128) [-128|126] "cm" UI
+ SG_ PARK_oocCollisionSide : 31|3@1+ (1,0) [0|7] "" UI
+ SG_ PARK_oocUntrackedTime : 34|6@1+ (0.1,0) [0|6.3] "s" UI
+ SG_ PARK_oocHeight : 40|2@1+ (1,0) [0|3] "" UI
+ SG_ PARK_oocOffCourse : 42|10@1+ (1,-512) [-512|511] "" UI
+ SG_ PARK_oocStatusCounter : 52|4@1+ (1,0) [0|15] "" UI
+ SG_ PARK_oocStatusChecksum : 56|8@1+ (1,0) [0|255] "" UI
+
 BO_ 665 DAS_integratedSafetyFront: 8 DAS
  SG_ DAS_safetyFrontChecksum : 0|8@1+ (1,0) [0|255] "" DAS
  SG_ DAS_safetyFrontCounter : 8|4@1+ (1,0) [0|15] "" DAS
@@ -225,6 +261,25 @@ BO_ 665 DAS_integratedSafetyFront: 8 DAS
  SG_ DAS_predictedImpactOvrlapFront : 56|3@1+ (12.5,0) [0|87.5] "%" DAS
  SG_ DAS_predictedImpactOvrlapFrontQF : 59|1@1+ (1,0) [0|1] "" DAS
  SG_ DAS_idfEnableFlag : 60|1@1+ (1,0) [0|1] "" DAS
+
+BO_ 905 DAS_status2: 8 DAS
+ SG_ DAS_accSpeedLimit : 0|10@1+ (0.4,0) [0|204.6] "mph" UI
+ SG_ DAS_pmmObstacleSeverity : 10|3@1+ (1,0) [0|7] "" UI
+ SG_ DAS_pmmLoggingRequest : 13|1@1+ (1,0) [0|1] "" UI
+ SG_ DAS_activationFailureStatus : 14|2@1+ (1,0) [0|2] "" UI
+ SG_ DAS_pmmUltrasonicsFaultReason : 16|3@1+ (1,0) [0|4] "" UI
+ SG_ DAS_pmmRadarFaultReason : 19|2@1+ (1,0) [0|2] "" UI
+ SG_ DAS_pmmSysFaultReason : 21|3@1+ (1,0) [0|7] "" UI
+ SG_ DAS_pmmCameraFaultReason : 24|2@1+ (1,0) [0|2] "" UI
+ SG_ DAS_ACC_report : 26|5@1+ (1,0) [0|24] "" UI
+ SG_ DAS_lssState2 : 31|3@1+ (1,0) [0|7] "" UI
+ SG_ DAS_radarTelemetry : 34|2@1+ (1,0) [0|2] "" UI
+ SG_ DAS_robState : 36|2@1+ (1,0) [0|3] "" UI
+ SG_ DAS_driverInteractionLevel : 38|2@1+ (1,0) [0|2] "" UI
+ SG_ DAS_ppOffsetDesiredRamp : 40|8@1+ (0.01,-1.28) [-1.28|1.27] "m" UI
+ SG_ DAS_longCollisionWarning : 48|4@1+ (1,0) [0|15] "" UI
+ SG_ DAS_status2Counter : 52|4@1+ (1,0) [0|15] "" UI
+ SG_ DAS_status2Checksum : 56|8@1+ (1,0) [0|255] "" UI
 
 BO_ 921 DAS_statusCH: 8 DAS
  SG_ DAS_autopilotState : 0|4@1+ (1,0) [0|15] "" DAS
@@ -269,11 +324,11 @@ BO_ 923 DAS_status: 8 DAS
  SG_ DAS_autoParked : 25|1@1+ (1,0) [0|1] "" DAS
  SG_ DAS_autoparkActive : 26|1@1+ (1,0) [0|1] "" DAS
  SG_ DAS_summonFwdLeashReached : 27|1@1+ (1,0) [0|1] "" DAS
- SG_ DAS_summonRvsLeashReached : 28|1@1+ (1,0) [0|1] "" DAS
- SG_ DAS_lssState : 29|3@1+ (1,0) [0|7] "" DAS
- SG_ DAS_sideCollisionAvoid : 32|2@1+ (1,0) [0|3] "" DAS
- SG_ DAS_sideCollisionWarning : 34|2@1+ (1,0) [0|3] "" DAS
- SG_ DAS_sideCollisionInhibit : 36|1@1+ (1,0) [0|1] "" DAS
+ SG_ DAS_summonRvsLeashReached : 29|1@1+ (1,0) [0|1] "" DAS
+ SG_ DAS_sideCollisionAvoid : 30|2@1+ (1,0) [0|3] "" DAS
+ SG_ DAS_sideCollisionWarning : 32|2@1+ (1,0) [0|3] "" DAS
+ SG_ DAS_sideCollisionInhibit : 34|1@1+ (1,0) [0|1] "" DAS
+ SG_ DAS_csaState : 35|2@1+ (1,0) [0|3] "" DAS
  SG_ DAS_laneDepartureWarning : 37|3@1+ (1,0) [0|7] "" DAS
  SG_ DAS_fleetSpeedState : 40|2@1+ (1,0) [0|3] "" DAS
  SG_ DAS_autopilotHandsOnState : 42|4@1+ (1,0) [0|15] "" DAS
@@ -299,6 +354,8 @@ BO_ 1024 APP_pedestrianDetection: 8 APP
  SG_ APP_closestPedestrian3dY : 43|6@1- (0.4,0) [-12.8|12.4] "m" DAS
 
 VAL_ 568 UI_mapSpeedUnits 0 "MPH" 1 "KPH" ;
+VAL_ 521 DAS_longControlStack 0 "NONE" 1 "RESERVED" 2 "TORQUE_PROFILER" 3 "VELOCITY_PROFILE" 4 "AEB_CONTROL" 5 "PEDAL_CONTROL" 6 "TORQUE_CONTROL" 7 "SNA" ;
+VAL_ 521 DAS_aebControl_active 0 "INACTIVE" 1 "STANDBY" 2 "ACTIVE" 3 "SNA" ;
 VAL_ 568 UI_roadClass 0 "UNKNOWN_INVALID_SNA" 1 "CLASS_1_MAJOR" 2 "CLASS_2" 3 "CLASS_3" 4 "CLASS_4" 5 "CLASS_5" 6 "CLASS_6_MINOR" ;
 VAL_ 568 UI_mapSpeedLimitType 1 "REGULAR" 2 "ADVISORY" 3 "DEPENDENT" 4 "BUMPS" 7 "UNKNOWN_SNA" ;
 VAL_ 586 DAS_autosteerNavigationUsage 0 "REJECTED_UNAVAILABLE" 1 "AVAILABLE" 2 "FUSED" 3 "BLACKLISTED" ;
@@ -325,3 +382,8 @@ VAL_ 778 DAS_roadSignId 0 "STOP_SIGN" 1 "TRAFFIC_LIGHT" 255 "SNA" ;
 VAL_ 778 DAS_roadSignSource 0 "NONE" 1 "NAV" 2 "VISION" ;
 VAL_ 778 DAS_roadSignArrow 0 "CIRCLE" 1 "LEFT" 2 "RIGHT" 3 "STRAIGHT" 4 "UNKNOWN" ;
 VAL_ 778 DAS_roadSignOrientation 0 "UNKNOWN" 1 "VERTICAL_3_LIGHT" 2 "HORIZONTAL_3_LIGHT" ;
+VAL_ 574 PARK_oocDistance 500 "NO_OBJ_COLLISION" 501 "NOT_INITIALIZED" 511 "SNA" ;
+VAL_ 574 PARK_oocConfidence 0 "NO_CONFIDENCE" 127 "SNA" ;
+VAL_ 574 PARK_oocVehicleX 394 "UNKNOWN" ;
+VAL_ 574 PARK_oocVehicleY 126 "UNKNOWN" ;
+VAL_ 574 PARK_oocCollisionSide 0 "NONE" 1 "RIGHT" 2 "LEFT" 3 "FRONT" 4 "REAR" 5 "UNKNOWN" 7 "SNA" ;

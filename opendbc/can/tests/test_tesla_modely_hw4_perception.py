@@ -129,3 +129,61 @@ def test_hw4_perception_dbc_decodes_multiplexed_road_sign_groups():
   assert parser.vl["UI_driverAssistRoadSign"]["UI_roadSign"] == 2
   assert parser.vl["UI_driverAssistRoadSign"]["UI_trafficLightStopLineDist"] == 30.0
   assert parser.vl["UI_driverAssistRoadSign"]["UI_trafficLightStopLineConf"] == 90
+
+
+def test_hw4_perception_dbc_decodes_long_control_muxes():
+  packer = CANPacker(DBC)
+  parser = CANParser(DBC, [("DAS_longControl", float("nan"))], 2)
+  frames = [
+    packer.make_can_msg("DAS_longControl", 2, {
+      "DAS_longControlStack": 2,
+      "DAS_torqueProfiler_accelMinPed": -3.0,
+      "DAS_torqueProfiler_targetSpeedPed": 80.0,
+    }),
+    packer.make_can_msg("DAS_longControl", 2, {
+      "DAS_longControlStack": 4,
+      "DAS_aebControl_active": 2,
+      "DAS_aebControl_targetAccelDis": -3.0,
+    }),
+  ]
+  parser.update([(1_000_000_000, frames)])
+
+  assert parser.vl_all["DAS_longControl"]["DAS_longControlStack"] == [2.0, 4.0]
+  assert parser.vl_all["DAS_longControl"]["DAS_torqueProfiler_targetSpeedPed"][0] == 80.0
+  assert parser.vl_all["DAS_longControl"]["DAS_aebControl_active"][1] == 2.0
+  assert parser.vl_all["DAS_longControl"]["DAS_aebControl_targetAccelDis"][1] == -3.0
+
+
+def test_hw4_perception_dbc_decodes_parking_and_party_safety_status():
+  packer = CANPacker(DBC)
+  parser = CANParser(DBC, [
+    ("PARK_oocStatus", float("nan")),
+    ("DAS_status2", float("nan")),
+    ("DAS_status", float("nan")),
+  ], 0)
+  frames = [
+    packer.make_can_msg("PARK_oocStatus", 0, {
+      "PARK_oocDistance": 180,
+      "PARK_oocConfidence": 90,
+      "PARK_oocVehicleX": 50,
+      "PARK_oocVehicleY": -20,
+      "PARK_oocCollisionSide": 1,
+    }),
+    packer.make_can_msg("DAS_status2", 0, {
+      "DAS_pmmObstacleSeverity": 3,
+      "DAS_longCollisionWarning": 2,
+    }),
+    packer.make_can_msg("DAS_status", 0, {
+      "DAS_sideCollisionAvoid": 2,
+      "DAS_sideCollisionWarning": 1,
+      "DAS_sideCollisionInhibit": 1,
+    }),
+  ]
+  parser.update([(1_000_000_000, frames)])
+
+  assert parser.vl["PARK_oocStatus"]["PARK_oocDistance"] == 180
+  assert parser.vl["PARK_oocStatus"]["PARK_oocVehicleY"] == -20
+  assert parser.vl["DAS_status2"]["DAS_pmmObstacleSeverity"] == 3
+  assert parser.vl["DAS_status"]["DAS_sideCollisionAvoid"] == 2
+  assert parser.vl["DAS_status"]["DAS_sideCollisionWarning"] == 1
+  assert parser.vl["DAS_status"]["DAS_sideCollisionInhibit"] == 1
