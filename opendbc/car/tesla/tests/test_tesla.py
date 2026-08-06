@@ -631,7 +631,7 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
       car_state._update_ap_dynamic_longitudinal(ret, 60.0, 3)
     self.assertEqual(TeslaLongitudinalSource.sp, car_state.tesla_longitudinal_source)
 
-  def test_dynamic_ap_uses_tesla_lateral_above_threshold_and_sp_for_override(self):
+  def test_dynamic_ap_latches_sp_lateral_after_driver_override(self):
     car_state = self._override_state(TeslaLongitudinalSource.sp)
     car_state._ap_hybrid_enabled = True
     car_state._ap_dynamic_long_enabled = True
@@ -652,11 +652,12 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
     ret.steeringTorque = 0.6
     self.assertTrue(car_state._update_ap_hybrid(ret, 3, 90.0, status_counter=3))
     self.assertFalse(car_state.tesla_stock_lateral_active)
+    self.assertTrue(car_state._ap_driver_lateral_takeover)
 
     ret.steeringTorque = 0.0
     for counter in range(3, 103):
       self.assertTrue(car_state._update_ap_hybrid(ret, 3, 90.0, status_counter=counter % 16))
-    self.assertTrue(car_state.tesla_stock_lateral_active)
+    self.assertFalse(car_state.tesla_stock_lateral_active)
 
     ret.leftBlinker = True
     self.assertTrue(car_state._update_ap_hybrid(ret, 3, 90.0, status_counter=7))

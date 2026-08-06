@@ -70,6 +70,7 @@ class CarStateExt:
     self.active_touch_points = 0
     self.tesla_stock_longitudinal_active = False
     self.tesla_ap_hybrid_active = False
+    self.tesla_autopilot_active = False
     self.tesla_stock_lateral_active = False
     self.prev_touch_points_for_long = 0
     self._touch_longitudinal_switch_enabled = True
@@ -137,6 +138,7 @@ class CarStateExt:
     self._ap_dynamic_to_sp_frames = 0
     self._ap_dynamic_cooldown_frames = 0
     self._ap_lateral_resume_frames = 0
+    self._ap_driver_lateral_takeover = False
     self._oem_auto_lane_change_state = 0
     self._ap_lane_change_hold_logged = False
 
@@ -294,7 +296,12 @@ class CarStateExt:
       self._log_dynamic_state("ap_dynamic_enter_sp", ret, speed_kph, autopilot_state=autopilot_state)
 
   def _ap_lateral_override_active(self, ret: structs.CarState) -> bool:
-    return (abs(float(getattr(ret, "steeringTorque", 0.0))) >= AP_DYNAMIC_LATERAL_OVERRIDE_TORQUE or
+    if abs(float(getattr(ret, "steeringTorque", 0.0))) >= AP_DYNAMIC_LATERAL_OVERRIDE_TORQUE:
+      # Driver intent transfers lateral control to SP for the rest of this AP
+      # session. Do not bounce back to OEM one second after the wheel is
+      # released; repeated ownership edges can make AP request takeover.
+      self._ap_driver_lateral_takeover = True
+    return (self._ap_driver_lateral_takeover or
             bool(getattr(ret, "leftBlinker", False)) or bool(getattr(ret, "rightBlinker", False)) or
             bool(getattr(self, "_lane_change_active", False)))
 
@@ -306,7 +313,7 @@ class CarStateExt:
       self._ap_lateral_resume_frames = 0
       if self.tesla_stock_lateral_active:
         self.tesla_stock_lateral_active = False
-        if abs(float(getattr(ret, "steeringTorque", 0.0))) >= AP_DYNAMIC_LATERAL_OVERRIDE_TORQUE:
+        if self._ap_driver_lateral_takeover:
           reason = "driver_override"
         elif bool(getattr(ret, "leftBlinker", False)) or bool(getattr(ret, "rightBlinker", False)):
           reason = "blinker"
@@ -383,6 +390,7 @@ class CarStateExt:
         self.tesla_ap_hybrid_active = True
         initial_source = TeslaLongitudinalSource.sp if self._ap_dynamic_long_enabled else TeslaLongitudinalSource.apHybridStock
         self._set_longitudinal_source(initial_source)
+        self._ap_driver_lateral_takeover = False
         self.tesla_stock_lateral_active = (self._ap_dynamic_long_enabled and
                                             initial_source == TeslaLongitudinalSource.apHybridStock and
                                             not self._ap_lateral_override_active(ret))
@@ -440,6 +448,7 @@ class CarStateExt:
       self._ap_dynamic_to_sp_frames = 0
       self._ap_dynamic_cooldown_frames = 0
       self._ap_lateral_resume_frames = 0
+      self._ap_driver_lateral_takeover = False
       self._dyn_enter_frames = 0
       self._dyn_exit_frames = 0
       self._dyn_cooldown_frames = 200

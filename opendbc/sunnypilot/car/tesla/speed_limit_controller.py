@@ -84,6 +84,12 @@ class TeslaSpeedLimitController:
 
   def update(self, CC, CS, now_nanos: int) -> list[CanData]:
     manual_changed, resume_changed = self._sync_manual_counters(CS)
+    # Tesla AP owns the steering-wheel cruise controls while it is active.
+    # Injecting a synthetic 0x3C2 speed tick in this state can make the OEM
+    # controller abort the AP/ACC session.
+    if getattr(CS, "tesla_autopilot_active", False):
+      self._reset(clear_manual_override=False)
+      return []
     if not self.configured or not CC.enabled or CC.cruiseControl.cancel or not CS.out.cruiseState.enabled:
       self._reset(clear_manual_override=True)
       return []

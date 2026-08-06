@@ -168,6 +168,9 @@ class CarState(CarStateBase, CarStateExt):
     lkas_ctrl_type = get_steer_ctrl_type(self.CP.flags, 2)
     ret.stockLkas = cp_ap_party.vl["DAS_steeringControl"]["DAS_steeringControlType"] == lkas_ctrl_type  # LANE_KEEP_ASSIST
     autopilot_state = int(cp_ap_party.vl["DAS_status"]["DAS_autopilotState"])
+    # Block auxiliary button injection through active, aborting, and fault AP
+    # states. Only the idle/available states 0..2 are safe for it to resume.
+    self.tesla_autopilot_active = autopilot_state not in (0, 1, 2)
     suppress_invalid_lkas = self._ap_hybrid_lkas_suppressed(autopilot_state)
 
     # Stock Autosteer should be disengaged (includes FSD)

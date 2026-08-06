@@ -8,7 +8,7 @@ IDLE_TEMPLATE = bytes.fromhex("2955000000000080")
 
 
 def fake_state(current_speed=20.0, target_speed=25.0, template_time=1_000_000_000,
-               speed_units="KPH", stock_longitudinal=False):
+               speed_units="KPH", stock_longitudinal=False, autopilot_active=False):
   return SimpleNamespace(
     out=SimpleNamespace(
       cruiseState=SimpleNamespace(enabled=True, speedCluster=current_speed),
@@ -20,6 +20,7 @@ def fake_state(current_speed=20.0, target_speed=25.0, template_time=1_000_000_00
     tesla_speed_button_template_nanos=template_time,
     tesla_speed_units=speed_units,
     tesla_stock_longitudinal_active=stock_longitudinal,
+    tesla_autopilot_active=autopilot_active,
     tesla_manual_speed_adjustment_counter=0,
     tesla_speed_auto_resume_gesture_counter=0,
   )
@@ -115,6 +116,16 @@ def test_controller_operates_during_stock_longitudinal_source():
   assert controller.update(fake_control(), state, 1_050_000_000) == []
   state.tesla_speed_button_template_nanos = 1_550_000_000
   assert len(controller.update(fake_control(), state, 1_550_000_000)) == 1
+
+
+def test_controller_never_sends_speed_ticks_while_autopilot_is_active():
+  controller = TeslaSpeedLimitController(SimpleNamespace(flags=TeslaFlagsSP.AUTO_SPEED_LIMIT))
+  state = fake_state(autopilot_active=True, template_time=3_000_000_000)
+
+  assert controller.update(fake_control(), state, 1_000_000_000) == []
+  assert controller.update(fake_control(), state, 1_600_000_000) == []
+  assert controller.update(fake_control(), state, 2_200_000_000) == []
+  assert controller.last_tx_nanos == 0
 
 
 def test_controller_does_not_retry_forever_without_feedback():
