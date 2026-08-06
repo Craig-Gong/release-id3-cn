@@ -388,7 +388,13 @@ class CarStateExt:
         self._ap_hybrid_exit_recovery_samples = 0
         self._ap_hybrid_restore_source = self._get_longitudinal_source()
         self.tesla_ap_hybrid_active = True
-        initial_source = TeslaLongitudinalSource.sp if self._ap_dynamic_long_enabled else TeslaLongitudinalSource.apHybridStock
+        # AP is already the active OEM owner when this edge is observed. Above
+        # the configured dynamic threshold preserve that ownership instead of
+        # forcing a needless AP -> SP -> AP round trip that can remain stuck on
+        # SP behind the later handoff validation gates. Below the threshold SP
+        # takes both axes as intended.
+        initial_source = (TeslaLongitudinalSource.sp if self._ap_dynamic_long_enabled and speed_kph < self._dyn_high
+                          else TeslaLongitudinalSource.apHybridStock)
         self._set_longitudinal_source(initial_source)
         self._ap_driver_lateral_takeover = False
         self.tesla_stock_lateral_active = (self._ap_dynamic_long_enabled and

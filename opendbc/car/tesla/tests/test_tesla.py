@@ -642,11 +642,7 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
                           aEgo=0.0, cruiseState=SimpleNamespace(enabled=True, available=True))
 
     self.assertTrue(car_state._update_ap_hybrid(ret, 3, 90.0, status_counter=1))
-    self.assertFalse(car_state.tesla_stock_lateral_active)
-    car_state.das_control["DAS_setSpeed"] = 90.0
-    for counter in range(2, 102):
-      car_state.das_control["DAS_controlCounter"] = counter % 8
-      self.assertTrue(car_state._update_ap_hybrid(ret, 3, 90.0, status_counter=counter % 16))
+    self.assertEqual(TeslaLongitudinalSource.apHybridStock, car_state.tesla_longitudinal_source)
     self.assertTrue(car_state.tesla_stock_lateral_active)
 
     ret.steeringTorque = 0.6
