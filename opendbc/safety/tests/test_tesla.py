@@ -423,6 +423,25 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
       self.assertNotEqual(should_disengage, self.safety.get_controls_allowed())
       self.assertFalse(self.safety.get_steering_disengage_prev())
 
+  def test_coop_steering_driver_override_pauses_without_disengaging(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.COOP_STEERING)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+
+    for msg in (
+      self._angle_meas_msg(30, hands_on_level=3),
+      self._angle_meas_msg(30, torsion_bar_torque=STEER_DISENGAGE_THRESHOLD + 0.01),
+      self._angle_meas_msg(30, eac_status=0, eac_error_code=9),
+    ):
+      self.safety.set_controls_allowed(True)
+      self.assertTrue(self._rx(msg))
+      self.assertTrue(self.safety.get_controls_allowed())
+      self.assertFalse(self.safety.get_steering_disengage_prev())
+
+    # Cooperative driver override must not weaken SP command limits.
+    self.assertFalse(self._tx(self._angle_cmd_msg(self.STEER_ANGLE_MAX + 1, True)))
+
   def test_autopark_summon_while_enabled(self):
     # We should not respect Autopark that activates while controls are allowed
     self._rx(self._pcm_status_msg(True, 0))

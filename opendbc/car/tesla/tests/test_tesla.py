@@ -19,7 +19,7 @@ from opendbc.car.tesla.values import CANBUS, CAR, FSD_14_FW, TeslaFlags, TeslaSa
 from opendbc.sunnypilot.car.tesla.carstate_ext import (AP_HYBRID_EXIT_RECOVERY_CONFIRM_SAMPLES, CarStateExt,
                                                         TeslaLongitudinalSource, publish_tesla_road_context)
 from opendbc.sunnypilot.car.tesla import dynamic_acc_debug
-from opendbc.sunnypilot.car.interfaces import (_initialize_tesla_ap_hybrid, _initialize_tesla_auto_speed_limit,
+from opendbc.sunnypilot.car.interfaces import (_initialize_coop_steering, _initialize_tesla_ap_hybrid, _initialize_tesla_auto_speed_limit,
                                                _initialize_tesla_dynamic_auto_stock,
                                                _initialize_tesla_speed_button_validation,
                                                _initialize_tesla_turn_signal_validation)
@@ -192,6 +192,15 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
     self.assertTrue(cp_sp.safetyParam & TeslaSafetyFlagsSP.AP_HYBRID_HANDOFF)
     self.assertTrue(cp_sp.safetyParam & TeslaSafetyFlagsSP.AP_HYBRID_LATERAL_HANDOFF)
     self.assertFalse(cp_sp.safetyParam & TeslaSafetyFlagsSP.DYNAMIC_AUTO_STOCK)
+
+  def test_coop_steering_initialization_sets_runtime_and_safety_flags(self):
+    cp = SimpleNamespace(brand="tesla")
+    cp_sp = SimpleNamespace(flags=0, safetyParam=0)
+
+    _initialize_coop_steering(cp, cp_sp, {"TeslaCoopSteering": "1"})
+
+    self.assertTrue(cp_sp.flags & TeslaFlagsSP.COOP_STEERING)
+    self.assertTrue(cp_sp.safetyParam & TeslaSafetyFlagsSP.COOP_STEERING)
 
   def test_dynamic_ap_longitudinal_initialization_requires_ap_hybrid(self):
     cp = SimpleNamespace(brand="tesla", openpilotLongitudinalControl=True)
