@@ -9,15 +9,17 @@ from unittest.mock import patch
 from opendbc.can import CANPacker
 from opendbc.car import Bus, gen_empty_fingerprint, structs
 from opendbc.car.structs import CarParams
-from opendbc.car.tesla.carcontroller import CarController
+from opendbc.car.tesla.carcontroller import CarController, get_safety_CP
 from opendbc.car.tesla.carstate import CarState
 from opendbc.car.tesla.interface import CarInterface
 from opendbc.car.tesla.fingerprints import FW_VERSIONS
 from opendbc.car.tesla.radar_interface import RADAR_START_ADDR
 from opendbc.car.tesla.teslacan import TeslaCAN, create_sccm_left_stalk
 from opendbc.car.tesla.values import CANBUS, CAR, FSD_14_FW, TeslaFlags, TeslaSafetyFlags
+from opendbc.car.vehicle_model import VehicleModel
 from opendbc.sunnypilot.car.tesla.carstate_ext import (AP_HYBRID_EXIT_RECOVERY_CONFIRM_SAMPLES, CarStateExt,
                                                         TeslaLongitudinalSource, publish_tesla_road_context)
+from opendbc.sunnypilot.car.tesla.coop_steering import CoopSteeringCarController
 from opendbc.sunnypilot.car.tesla import dynamic_acc_debug
 from opendbc.sunnypilot.car.interfaces import (_initialize_coop_steering, _initialize_tesla_ap_hybrid, _initialize_tesla_auto_speed_limit,
                                                _initialize_tesla_dynamic_auto_stock,
@@ -26,6 +28,48 @@ from opendbc.sunnypilot.car.interfaces import (_initialize_coop_steering, _initi
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP, TeslaSafetyFlagsSP
 
 Ecu = CarParams.Ecu
+
+
+class TestTeslaCoopSteeringParkingOverride(unittest.TestCase):
+  def setUp(self):
+    self.controller = CoopSteeringCarController()
+    self.vm = VehicleModel(get_safety_CP())
+    self.cp_sp = structs.CarParamsSP(flags=TeslaFlagsSP.COOP_STEERING.value)
+    self.cs = SimpleNamespace(out=structs.CarState())
+    self.cs.out.vEgo = 1.0
+    self.cs.out.vEgoRaw = 1.0
+    self.cs.out.steeringAngleDeg = 120.0
+    self.cs.out.steeringTorque = 1.0
+    self.cs.out.steeringPressed = True
+    self.cs.out.gearShifter = structs.CarState.GearShifter.drive
+
+  def update(self, lat_active=True):
+    return self.controller.update(0.0, lat_active, self.cp_sp, self.cs, self.vm)
+
+  def test_low_speed_driver_steering_pauses_actuation(self):
+    result = self.update()
+
+    self.assertFalse(result.lat_active)
+    self.assertEqual(result.steeringAngleDeg, self.cs.out.steeringAngleDeg)
+
+  def test_reverse_latches_until_vehicle_is_moving_and_driver_releases(self):
+    self.cs.out.gearShifter = structs.CarState.GearShifter.reverse
+    self.assertFalse(self.update().lat_active)
+
+    self.cs.out.gearShifter = structs.CarState.GearShifter.drive
+    self.cs.out.steeringPressed = False
+    self.cs.out.steeringTorque = 0.0
+    self.cs.out.vEgo = 1.0
+    self.cs.out.vEgoRaw = 1.0
+    for _ in range(100):
+      self.assertFalse(self.update().lat_active)
+
+    self.cs.out.vEgo = 4.0
+    self.cs.out.vEgoRaw = 4.0
+    result = None
+    for _ in range(60):
+      result = self.update()
+    self.assertTrue(result.lat_active)
 
 
 class TestTeslaSccmLeftStalk(unittest.TestCase):
