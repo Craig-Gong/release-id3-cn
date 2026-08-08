@@ -47,6 +47,10 @@ STEER_DESIRED_LIMITER_OVERRIDE_ACTIVE_COUNTER = 3.0 # second
 # while they are actively steering; do not latch out model control by speed or
 # gear after the wheel is released.
 PARKING_MANUAL_OVERRIDE_SPEED = 3.0  # m/s
+PARKING_MANUAL_OVERRIDE_RELEASE_TORQUE = 0.25  # Nm, hysteresis below the 0.5 Nm entry threshold
+PARKING_MANUAL_OVERRIDE_RELEASE_RATE = 10.0  # deg/s, do not re-enable while the wheel is still moving
+PARKING_MANUAL_OVERRIDE_RELEASE_TIME = 0.2  # seconds of stable release before model control resumes
+PARKING_MANUAL_OVERRIDE_RELEASE_FRAMES = round(PARKING_MANUAL_OVERRIDE_RELEASE_TIME / DT_LAT_CTRL)
 
 
 CoopSteeringDataSP = namedtuple("CoopSteeringDataSP",
@@ -195,6 +199,8 @@ class CoopSteeringCarController:
     self.resume_rate_limiter = SteerRateLimiter()
     self.override_accel_rate_limiter = SteerJerkLimiter()
     self.debug_angle_desired_limited = 0
+    self.parking_manual_override = False
+    self.parking_release_counter = 0
 
   def reset_override_state(self, apply_angle: float) -> None:
     self.apply_angle_last = apply_angle
@@ -203,9 +209,24 @@ class CoopSteeringCarController:
     self.override_accel_rate_limiter.reset(apply_angle)
 
   def parking_manual_override_active(self, CS: structs.CarState) -> bool:
-    """Pause actuation only while the driver is actively steering at parking speed."""
-    driver_steering = CS.out.steeringPressed or abs(CS.out.steeringTorque) >= STEER_OVERRIDE_MIN_TORQUE
-    return abs(CS.out.vEgo) < PARKING_MANUAL_OVERRIDE_SPEED and driver_steering
+    """Pause actuation until the driver has stably released the wheel at parking speed."""
+    steering_torque = abs(CS.out.steeringTorque)
+    driver_steering = CS.out.steeringPressed or steering_torque >= STEER_OVERRIDE_MIN_TORQUE
+
+    if not self.parking_manual_override:
+      if abs(CS.out.vEgo) < PARKING_MANUAL_OVERRIDE_SPEED and driver_steering:
+        self.parking_manual_override = True
+        self.parking_release_counter = 0
+    else:
+      release_ready = (not CS.out.steeringPressed and
+                       steering_torque <= PARKING_MANUAL_OVERRIDE_RELEASE_TORQUE and
+                       abs(CS.out.steeringRateDeg) <= PARKING_MANUAL_OVERRIDE_RELEASE_RATE)
+      self.parking_release_counter = self.parking_release_counter + 1 if release_ready else 0
+      if self.parking_release_counter >= PARKING_MANUAL_OVERRIDE_RELEASE_FRAMES:
+        self.parking_manual_override = False
+        self.parking_release_counter = 0
+
+    return self.parking_manual_override
 
   def compute_override_targets(self, vEgo: float, steering_torque: float, VM: VehicleModel) -> tuple[float, float]:
     """Returns (angle_override_target, override_torque): driver's target angle and net torque above neutral."""

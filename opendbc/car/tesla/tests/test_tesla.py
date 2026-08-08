@@ -57,10 +57,48 @@ class TestTeslaCoopSteeringParkingOverride(unittest.TestCase):
 
     self.cs.out.steeringPressed = False
     self.cs.out.steeringTorque = 0.0
+    for _ in range(9):
+      self.assertFalse(self.update().lat_active)
     result = self.update()
 
     self.assertTrue(result.lat_active)
     self.assertGreater(result.steeringAngleDeg, 0.0)
+
+  def test_torque_noise_near_entry_threshold_does_not_chatter(self):
+    self.cs.out.steeringPressed = False
+    for torque in (0.55, 0.48, 0.52, 0.47, 0.60, 0.45, 0.40):
+      self.cs.out.steeringTorque = torque
+      self.assertFalse(self.update().lat_active)
+
+  def test_steering_motion_delays_resume_after_torque_release(self):
+    self.assertFalse(self.update().lat_active)
+
+    self.cs.out.steeringPressed = False
+    self.cs.out.steeringTorque = 0.0
+    self.cs.out.steeringRateDeg = 15.0
+    for _ in range(15):
+      self.assertFalse(self.update().lat_active)
+
+    self.cs.out.steeringRateDeg = 0.0
+    for _ in range(9):
+      self.assertFalse(self.update().lat_active)
+    self.assertTrue(self.update().lat_active)
+
+  def test_driver_input_resets_pending_resume(self):
+    self.assertFalse(self.update().lat_active)
+
+    self.cs.out.steeringPressed = False
+    self.cs.out.steeringTorque = 0.0
+    for _ in range(5):
+      self.assertFalse(self.update().lat_active)
+
+    self.cs.out.steeringTorque = 0.6
+    self.assertFalse(self.update().lat_active)
+
+    self.cs.out.steeringTorque = 0.0
+    for _ in range(9):
+      self.assertFalse(self.update().lat_active)
+    self.assertTrue(self.update().lat_active)
 
   def test_reverse_without_driver_steering_keeps_model_control(self):
     self.cs.out.gearShifter = structs.CarState.GearShifter.reverse
