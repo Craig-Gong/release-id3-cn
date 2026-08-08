@@ -52,23 +52,23 @@ class TestTeslaCoopSteeringParkingOverride(unittest.TestCase):
     self.assertFalse(result.lat_active)
     self.assertEqual(result.steeringAngleDeg, self.cs.out.steeringAngleDeg)
 
-  def test_reverse_latches_until_vehicle_is_moving_and_driver_releases(self):
-    self.cs.out.gearShifter = structs.CarState.GearShifter.reverse
+  def test_low_speed_driver_release_resumes_model_control(self):
     self.assertFalse(self.update().lat_active)
 
-    self.cs.out.gearShifter = structs.CarState.GearShifter.drive
     self.cs.out.steeringPressed = False
     self.cs.out.steeringTorque = 0.0
-    self.cs.out.vEgo = 1.0
-    self.cs.out.vEgoRaw = 1.0
-    for _ in range(100):
-      self.assertFalse(self.update().lat_active)
+    result = self.update()
 
-    self.cs.out.vEgo = 4.0
-    self.cs.out.vEgoRaw = 4.0
-    result = None
-    for _ in range(60):
-      result = self.update()
+    self.assertTrue(result.lat_active)
+    self.assertGreater(result.steeringAngleDeg, 0.0)
+
+  def test_reverse_without_driver_steering_keeps_model_control(self):
+    self.cs.out.gearShifter = structs.CarState.GearShifter.reverse
+    self.cs.out.steeringPressed = False
+    self.cs.out.steeringTorque = 0.0
+
+    result = self.update()
+
     self.assertTrue(result.lat_active)
 
 

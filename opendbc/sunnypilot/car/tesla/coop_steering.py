@@ -42,12 +42,11 @@ STEER_DESIRED_LIMITER_ALLOW_SPEED = 6 # m/s - below this speed the desired angle
 STEER_DESIRED_LIMITER_ACCEL = 100 # deg/s^2 when override angle ramp is active
 STEER_DESIRED_LIMITER_OVERRIDE_ACTIVE_COUNTER = 3.0 # second
 
-# Parking manoeuvres need a different handoff than normal cooperative steering.
-# At very low speed the lateral-acceleration based torque mapping saturates at
-# hundreds of steering-wheel degrees, which can feed back against the driver.
-PARKING_OVERRIDE_ENTER_SPEED = 3.0  # m/s
-PARKING_OVERRIDE_RELEASE_SPEED = 4.0  # m/s, hysteresis prevents low-speed re-entry
-PARKING_OVERRIDE_RELEASE_TIME = 1.0  # seconds with no driver torque
+# At very low speed the lateral-acceleration based torque mapping can saturate
+# at hundreds of steering-wheel degrees. Give the driver full authority only
+# while they are actively steering; do not latch out model control by speed or
+# gear after the wheel is released.
+PARKING_MANUAL_OVERRIDE_SPEED = 3.0  # m/s
 
 
 CoopSteeringDataSP = namedtuple("CoopSteeringDataSP",
@@ -196,8 +195,6 @@ class CoopSteeringCarController:
     self.resume_rate_limiter = SteerRateLimiter()
     self.override_accel_rate_limiter = SteerJerkLimiter()
     self.debug_angle_desired_limited = 0
-    self.parking_override_latched = False
-    self.parking_override_release_time = 0.0
 
   def reset_override_state(self, apply_angle: float) -> None:
     self.apply_angle_last = apply_angle
@@ -205,25 +202,10 @@ class CoopSteeringCarController:
     self.coop_apply_angle_sat_last = apply_angle
     self.override_accel_rate_limiter.reset(apply_angle)
 
-  def parking_override_active(self, CS: structs.CarState) -> bool:
-    """Latch manual steering through reverse and low-speed parking manoeuvres."""
-    reverse = CS.out.gearShifter == structs.CarState.GearShifter.reverse
+  def parking_manual_override_active(self, CS: structs.CarState) -> bool:
+    """Pause actuation only while the driver is actively steering at parking speed."""
     driver_steering = CS.out.steeringPressed or abs(CS.out.steeringTorque) >= STEER_OVERRIDE_MIN_TORQUE
-    low_speed = abs(CS.out.vEgo) < PARKING_OVERRIDE_ENTER_SPEED
-
-    if reverse or (low_speed and driver_steering):
-      self.parking_override_latched = True
-      self.parking_override_release_time = 0.0
-
-    if self.parking_override_latched:
-      release_ready = (not reverse and not driver_steering and
-                       abs(CS.out.vEgo) >= PARKING_OVERRIDE_RELEASE_SPEED)
-      self.parking_override_release_time = self.parking_override_release_time + DT_LAT_CTRL if release_ready else 0.0
-      if self.parking_override_release_time >= PARKING_OVERRIDE_RELEASE_TIME:
-        self.parking_override_latched = False
-        self.parking_override_release_time = 0.0
-
-    return self.parking_override_latched
+    return abs(CS.out.vEgo) < PARKING_MANUAL_OVERRIDE_SPEED and driver_steering
 
   def compute_override_targets(self, vEgo: float, steering_torque: float, VM: VehicleModel) -> tuple[float, float]:
     """Returns (angle_override_target, override_torque): driver's target angle and net torque above neutral."""
@@ -304,7 +286,7 @@ class CoopSteeringCarController:
   def update(self, apply_angle, lat_active, CP_SP: structs.CarParamsSP, CS: structs.CarState, VM: VehicleModel) -> CoopSteeringDataSP:
     angle_coop_enabled = CP_SP.flags & TeslaFlagsSP.COOP_STEERING.value
 
-    if angle_coop_enabled and self.parking_override_active(CS):
+    if angle_coop_enabled and self.parking_manual_override_active(CS):
       # Keep the MADS session alive, but send an inactive steering command at
       # the measured angle. This prevents the planner/driver torque feedback
       # loop and gives the driver full authority while parking.
@@ -320,7 +302,9 @@ class CoopSteeringCarController:
       self.reset_override_state(apply_angle)
       return CoopSteeringDataSP(apply_angle, lat_active)
 
-    apply_angle = self.overriding_steer_desired_accel_limit(apply_angle, CS.out.vEgo, CS.out.steeringTorque)
+    # The resume limiter above already ramps smoothly from the measured angle
+    # after a manual parking override. A second multi-second low-speed limiter
+    # makes the model appear absent after the driver releases the wheel.
     self.debug_angle_desired_limited = apply_angle #! debug
 
     apply_angle_step = apply_angle - self.apply_angle_last
