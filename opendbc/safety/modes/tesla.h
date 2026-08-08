@@ -55,7 +55,6 @@ static bool tesla_dynamic_auto_stock = false;
 static bool tesla_ap_hybrid_handoff = false;
 static bool tesla_ap_hybrid_lateral_handoff = false;
 static bool tesla_ap_stock_lateral_active = false;
-static bool tesla_coop_steering = false;
 static bool tesla_turn_signal_validation = false;
 static bool tesla_speed_button_validation = false;
 static bool tesla_auto_speed_limit = false;
@@ -183,12 +182,10 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
       const int eac_status = msg->data[6] >> 5;  // EPAS3S_eacStatus
       const int eac_error_code = msg->data[2] >> 4;  // EPAS3S_eacErrorCode
 
-      // In cooperative steering, the host pauses steering commands while the driver strongly overrides.
-      // Keep controls authorized so lateral control can recover after release; TX angle/rate checks remain active.
-      const bool driver_override = (hands_on_level >= 3) ||
-                                   (SAFETY_ABS(torsion_bar_torque) > TESLA_STEERING_DISENGAGE_TORQUE) ||
-                                   ((eac_status == 0) && (eac_error_code == 9));
-      steering_disengage = driver_override && !tesla_coop_steering;
+      // Disengage on user override, or if high angle rate fault from user overriding extremely quickly
+      steering_disengage = (hands_on_level >= 3) ||
+                           (SAFETY_ABS(torsion_bar_torque) > TESLA_STEERING_DISENGAGE_TORQUE) ||
+                           ((eac_status == 0) && (eac_error_code == 9));
     }
 
     // Vehicle speed (DI_speed)
@@ -601,7 +598,6 @@ static safety_config tesla_init(uint16_t param) {
   const uint16_t TESLA_PARAM_SP_TURN_SIGNAL_VALIDATION = 256;
   const uint16_t TESLA_PARAM_SP_SPEED_BUTTON_VALIDATION = 512;
   const uint16_t TESLA_PARAM_SP_AUTO_SPEED_LIMIT = 1024;
-  const uint16_t TESLA_PARAM_SP_COOP_STEERING = 2048;
 
   tesla_has_vehicle_bus = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_VEHICLE_BUS);
 
@@ -619,7 +615,6 @@ static safety_config tesla_init(uint16_t param) {
   tesla_turn_signal_validation = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_TURN_SIGNAL_VALIDATION);
   tesla_speed_button_validation = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_SPEED_BUTTON_VALIDATION);
   tesla_auto_speed_limit = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_AUTO_SPEED_LIMIT);
-  tesla_coop_steering = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_COOP_STEERING);
 
   tesla_stock_aeb = false;
   tesla_stock_steering_control = false;

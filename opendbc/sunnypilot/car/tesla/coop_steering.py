@@ -42,16 +42,6 @@ STEER_DESIRED_LIMITER_ALLOW_SPEED = 6 # m/s - below this speed the desired angle
 STEER_DESIRED_LIMITER_ACCEL = 100 # deg/s^2 when override angle ramp is active
 STEER_DESIRED_LIMITER_OVERRIDE_ACTIVE_COUNTER = 3.0 # second
 
-# At very low speed the lateral-acceleration based torque mapping can saturate
-# at hundreds of steering-wheel degrees. Give the driver full authority only
-# while they are actively steering; do not latch out model control by speed or
-# gear after the wheel is released.
-PARKING_MANUAL_OVERRIDE_SPEED = 3.0  # m/s
-PARKING_MANUAL_OVERRIDE_RELEASE_TORQUE = 0.25  # Nm, hysteresis below the 0.5 Nm entry threshold
-PARKING_MANUAL_OVERRIDE_RELEASE_RATE = 10.0  # deg/s, do not re-enable while the wheel is still moving
-PARKING_MANUAL_OVERRIDE_RELEASE_TIME = 0.2  # seconds of stable release before model control resumes
-PARKING_MANUAL_OVERRIDE_RELEASE_FRAMES = round(PARKING_MANUAL_OVERRIDE_RELEASE_TIME / DT_LAT_CTRL)
-
 
 CoopSteeringDataSP = namedtuple("CoopSteeringDataSP",
                                 ["steeringAngleDeg", "lat_active"])
@@ -199,34 +189,12 @@ class CoopSteeringCarController:
     self.resume_rate_limiter = SteerRateLimiter()
     self.override_accel_rate_limiter = SteerJerkLimiter()
     self.debug_angle_desired_limited = 0
-    self.parking_manual_override = False
-    self.parking_release_counter = 0
 
   def reset_override_state(self, apply_angle: float) -> None:
     self.apply_angle_last = apply_angle
     self.angle_override = 0
     self.coop_apply_angle_sat_last = apply_angle
     self.override_accel_rate_limiter.reset(apply_angle)
-
-  def parking_manual_override_active(self, CS: structs.CarState) -> bool:
-    """Pause actuation until the driver has stably released the wheel at parking speed."""
-    steering_torque = abs(CS.out.steeringTorque)
-    driver_steering = CS.out.steeringPressed or steering_torque >= STEER_OVERRIDE_MIN_TORQUE
-
-    if not self.parking_manual_override:
-      if abs(CS.out.vEgo) < PARKING_MANUAL_OVERRIDE_SPEED and driver_steering:
-        self.parking_manual_override = True
-        self.parking_release_counter = 0
-    else:
-      release_ready = (not CS.out.steeringPressed and
-                       steering_torque <= PARKING_MANUAL_OVERRIDE_RELEASE_TORQUE and
-                       abs(CS.out.steeringRateDeg) <= PARKING_MANUAL_OVERRIDE_RELEASE_RATE)
-      self.parking_release_counter = self.parking_release_counter + 1 if release_ready else 0
-      if self.parking_release_counter >= PARKING_MANUAL_OVERRIDE_RELEASE_FRAMES:
-        self.parking_manual_override = False
-        self.parking_release_counter = 0
-
-    return self.parking_manual_override
 
   def compute_override_targets(self, vEgo: float, steering_torque: float, VM: VehicleModel) -> tuple[float, float]:
     """Returns (angle_override_target, override_torque): driver's target angle and net torque above neutral."""
@@ -307,15 +275,6 @@ class CoopSteeringCarController:
   def update(self, apply_angle, lat_active, CP_SP: structs.CarParamsSP, CS: structs.CarState, VM: VehicleModel) -> CoopSteeringDataSP:
     angle_coop_enabled = CP_SP.flags & TeslaFlagsSP.COOP_STEERING.value
 
-    if angle_coop_enabled and self.parking_manual_override_active(CS):
-      # Keep the MADS session alive, but send an inactive steering command at
-      # the measured angle. This prevents the planner/driver torque feedback
-      # loop and gives the driver full authority while parking.
-      manual_angle = CS.out.steeringAngleDeg
-      self.resume_steer_desired_rate_limit(False, manual_angle)
-      self.reset_override_state(manual_angle)
-      return CoopSteeringDataSP(manual_angle, False)
-
     # avoid sudden rotation on engagement
     apply_angle = self.resume_steer_desired_rate_limit(lat_active, apply_angle)
 
@@ -323,9 +282,7 @@ class CoopSteeringCarController:
       self.reset_override_state(apply_angle)
       return CoopSteeringDataSP(apply_angle, lat_active)
 
-    # The resume limiter above already ramps smoothly from the measured angle
-    # after a manual parking override. A second multi-second low-speed limiter
-    # makes the model appear absent after the driver releases the wheel.
+    # apply_angle = self.overriding_steer_desired_accel_limit(apply_angle, CS.out.vEgo, CS.out.steeringTorque)
     self.debug_angle_desired_limited = apply_angle #! debug
 
     apply_angle_step = apply_angle - self.apply_angle_last

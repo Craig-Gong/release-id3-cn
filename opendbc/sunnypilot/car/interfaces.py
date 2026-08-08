@@ -117,7 +117,6 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
     coop_steering = int(params_dict.get("TeslaCoopSteering", 0)) == 1
     if coop_steering:
       CP_SP.flags |= TeslaFlagsSP.COOP_STEERING.value
-      CP_SP.safetyParam |= TeslaSafetyFlagsSP.COOP_STEERING
 
 
 def _initialize_tesla_mads_screen_button(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
