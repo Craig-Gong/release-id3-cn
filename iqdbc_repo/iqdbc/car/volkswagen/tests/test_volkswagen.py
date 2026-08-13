@@ -129,6 +129,13 @@ def test_china_id3_vin_fuzzy_match():
   assert "E9" in platform.config.chassis_codes
 
 
+def test_china_id3_vin_match_without_radar_fw():
+  # FW query can return empty on first boot; LSV+E9 still uniquely IDs China ID.3 MK1.
+  vin = "LSVFA6E98M2012308"
+  matches = FW_QUERY_CONFIG.match_fw_to_car_fuzzy({}, vin, FW_VERSIONS)
+  assert matches == {CAR.VOLKSWAGEN_ID3_MK1}
+
+
 def test_pq_hca_ready_does_not_complete_eps_initialization():
   state = object.__new__(CarState)
   state.eps_init_complete = False

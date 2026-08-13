@@ -164,6 +164,20 @@ def match_fw_to_car(fw_versions: list[CarParams.CarFw], vin: str, allow_exact: b
       if not exact_match and not len(matches) and config.match_fw_to_car_fuzzy is not None:
         matches |= config.match_fw_to_car_fuzzy(fw_versions_dict, vin, VERSIONS[brand])
 
+    # Exact FW can hit several VW MEB platforms that share 1EA camera/radar
+    # part numbers (ID.3 MK1 vs ID.4 MK1). VIN fuzzy match disambiguates.
+    if exact_match and len(matches) > 1 and vin:
+      narrowed: set[str] = set()
+      for brand in VERSIONS.keys():
+        config = FW_QUERY_CONFIGS[brand]
+        if config.match_fw_to_car_fuzzy is None:
+          continue
+        fw_versions_dict = build_fw_dict(fw_versions, filter_brand=brand)
+        narrowed |= config.match_fw_to_car_fuzzy(fw_versions_dict, vin, VERSIONS[brand])
+      inter = matches & narrowed
+      if inter:
+        matches = inter
+
     if len(matches):
       return exact_match, matches
 

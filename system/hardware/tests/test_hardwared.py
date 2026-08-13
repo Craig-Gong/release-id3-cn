@@ -26,6 +26,12 @@ def test_unsupported_branch_rejected_for_tici():
   assert not is_supported_tici_branch(metadata)
 
 
+def test_release_id3_cn_allowed_for_tici():
+  metadata = SimpleNamespace(channel="release-id3-cn", channel_type="feature")
+  assert "release-id3-cn" in ALLOWED_TICI_BRANCHES
+  assert is_supported_tici_branch(metadata)
+
+
 def recovery_update(recovery: CanStartupRecovery, now: float, **kwargs) -> bool:
   defaults = {
     "ignition": True,

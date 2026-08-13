@@ -56,7 +56,14 @@ THERMAL_BANDS = OrderedDict({
 OFFROAD_DANGER_TEMP = 75
 
 prev_offroad_states: dict[str, tuple[bool, str | None]] = {}
-ALLOWED_TICI_BRANCHES = {"release-new", "release-tici", "master-mici", "beta", "beta-pq", "release-prebuilt"}
+# C3XL reports device_type "tici". Official IQ.Pilot blocks onroad unless the
+# branch is in this set (or channel_type == "tici"). release-id3-cn is a C3XL
+# fork; without this entry the device stays offroad, card never starts, and
+# the car is never fingerprinted — including after a manual vehicle pick.
+ALLOWED_TICI_BRANCHES = {
+  "release-new", "release-tici", "master-mici", "beta", "beta-pq", "release-prebuilt",
+  "release", "release-meb", "release-id3-cn",
+}
 
 
 class CanStartupRecovery:

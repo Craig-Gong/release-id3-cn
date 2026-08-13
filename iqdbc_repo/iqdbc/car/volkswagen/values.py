@@ -794,6 +794,20 @@ class CAR(Platforms):
   )
 
 
+def _vin_matches_platform(platform, vin_wmi: str | None, chassis_code: str | None, model_year_code: str | None) -> bool:
+  if vin_wmi not in platform.config.wmis or chassis_code not in platform.config.chassis_codes:
+    return False
+  model_years = getattr(platform.config, "model_years", set())
+  if model_years and model_year_code is not None and model_year_code not in model_years:
+    return False
+  return True
+
+
+def _vin_uniquely_identifies(platform, vin_wmi: str | None, chassis_code: str | None, model_year_code: str | None) -> bool:
+  hits = [p for p in CAR if _vin_matches_platform(p, vin_wmi, chassis_code, model_year_code)]
+  return len(hits) == 1 and hits[0] == platform
+
+
 def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str]:
   candidates = set()
 
@@ -853,13 +867,21 @@ def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str
 
       valid_ecus.add(ecu[0])
 
-    if valid_ecus != CHECK_FUZZY_ECUS:
+    vin_ok = _vin_matches_platform(platform, vin_wmi, chassis_code, model_year_code)
+    if valid_ecus == CHECK_FUZZY_ECUS:
+      if vin_ok:
+        candidates.add(platform)
       continue
 
-    model_years = getattr(platform.config, "model_years", set())
-    if vin_wmi in platform.config.wmis and chassis_code in platform.config.chassis_codes:
-      if len(model_years) > 0 and model_year_code is not None and model_year_code not in model_years:
-        continue
+    # Radar FW missing (query failed / China part not in EU tables): still match
+    # when the VIN uniquely identifies this platform (SAIC-VW ID.3 = LSV + E9).
+    # If radar FW was seen but is unknown, do not override — keep existing tests.
+    radar_seen = any(
+      live_fw_versions.get(ecu[1:], [])
+      for ecu in offline_fw_versions[platform]
+      if ecu[0] == Ecu.fwdRadar
+    )
+    if (not radar_seen) and vin_ok and _vin_uniquely_identifies(platform, vin_wmi, chassis_code, model_year_code):
       candidates.add(platform)
 
   return {str(c) for c in candidates}
