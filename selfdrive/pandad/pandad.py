@@ -187,7 +187,10 @@ def main() -> None:
 
     first_run = False
 
-    # run pandad with all connected serials as arguments
+    # IQ.Pilot panda FW does not set ignitionCan from MEB 0x3C0. C++ pandad then
+    # treats the car as off and forces NO_OUTPUT, so volkswagenMeb never applies.
+    # STARTED spoofs ignition_line inside pandad (same as openpilot replay).
+    os.environ['STARTED'] = '1'
     os.environ['MANAGER_DAEMON'] = 'pandad'
     process = subprocess.Popen(["./pandad", *panda_serials], cwd=os.path.join(BASEDIR, "selfdrive/pandad"))
     process.wait()
