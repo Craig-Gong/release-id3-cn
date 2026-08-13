@@ -34,7 +34,7 @@ BS_:
 
 BU_: UI DAS APP
 
-CM_ "Read-only Model Y HW4 visualization subset. Source: https://tcan.latency.is/?plat=ModelY, retrieved 2026-08-03. Counter and checksum fields are intentionally omitted.";
+CM_ "Read-only Model Y HW4 visualization subset. Source: https://tcan.latency.is/?plat=ModelY, retrieved 2026-08-13. Counter and checksum fields are intentionally omitted.";
 
 
 BO_ 568 UI_driverAssistMapData: 8 UI
@@ -346,16 +346,24 @@ BO_ 1024 APP_pedestrianDetection: 8 APP
  SG_ APP_pedestrianDetectedRightPillar : 5|1@1+ (1,0) [0|1] "" DAS
  SG_ APP_pedestrianDetectedRightRepeater : 6|1@1+ (1,0) [0|1] "" DAS
  SG_ APP_pedestrianDetectedBackup : 7|1@1+ (1,0) [0|1] "" DAS
- SG_ APP_closestPedestrian1dX : 13|6@1- (0.4,0) [-12.8|12.4] "m" DAS
- SG_ APP_closestPedestrian1dY : 19|6@1- (0.4,0) [-12.8|12.4] "m" DAS
- SG_ APP_closestPedestrian2dX : 25|6@1- (0.4,0) [-12.8|12.4] "m" DAS
- SG_ APP_closestPedestrian2dY : 31|6@1- (0.4,0) [-12.8|12.4] "m" DAS
- SG_ APP_closestPedestrian3dX : 37|6@1- (0.4,0) [-12.8|12.4] "m" DAS
- SG_ APP_closestPedestrian3dY : 43|6@1- (0.4,0) [-12.8|12.4] "m" DAS
+ SG_ APP_closestPedestrian1dX : 13|6@1- (0.4,0) [0|0] "" DAS
+ SG_ APP_closestPedestrian1dY : 19|6@1- (0.4,0) [0|0] "" DAS
+ SG_ APP_closestPedestrian2dX : 25|6@1- (0.4,0) [0|0] "" DAS
+ SG_ APP_closestPedestrian2dY : 31|6@1- (0.4,0) [0|0] "" DAS
+ SG_ APP_closestPedestrian3dX : 37|6@1- (0.4,0) [0|0] "" DAS
+ SG_ APP_closestPedestrian3dY : 43|6@1- (0.4,0) [0|0] "" DAS
+
+CM_ SG_ 1024 APP_closestPedestrian1dX "T-CAN provides scale only; physical unit and per-slot validity are undocumented.";
+CM_ SG_ 1024 APP_closestPedestrian1dY "T-CAN provides scale only; physical unit and per-slot validity are undocumented.";
+CM_ SG_ 1024 APP_closestPedestrian2dX "T-CAN provides scale only; physical unit and per-slot validity are undocumented.";
+CM_ SG_ 1024 APP_closestPedestrian2dY "T-CAN provides scale only; physical unit and per-slot validity are undocumented.";
+CM_ SG_ 1024 APP_closestPedestrian3dX "T-CAN provides scale only; physical unit and per-slot validity are undocumented.";
+CM_ SG_ 1024 APP_closestPedestrian3dY "T-CAN provides scale only; physical unit and per-slot validity are undocumented.";
 
 VAL_ 568 UI_mapSpeedUnits 0 "MPH" 1 "KPH" ;
 VAL_ 521 DAS_longControlStack 0 "NONE" 1 "RESERVED" 2 "TORQUE_PROFILER" 3 "VELOCITY_PROFILE" 4 "AEB_CONTROL" 5 "PEDAL_CONTROL" 6 "TORQUE_CONTROL" 7 "SNA" ;
 VAL_ 521 DAS_aebControl_active 0 "INACTIVE" 1 "STANDBY" 2 "ACTIVE" 3 "SNA" ;
+VAL_ 905 DAS_longCollisionWarning 0 "NONE" 1 "VEHICLE_UNKNOWN" 2 "PEDESTRIAN" 3 "IPSO" 4 "STOPSIGN_STOPLINE" 5 "TFL_STOPLINE" 6 "VEHICLE_CIPV" 7 "VEHICLE_CUTIN" 8 "VEHICLE_MCVL" 9 "VEHICLE_MCVL2" 10 "VEHICLE_MCVR" 11 "VEHICLE_MCVR2" 12 "VEHICLE_CIPV2" 15 "SNA" ;
 VAL_ 568 UI_roadClass 0 "UNKNOWN_INVALID_SNA" 1 "CLASS_1_MAJOR" 2 "CLASS_2" 3 "CLASS_3" 4 "CLASS_4" 5 "CLASS_5" 6 "CLASS_6_MINOR" ;
 VAL_ 568 UI_mapSpeedLimitType 1 "REGULAR" 2 "ADVISORY" 3 "DEPENDENT" 4 "BUMPS" 7 "UNKNOWN_SNA" ;
 VAL_ 586 DAS_autosteerNavigationUsage 0 "REJECTED_UNAVAILABLE" 1 "AVAILABLE" 2 "FUSED" 3 "BLACKLISTED" ;

@@ -1,4 +1,6 @@
-from opendbc.can import CANPacker, CANParser
+from pathlib import Path
+
+from opendbc.can import CANDefine, CANPacker, CANParser
 
 
 DBC = "tesla_modely_hw4_perception"
@@ -187,3 +189,13 @@ def test_hw4_perception_dbc_decodes_parking_and_party_safety_status():
   assert parser.vl["DAS_status"]["DAS_sideCollisionAvoid"] == 2
   assert parser.vl["DAS_status"]["DAS_sideCollisionWarning"] == 1
   assert parser.vl["DAS_status"]["DAS_sideCollisionInhibit"] == 1
+
+
+def test_hw4_perception_dbc_labels_pedestrian_warning_without_inventing_coordinate_units():
+  definitions = CANDefine(DBC)
+  assert definitions.dv["DAS_status2"]["DAS_longCollisionWarning"][2] == "PEDESTRIAN"
+
+  dbc_path = Path(__file__).parents[2] / "dbc" / f"{DBC}.dbc"
+  pedestrian_lines = [line for line in dbc_path.read_text().splitlines() if "APP_closestPedestrian" in line and line.lstrip().startswith("SG_")]
+  assert len(pedestrian_lines) == 6
+  assert all('[0|0] ""' in line for line in pedestrian_lines)
