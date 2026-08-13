@@ -8,6 +8,7 @@ from openpilot.system.hardware.hardwared import (
   CAN_STARTUP_RECOVERY_MAX_ATTEMPTS,
   CanStartupRecovery,
   is_supported_tici_branch,
+  allow_automatic_som_shutdown,
   meb_ignition_from_can,
   panda_reports_real_ignition,
 )
@@ -33,6 +34,11 @@ def test_release_id3_cn_allowed_for_tici():
   metadata = SimpleNamespace(channel="release-id3-cn", channel_type="feature")
   assert "release-id3-cn" in ALLOWED_TICI_BRANCHES
   assert is_supported_tici_branch(metadata)
+
+
+def test_allow_automatic_som_shutdown_requires_panda_can_ignition():
+  assert not allow_automatic_som_shutdown(False)
+  assert allow_automatic_som_shutdown(True)
 
 
 def test_panda_reports_real_ignition_ignores_spoofed_line():

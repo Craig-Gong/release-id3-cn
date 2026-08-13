@@ -208,6 +208,15 @@ def panda_reports_real_ignition(panda_states) -> bool:
              if getattr(ps, "pandaType", unknown) != unknown)
 
 
+def allow_automatic_som_shutdown(panda_ever_reported_ignition_can: bool) -> bool:
+  """IQ panda FW cannot bootkick from MEB 0x3C0. If we power the SOM off after
+  lock, READY never wakes C3XL and the intercept path stays dead — the cluster
+  then fills with ADAS DTCs. Only auto-shutdown when this panda has proven it
+  can report CAN ignition (evo-style firmware).
+  """
+  return bool(panda_ever_reported_ignition_can)
+
+
 class MebIgnitionWatch:
   """Read 0x3C0 on a dedicated thread so the 2Hz hardwared loop cannot miss it."""
 
@@ -377,6 +386,8 @@ def hardware_thread(end_event, hw_queue) -> None:
   low_power_prev = False
   offroad_cycle_count = 0
   can_startup_recovery = CanStartupRecovery()
+  panda_ever_ignition_can = False
+  skipped_shutdown_logged = False
 
   params = Params()
   power_monitor = PowerMonitoring()
@@ -422,7 +433,9 @@ def hardware_thread(end_event, hw_queue) -> None:
     if sm.updated['pandaStates'] and len(pandaStates) > 0:
 
       # MEB: ignore spoofed ignitionLine (STARTED=1). Real source is 0x3C0.
-      onroad_conditions["ignition"] = panda_reports_real_ignition(pandaStates) or meb_ign
+      panda_can_ign = panda_reports_real_ignition(pandaStates)
+      panda_ever_ignition_can = panda_ever_ignition_can or panda_can_ign
+      onroad_conditions["ignition"] = panda_can_ign or meb_ign
 
       pandaState = pandaStates[0]
 
@@ -656,8 +669,12 @@ def hardware_thread(end_event, hw_queue) -> None:
 
     # Check if we need to shut down
     if (not tesla_no_sleep) and power_monitor.should_shutdown(onroad_conditions["ignition"], in_car, off_ts, started_seen):
-      cloudlog.warning(f"shutting device down, offroad since {off_ts}")
-      params.put_bool("DoShutdown", True)
+      if allow_automatic_som_shutdown(panda_ever_ignition_can):
+        cloudlog.warning(f"shutting device down, offroad since {off_ts}")
+        params.put_bool("DoShutdown", True)
+      elif not skipped_shutdown_logged:
+        skipped_shutdown_logged = True
+        cloudlog.warning("skip SOM shutdown: panda FW cannot bootkick from MEB 0x3C0")
 
     msg.deviceState.started = started_ts is not None and not offroad_mode
     msg.deviceState.startedMonoTime = int(1e9*(started_ts or 0))
