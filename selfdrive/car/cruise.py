@@ -127,6 +127,9 @@ class VCruiseHelperIQ:
     return float(np.clip(round(fixed_kph, 1), self.v_cruise_min, V_CRUISE_MAX))
 
   def update_v_cruise_delta(self, long_press: bool, v_cruise_delta: float) -> tuple[bool, float]:
+    # C3XL owns set speed (OP long, or stock ACC with pcmCruiseSpeed off): tap/hold 10 km/h.
+    if not self.CP.pcmCruise or not self.CP_IQ.pcmCruiseSpeed:
+      return True, v_cruise_delta * 10.
     return resolve_button_step(self.long_increment_config, long_press, v_cruise_delta)
 
   def get_minimum_set_speed(self, is_metric: bool) -> None:

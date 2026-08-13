@@ -355,4 +355,9 @@ class CarInterface(CarInterfaceBase):
   @staticmethod
   def _get_params_iq(stock_cp: structs.CarParams, ret: structs.IQCarParams, candidate, fingerprint: dict[int, dict[int, int]], car_fw: list[structs.CarParams.CarFw], alpha_long: bool, is_release_iq: bool, docs: bool) -> structs.IQCarParams:
     ret.longitudinalStoppingSpeedOverride = get_longitudinal_stopping_speed_override(candidate, stock_cp.flags)
+    # MEB Gen 1 stock ACC: C3XL owns the set speed (evo ICBM / pcmCruiseSpeed=False).
+    # Wheel tap +/- is 10 km/h; GRA SET/RES spam keeps the PCM matched.
+    if (stock_cp.pcmCruise and (stock_cp.flags & VolkswagenFlags.MEB)
+        and not (stock_cp.flags & VolkswagenFlags.MEB_GEN2)):
+      ret.pcmCruiseSpeed = False
     return ret

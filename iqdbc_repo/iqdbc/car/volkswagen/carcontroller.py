@@ -229,6 +229,7 @@ class CarController(CarControllerBase):
     self.long_jerk_control = LongControlJerk(dt=(DT_CTRL * self.CCP.ACC_CONTROL_STEP)) if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO) else None
     self.long_limit_control = LongControlLimit(dt=(DT_CTRL * self.CCP.ACC_CONTROL_STEP)) if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO) else None
     self.gra_acc_counter_last = None
+    self._icbm_last_button_frame = -1000
     self.motor3_frame_last = None
     self.motor3_was_stopping = False
     self.motor3_resuming = False
@@ -304,6 +305,26 @@ class CarController(CarControllerBase):
       CS.out.standstill and
       self.frame % 50 < 15
     )
+
+  def _meb_icbm_buttons(self, CC, CS, hud_control) -> tuple[bool, bool]:
+    # evo ICBM: SET/RES are +1/-1. Spam until PCM set speed matches C3XL v_cruise.
+    if self.CP_IQ.pcmCruiseSpeed or not CS.out.cruiseState.enabled or not CC.enabled:
+      return False, False
+    if CC.cruiseControl.override or CC.cruiseControl.cancel or CC.cruiseControl.resume:
+      return False, False
+    gra = CS.gra_stock_values
+    if any(bool(gra.get(k, 0)) for k in (
+      "GRA_Tip_Hoch", "GRA_Tip_Runter", "GRA_Tip_Setzen", "GRA_Tip_Wiederaufnahme", "GRA_Abbrechen",
+    )):
+      return False, False
+    target = round(float(hud_control.setSpeed) * CV.MS_TO_KPH)
+    cluster = round(float(CS.out.cruiseState.speedCluster) * CV.MS_TO_KPH)
+    if target <= 0 or cluster <= 0 or abs(target - cluster) < 1:
+      return False, False
+    if (self.frame - self._icbm_last_button_frame) * DT_CTRL <= 0.2:
+      return False, False
+    self._icbm_last_button_frame = self.frame
+    return (target > cluster, target < cluster)
 
   def update(self, CC, CC_IQ, CS, now_nanos):
     actuators = CC.actuators
@@ -630,10 +651,18 @@ class CarController(CarControllerBase):
 
     cancel_cmd = stock_cancel_pressed or CC.cruiseControl.cancel
     resume_cmd = CC.cruiseControl.resume or self._should_spam_mqb_a0_resume(CS, iq_mqb_acc_resume)
-    if gra_send_ready and (cancel_cmd or resume_cmd):
+
+    icbm_up, icbm_down = False, False
+    if gra_send_ready and self.CCS == mebcan and not cancel_cmd and not resume_cmd:
+      icbm_up, icbm_down = self._meb_icbm_buttons(CC, CS, hud_control)
+
+    if gra_send_ready and (cancel_cmd or resume_cmd or icbm_up or icbm_down):
       bus_send = self.CAN.aux if self.CP.flags & VolkswagenFlags.PQ else self.CAN.ext
+      gra_kwargs = {}
+      if self.CCS == mebcan:
+        gra_kwargs = dict(up=icbm_up, down=icbm_down)
       can_sends.append(self.CCS.create_acc_buttons_control(self.packer_pt, bus_send, CS.gra_stock_values,
-                                                           cancel=cancel_cmd, resume=resume_cmd))
+                                                           cancel=cancel_cmd, resume=resume_cmd, **gra_kwargs))
 
     if self.CP.openpilotLongitudinalControl and self.CCS == pqcan and not blend_active:
       if self.frame % 3:
