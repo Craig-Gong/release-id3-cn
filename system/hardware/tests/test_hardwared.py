@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from cereal import log
 from openpilot.system.hardware.hardwared import (
   ALLOWED_TICI_BRANCHES,
   CAN_STARTUP_RECOVERY_COOLDOWN,
@@ -8,6 +9,7 @@ from openpilot.system.hardware.hardwared import (
   CanStartupRecovery,
   is_supported_tici_branch,
   meb_ignition_from_can,
+  panda_reports_real_ignition,
 )
 
 
@@ -31,6 +33,17 @@ def test_release_id3_cn_allowed_for_tici():
   metadata = SimpleNamespace(channel="release-id3-cn", channel_type="feature")
   assert "release-id3-cn" in ALLOWED_TICI_BRANCHES
   assert is_supported_tici_branch(metadata)
+
+
+def test_panda_reports_real_ignition_ignores_spoofed_line():
+  unknown = log.PandaState.PandaType.unknown
+  tres = log.PandaState.PandaType.tres
+  spoofed = SimpleNamespace(ignitionLine=True, ignitionCan=False, pandaType=tres)
+  real_can = SimpleNamespace(ignitionLine=False, ignitionCan=True, pandaType=tres)
+  skipped = SimpleNamespace(ignitionLine=True, ignitionCan=True, pandaType=unknown)
+  assert not panda_reports_real_ignition([spoofed])
+  assert panda_reports_real_ignition([real_can])
+  assert not panda_reports_real_ignition([skipped])
 
 
 def test_meb_ignition_from_klemmens_status():

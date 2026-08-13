@@ -194,6 +194,20 @@ def meb_ignition_from_can(packets, now: float, last_on_ts: float | None) -> tupl
   return False, last_on_ts
 
 
+def panda_reports_real_ignition(panda_states) -> bool:
+  """Panda firmware ignition, excluding the STARTED=1 spoof of ignitionLine.
+
+  IQ.Pilot panda never sets ignitionCan for MEB 0x3C0. pandad.py sets STARTED=1
+  so C++ pandad always publishes ignitionLine=True. Trusting that kept the
+  device onroad after the car was off, then CAN timeout became
+  'CAN Bus Disconnected: Likely Faulty Cable'. Use ignitionCan only; MEB
+  ignition comes from MebIgnitionWatch.
+  """
+  unknown = log.PandaState.PandaType.unknown
+  return any(bool(getattr(ps, "ignitionCan", False)) for ps in panda_states
+             if getattr(ps, "pandaType", unknown) != unknown)
+
+
 class MebIgnitionWatch:
   """Read 0x3C0 on a dedicated thread so the 2Hz hardwared loop cannot miss it."""
 
@@ -407,9 +421,8 @@ def hardware_thread(end_event, hw_queue) -> None:
 
     if sm.updated['pandaStates'] and len(pandaStates) > 0:
 
-      # Set ignition based on any panda connected, plus MEB Klemmen_Status_01
-      panda_ign = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
-      onroad_conditions["ignition"] = panda_ign or meb_ign
+      # MEB: ignore spoofed ignitionLine (STARTED=1). Real source is 0x3C0.
+      onroad_conditions["ignition"] = panda_reports_real_ignition(pandaStates) or meb_ign
 
       pandaState = pandaStates[0]
 
