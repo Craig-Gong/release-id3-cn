@@ -107,12 +107,23 @@ class Controls(IQControlsLayer):
 
   def _update_params(self) -> None:
     self.enable_curvature_controller = self.params.get_bool("EnableCurvatureController")
-    self.enable_speed_limit_control = self.params.get_bool("EnableSpeedLimitControl")
+    # evo used EnableSpeedLimitControl. IQ settings store IQSpeedAssistMode
+    # (0=Off, 1=Info, 2=Warn, 3=Control). Cluster TSR popups need this flag.
+    self.enable_speed_limit_control = self._speed_limit_cluster_enabled()
     self.enable_speed_limit_predicative = self.params.get_bool("EnableSpeedLimitPredicative")
     self.enable_pred_react_to_speed_limits = self.params.get_bool("EnableSLPredReactToSL")
     self.enable_pred_react_to_curves = self.params.get_bool("EnableSLPredReactToCurves")
     self.enable_long_comfort_mode = self.params.get_bool("EnableLongComfortMode")
     self.force_rhd_for_bsm = self.params.get_bool("ForceRHDForBSM")
+
+  def _speed_limit_cluster_enabled(self) -> bool:
+    if self.params.get_bool("EnableSpeedLimitControl"):
+      return True
+    try:
+      mode = int(self.params.get("IQSpeedAssistMode", return_default=True) or 0)
+    except (TypeError, ValueError):
+      mode = 0
+    return mode >= 1
 
   def update(self):
     self.sm.update(15)
