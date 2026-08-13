@@ -575,7 +575,9 @@ class CarController(CarControllerBase):
 
     if self.frame % self.CCP.LDW_STEP == 0:
       hud_alert = 0
-      if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw) or CS.out.steerFaultTemporary:
+      # Do not use steerFaultTemporary here: P→D / EPS init briefly sets it and
+      # the cluster shows "请立即接管". Match evo — only OP steerRequired/ldw.
+      if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw):
         hud_alert = self.CCP.LDW_MESSAGES["laneAssistTakeOver"]
       steering_pressed_hud = (self.frame // 2) % 2 == 0 if self.entering else CS.out.steeringPressed
       if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
