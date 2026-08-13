@@ -49,6 +49,9 @@ class IQHudRenderer(HudRenderer):
     self.limit_speed_text = str(round(self.speed_limit_renderer.speed_limit_last)) if has_limit else "---"
     offset = round(self.speed_limit_renderer.speed_limit_offset)
     self.limit_offset_text = f"{offset:+d}" if has_limit and offset != 0 else ""
+    # Hide remembered/default MAX (e.g. 105 km/h) until C3XL is actually engaged.
+    if not ui_state.engaged:
+      self.is_cruise_set = False
     self.turn_signal_controller.update()
     self.speed_renderer.update()
     self.soft_warning_renderer.update()
