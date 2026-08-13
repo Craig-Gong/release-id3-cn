@@ -173,18 +173,45 @@ def is_supported_tici_branch(build_metadata) -> bool:
 
 
 def meb_ignition_from_can(packets, now: float, last_on_ts: float | None) -> tuple[bool, float | None]:
-  """MEB Ready is Klemmen_Status_01 (0x3C0) bit 1 of byte 2. Used when panda FW
-  does not set ignitionCan (common after flashing IQ.Pilot's prebuilt panda)."""
+  """MEB KL15/KL_S live on Klemmen_Status_01 (0x3C0) byte 2 bits 0-1.
+  IQ.Pilot's prebuilt panda does not set ignitionCan for this frame."""
   for msg in packets:
-    for c in msg.can:
+    try:
+      cans = msg.can
+    except Exception:
+      continue
+    for c in cans:
       if getattr(c, "src", 0) >= 128:
         continue
-      dat = c.dat
-      if c.address == MEB_KLEMMEN_ADDR and len(dat) == 4 and ((dat[2] >> 1) & 1):
+      if c.address != MEB_KLEMMEN_ADDR:
+        continue
+      dat = bytes(c.dat)
+      # ZAS_Kl_S = bit 0, ZAS_Kl_15 = bit 1
+      if len(dat) >= 3 and (dat[2] & 0x03):
         last_on_ts = now
   if last_on_ts is not None and (now - last_on_ts) < MEB_IGNITION_HOLD_S:
     return True, last_on_ts
   return False, last_on_ts
+
+
+class MebIgnitionWatch:
+  """Read 0x3C0 on a dedicated thread so the 2Hz hardwared loop cannot miss it."""
+
+  def __init__(self, end_event: threading.Event):
+    self.ignition = False
+    self._end = end_event
+    self._thread = threading.Thread(target=self._run, name="mebIgnition", daemon=True)
+    self._thread.start()
+
+  def _run(self):
+    sock = messaging.sub_sock("can", timeout=100)
+    last_on_ts: float | None = None
+    while not self._end.is_set():
+      try:
+        packets = messaging.drain_sock(sock, wait_for_one=True)
+      except Exception:
+        continue
+      self.ignition, last_on_ts = meb_ignition_from_can(packets, time.monotonic(), last_on_ts)
 
 
 def touch_thread(end_event):
@@ -297,9 +324,8 @@ def hw_state_thread(end_event, hw_queue):
 def hardware_thread(end_event, hw_queue) -> None:
   pm = messaging.PubMaster(['deviceState', 'iqPerfTrace'])
   sm = messaging.SubMaster(["peripheralState", "gpsLocationExternal", "selfdriveState", "pandaStates", "carState"], poll="pandaStates")
-  can_sock = messaging.sub_sock("can", timeout=0)
+  meb_watch = MebIgnitionWatch(end_event)
   perf = PerfTraceEmitter("hardwared", pubmaster=pm)
-  meb_ign_on_ts: float | None = None
 
   count = 0
 
@@ -377,7 +403,7 @@ def hardware_thread(end_event, hw_queue) -> None:
     onroad_conditions["not_onroad_cycle"] = (sm.frame - offroad_cycle_count) >= ONROAD_CYCLE_TIME * SERVICE_LIST['pandaStates'].frequency
 
     now_mono = time.monotonic()
-    meb_ign, meb_ign_on_ts = meb_ignition_from_can(messaging.drain_sock(can_sock), now_mono, meb_ign_on_ts)
+    meb_ign = meb_watch.ignition
 
     if sm.updated['pandaStates'] and len(pandaStates) > 0:
 

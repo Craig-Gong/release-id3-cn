@@ -34,7 +34,7 @@ def test_release_id3_cn_allowed_for_tici():
 
 
 def test_meb_ignition_from_klemmens_status():
-  pkt = SimpleNamespace(can=[SimpleNamespace(address=0x3C0, dat=bytes([0, 0, 0x02, 0]), src=0)])
+  pkt = SimpleNamespace(can=[SimpleNamespace(address=0x3C0, dat=bytes([0x48, 0x0d, 0x07, 0x00]), src=1)])
   on, ts = meb_ignition_from_can([pkt], 10.0, None)
   assert on and ts == 10.0
   on, ts = meb_ignition_from_can([], 11.5, ts)

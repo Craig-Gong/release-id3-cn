@@ -343,7 +343,10 @@ class UIState(IQUIState):
         self.panda_type = panda_states[0].pandaType
         # Check ignition status across all pandas
         if self.panda_type != log.PandaState.PandaType.unknown:
-          self.ignition = any(state.ignitionLine or state.ignitionCan for state in panda_states)
+          # IQ.Pilot panda FW does not set ignitionCan for VW MEB 0x3C0.
+          # hardwared still sets deviceState.started from that CAN frame.
+          panda_ign = any(state.ignitionLine or state.ignitionCan for state in panda_states)
+          self.ignition = panda_ign or self.sm["deviceState"].started
     elif not self.sm.alive["pandaStates"]:
       # Time-based staleness (SubMaster tracks it against the service rate). The old
       # `5 * rl.get_fps()` frame threshold went near-zero right after the screen woke — rendering
