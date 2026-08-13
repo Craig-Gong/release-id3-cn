@@ -38,6 +38,8 @@ CAN_STARTUP_RECOVERY_DELAY = 3.  # require a persistent CAN timeout before cycli
 CAN_STARTUP_RECOVERY_WINDOW = 30.  # only recover shortly after ignition turns on
 CAN_STARTUP_RECOVERY_COOLDOWN = 5.  # allow the restarted car stack time to initialize
 CAN_STARTUP_RECOVERY_MAX_ATTEMPTS = 2
+MEB_KLEMMEN_ADDR = 0x3C0  # Klemmen_Status_01
+MEB_IGNITION_HOLD_S = 2.0
 
 ThermalBand = namedtuple("ThermalBand", ['min_temp', 'max_temp'])
 HardwareState = namedtuple("HardwareState", ['network_type', 'network_info', 'network_strength', 'network_stats',
@@ -165,7 +167,25 @@ def set_offroad_alert_if_changed(offroad_alert: str, show_alert: bool, extra_tex
 
 
 def is_supported_tici_branch(build_metadata) -> bool:
-  return build_metadata.channel_type == "tici" or build_metadata.channel in ALLOWED_TICI_BRANCHES
+  # C3XL fork: never block onroad on branch name. Official IQ.Pilot rejects
+  # unknown tici channels, which keeps card off so the car is never identified.
+  return True
+
+
+def meb_ignition_from_can(packets, now: float, last_on_ts: float | None) -> tuple[bool, float | None]:
+  """MEB Ready is Klemmen_Status_01 (0x3C0) bit 1 of byte 2. Used when panda FW
+  does not set ignitionCan (common after flashing IQ.Pilot's prebuilt panda)."""
+  for msg in packets:
+    for c in msg.can:
+      if getattr(c, "src", 0) >= 128:
+        continue
+      dat = c.dat
+      if c.address == MEB_KLEMMEN_ADDR and len(dat) == 4 and ((dat[2] >> 1) & 1):
+        last_on_ts = now
+  if last_on_ts is not None and (now - last_on_ts) < MEB_IGNITION_HOLD_S:
+    return True, last_on_ts
+  return False, last_on_ts
+
 
 def touch_thread(end_event):
   count = 0
@@ -277,7 +297,9 @@ def hw_state_thread(end_event, hw_queue):
 def hardware_thread(end_event, hw_queue) -> None:
   pm = messaging.PubMaster(['deviceState', 'iqPerfTrace'])
   sm = messaging.SubMaster(["peripheralState", "gpsLocationExternal", "selfdriveState", "pandaStates", "carState"], poll="pandaStates")
+  can_sock = messaging.sub_sock("can", timeout=0)
   perf = PerfTraceEmitter("hardwared", pubmaster=pm)
+  meb_ign_on_ts: float | None = None
 
   count = 0
 
@@ -354,19 +376,25 @@ def hardware_thread(end_event, hw_queue) -> None:
       cloudlog.event("automatic CAN startup recovery", attempt=can_startup_recovery.attempts, error=True)
     onroad_conditions["not_onroad_cycle"] = (sm.frame - offroad_cycle_count) >= ONROAD_CYCLE_TIME * SERVICE_LIST['pandaStates'].frequency
 
+    now_mono = time.monotonic()
+    meb_ign, meb_ign_on_ts = meb_ignition_from_can(messaging.drain_sock(can_sock), now_mono, meb_ign_on_ts)
+
     if sm.updated['pandaStates'] and len(pandaStates) > 0:
 
-      # Set ignition based on any panda connected
-      onroad_conditions["ignition"] = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
+      # Set ignition based on any panda connected, plus MEB Klemmen_Status_01
+      panda_ign = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
+      onroad_conditions["ignition"] = panda_ign or meb_ign
 
       pandaState = pandaStates[0]
 
       in_car = pandaState.harnessStatus != log.PandaState.HarnessStatus.notConnected
 
-    elif (time.monotonic() - sm.recv_time['pandaStates']) > DISCONNECT_TIMEOUT:
+    elif (now_mono - sm.recv_time['pandaStates']) > DISCONNECT_TIMEOUT:
       if onroad_conditions["ignition"]:
         onroad_conditions["ignition"] = False
         cloudlog.error("panda timed out onroad")
+    elif meb_ign:
+      onroad_conditions["ignition"] = True
 
     # Run at 2Hz, plus either edge of ignition
     ign_edge = (started_ts is not None) != all(onroad_conditions.values())

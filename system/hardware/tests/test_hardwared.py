@@ -7,6 +7,7 @@ from openpilot.system.hardware.hardwared import (
   CAN_STARTUP_RECOVERY_MAX_ATTEMPTS,
   CanStartupRecovery,
   is_supported_tici_branch,
+  meb_ignition_from_can,
 )
 
 
@@ -21,15 +22,25 @@ def test_tici_channel_type_allowed():
   assert is_supported_tici_branch(metadata)
 
 
-def test_unsupported_branch_rejected_for_tici():
+def test_unsupported_branch_allowed_on_c3xl_fork():
   metadata = SimpleNamespace(channel="random-branch", channel_type="dev")
-  assert not is_supported_tici_branch(metadata)
+  assert is_supported_tici_branch(metadata)
 
 
 def test_release_id3_cn_allowed_for_tici():
   metadata = SimpleNamespace(channel="release-id3-cn", channel_type="feature")
   assert "release-id3-cn" in ALLOWED_TICI_BRANCHES
   assert is_supported_tici_branch(metadata)
+
+
+def test_meb_ignition_from_klemmens_status():
+  pkt = SimpleNamespace(can=[SimpleNamespace(address=0x3C0, dat=bytes([0, 0, 0x02, 0]), src=0)])
+  on, ts = meb_ignition_from_can([pkt], 10.0, None)
+  assert on and ts == 10.0
+  on, ts = meb_ignition_from_can([], 11.5, ts)
+  assert on
+  on, _ = meb_ignition_from_can([], 13.0, ts)
+  assert not on
 
 
 def recovery_update(recovery: CanStartupRecovery, now: float, **kwargs) -> bool:
