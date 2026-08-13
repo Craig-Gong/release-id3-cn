@@ -242,7 +242,7 @@ class Car:
       self.v_cruise_helper.update_speed_limit_assist(self.is_metric, self.sm['iqPlan'])
 
     if self.v_cruise_helper.volkswagen_standby_set_speed and CS.cruiseState.available and not self.v_cruise_helper.v_cruise_initialized:
-      self.v_cruise_helper.initialize_v_cruise(CS, self.experimental_mode, self.iq_dynamic_mode)
+      self.v_cruise_helper.initialize_v_cruise(CS, self.experimental_mode, self.iq_dynamic_mode, freeze=False)
 
     self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric)
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:

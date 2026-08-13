@@ -165,6 +165,23 @@ class TestVCruiseHelper:
     self.enable(30 * CV.MPH_TO_MS, True, False)
     assert self.v_cruise_helper.v_cruise_kph == int(round(72 * CV.MPH_TO_KPH))
 
+  def test_vw_alpha_long_set_uses_current_speed(self):
+    self.CP.brand = "volkswagen"
+    self.CP.openpilotLongitudinalControl = True
+    self.CP.pcmCruise = False
+    self.v_cruise_helper = VCruiseHelper(self.CP, self.CP_IQ)
+    self.reset_cruise_speed_state()
+
+    v_ego_kph = 47.0
+    CS = car.CarState(vEgo=v_ego_kph * CV.KPH_TO_MS, cruiseState={"available": True})
+    self.v_cruise_helper.update_v_cruise(CS, enabled=False, is_metric=True)
+    assert self.v_cruise_helper.v_cruise_kph == int(round(v_ego_kph))
+
+    self.v_cruise_helper.initialize_v_cruise(CS, True, False)
+    CS_slow = car.CarState(vEgo=20.0 * CV.KPH_TO_MS, cruiseState={"available": True})
+    self.v_cruise_helper.update_v_cruise(CS_slow, enabled=False, is_metric=True)
+    assert self.v_cruise_helper.v_cruise_kph == int(round(v_ego_kph))
+
   def test_iq_mode_current_speed_override(self):
     self.v_cruise_helper.params.put("IQE2ESetSpeedMode", 1)
     self.v_cruise_helper.params.put_bool("IQE2ESetSpeedUseCurrent", True)
