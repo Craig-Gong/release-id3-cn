@@ -230,10 +230,10 @@ class CarInterface(CarInterfaceBase):
     ret.autoResumeSng = ret.minEnableSpeed == -1
     if ret.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
       # OP long starting state: very slow start can fault EPB MEB cars (evo-release).
+      # IQ.Pilot cereal renamed vEgoStopping -> vEgoStoppingDEPRECATED; do not set it.
       ret.startingState = True
       ret.startAccel = 0.8
       ret.vEgoStarting = 0.5
-      ret.vEgoStopping = 0.1
       ret.stopAccel = -0.55
     else:
       ret.stopAccel = -0.55
