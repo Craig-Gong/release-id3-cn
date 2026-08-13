@@ -222,7 +222,7 @@ class CarInterface(CarInterfaceBase):
     if candidate == CAR.PORSCHE_MACAN_MK1:
       ret.steerActuatorDelay = 0.07
 
-    if candidate == CAR.VOLKSWAGEN_PASSAT_B7 or CAR.SEAT_ALHAMBRA_MK1:
+    if candidate in (CAR.VOLKSWAGEN_PASSAT_B7, CAR.SEAT_ALHAMBRA_MK1):
       ret.flags |= VolkswagenFlagsIQ.IQ_PQ_ACC_FTS_EPB.value
       safety_configs[0].safetyParam |= VolkswagenSafetyFlags.PQ_ACC_FTS_EPB.value
 
