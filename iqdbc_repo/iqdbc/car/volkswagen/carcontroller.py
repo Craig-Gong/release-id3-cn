@@ -251,6 +251,8 @@ class CarController(CarControllerBase):
     self.mlb_set_speed_last = 0
     self.speed_limit_last = 0
     self.speed_limit_changed_timer = 0
+    self.iq_curve_last = False
+    self.iq_curve_changed_timer = 0
     self.blinkerActive = None
     self.hide_ea_error = False
     self.radar_disabled_warning_timer = 0
@@ -603,10 +605,19 @@ class CarController(CarControllerBase):
           self.speed_limit_changed_timer = self.frame
         self.speed_limit_last = CS.out.cruiseState.speedLimit
         sl_active = self.frame - self.speed_limit_changed_timer < 400
-        speed_limit = CS.out.cruiseState.speedLimitPredicative if sl_predicative_active else (CS.out.cruiseState.speedLimit if sl_active else 0)
+
+        iq_curve = bool(getattr(CC_IQ, "curveSlowdown", False))
+        if iq_curve and not self.iq_curve_last:
+          self.iq_curve_changed_timer = self.frame
+        self.iq_curve_last = iq_curve
+        iq_curve_hud = iq_curve and (self.frame - self.iq_curve_changed_timer < 400)
+
+        speed_limit = CS.out.vEgo if iq_curve_hud else (
+          CS.out.cruiseState.speedLimitPredicative if sl_predicative_active else (CS.out.cruiseState.speedLimit if sl_active else 0)
+        )
 
         acc_hud_event = self.CCS.acc_hud_event(acc_hud_status, CS.esp_hold_confirmation, sl_predicative_active,
-                                               CS.speed_limit_predicative_type, sl_active)
+                                               CS.speed_limit_predicative_type, sl_active, iq_curve=iq_curve_hud)
 
         can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, hud_control.setSpeed * CV.MS_TO_KPH,
                                                          hud_control.leadVisible, hud_control.leadDistanceBars + 1, show_distance_bars,

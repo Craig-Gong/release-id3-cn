@@ -104,6 +104,10 @@ class IQControlsLayer(InferenceStateBase):
       else:
         self._slc_limit_kph = self._slc_limit_pending_kph = None
       self.radar_manager.update(CC_IQ, sm, set_speed_kph)
+    try:
+      CC_IQ.curveSlowdown = bool(sm['iqPlan'].iqDynamic.curveDetected)
+    except Exception:
+      CC_IQ.curveSlowdown = False
     return CC_IQ
 
   @staticmethod

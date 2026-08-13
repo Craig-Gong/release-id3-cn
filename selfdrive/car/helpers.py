@@ -116,6 +116,7 @@ def convert_iq_car_control(struct: capnp.lib.capnp._DynamicStructReader) -> stru
   struct_dataclass.useRadarAccel = bool(getattr(struct, "useRadarAccel", False))
   struct_dataclass.radarSetSpeedKph = float(getattr(struct, "radarSetSpeedKph", 0.0))
   struct_dataclass.radarGapBars = int(getattr(struct, "radarGapBars", 0))
+  struct_dataclass.curveSlowdown = bool(getattr(struct, "curveSlowdown", False))
 
   return struct_dataclass
 
@@ -189,5 +190,6 @@ def convert_iq_car_control_compact(struct: capnp.lib.capnp._DynamicStructReader,
   struct_dataclass.useRadarAccel = bool(getattr(struct, "useRadarAccel", False))
   struct_dataclass.radarSetSpeedKph = float(getattr(struct, "radarSetSpeedKph", 0.0))
   struct_dataclass.radarGapBars = int(getattr(struct, "radarGapBars", 0))
+  struct_dataclass.curveSlowdown = bool(getattr(struct, "curveSlowdown", False))
 
   return struct_dataclass

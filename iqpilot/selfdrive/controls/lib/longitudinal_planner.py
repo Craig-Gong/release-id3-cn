@@ -277,6 +277,7 @@ class LongitudinalPlannerIQ:
       iq_dynamic.state = IQDynamicState.blended if self.iq_dynamic.mode() == 'blended' else IQDynamicState.acc
       iq_dynamic.enabled = self.iq_dynamic.enabled()
       iq_dynamic.active = self.iq_dynamic.active()
+      iq_dynamic.curveDetected = bool(self.iq_dynamic.active() and self.iq_dynamic.curve_slowdown_active)
 
       nav_summary = plan_msg.iqNavState.nav
       nav_summary.engaged = self.nav_engaged

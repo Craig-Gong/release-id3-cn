@@ -51,6 +51,7 @@ class IQDynamicController:
     self.hasIQSFL = False
     self.hasIQL = False
     self.curve_detected = False
+    self.curve_slowdown_active = False
     self.slow_lead_detected = False
     self.stop_light_detected = False
     self.low_speed_detected = False
@@ -195,6 +196,7 @@ class IQDynamicController:
     self.IQEngineManager.request('acc', urgency=urgency)
 
   def IQStateEngine(self) -> None:
+    self.curve_slowdown_active = False
     if self.hasIQL:
       self._request_blended(1.0, True)
     elif self.stop_light_detected and self.conditional_model_stops:
@@ -204,6 +206,7 @@ class IQDynamicController:
     elif self.slow_lead_detected:
       self._request_blended(0.9)
     elif self.conditional_curves and self.hasIQSDL:
+      self.curve_slowdown_active = True
       self._request_blended(max(0.8, min(1.0, self.IQDynamicU * 1.5)))
     elif self.conditional_slc_fallback and self.slc_experimental_mode:
       self._request_blended(0.8)
@@ -215,6 +218,7 @@ class IQDynamicController:
       self._request_acc(0.7)
 
   def IQStateEngine_R(self) -> None:
+    self.curve_slowdown_active = False
     if self.hasIQL:
       self._request_blended(1.0, True)
     elif self.stop_light_detected and self.conditional_model_stops:
@@ -224,6 +228,7 @@ class IQDynamicController:
     elif self.slow_lead_detected:
       self._request_blended(0.9)
     elif self.conditional_curves and self.hasIQSDL:
+      self.curve_slowdown_active = True
       self._request_blended(max(0.8, min(1.0, self.IQDynamicU * 1.3)))
     elif self.conditional_slc_fallback and self.slc_experimental_mode:
       self._request_blended(0.8)

@@ -175,6 +175,7 @@ struct IQPlan @0xda401323ae805f2b {
     state @0 :IQDynamicControlState;
     enabled @1 :Bool;
     active @2 :Bool;
+    curveDetected @3 :Bool;
 
     enum IQDynamicControlState {
       acc @0;
@@ -359,6 +360,7 @@ struct IQCarControl @0xdc6c97009c7ba28f {
   useRadarAccel @8 :Bool;        # chill mode + radar active -> pass radar ACS_Sollbeschl as ACC_System payload
   radarSetSpeedKph @9 :Float32;  # OP set speed (km/h) to sync radar ACA_V_Wunsch toward via GRA_Up/Down
   radarGapBars @10 :UInt8;       # OP follow-distance bars to mirror to radar GRA_Zeitluecke
+  curveSlowdown @11 :Bool;       # IQ.Dynamic Curves is requesting blended slowdown
 
   struct Param {
     key @0 :Text;
