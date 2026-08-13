@@ -124,6 +124,7 @@ class SLCVCruise:
       return str(value)
 
     slc_policy = int(get_param_str("SLCPolicy", "1"))
+    iqlink_enabled = get_param_bool("IqlinkEnabled")
 
     override_method = int(get_param_str("SLCOverrideMethod", "0"))
     override_manual = (override_method == 0)
@@ -148,6 +149,7 @@ class SLCVCruise:
       "speed_limit_mode": speed_limit_mode,
       "show_speed_limits": show_speed_limits,
       "slc_policy": slc_policy,
+      "iqlink_enabled": iqlink_enabled,
       "slc_auto_confirm": get_param_bool("SLCAutoConfirm"),
       "speed_limit_confirmation_higher": get_param_bool("SpeedLimitConfirmationHigher"),
       "speed_limit_confirmation_lower": get_param_bool("SpeedLimitConfirmationLower"),

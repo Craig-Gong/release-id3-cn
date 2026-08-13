@@ -40,6 +40,40 @@ def test_iqlink_in_map_data_only_policy():
   assert abs(lim - 16.67) < 1e-6
 
 
+def test_camera_tsr_when_iqlink_and_map_unused():
+  r = IQSpeedLimitResolver()
+  r.map_speed_limit = 0.0
+  camera = 22.22  # 80 kph VZE
+  lim, src = r.resolve(camera, 0.0, {"slc_policy": POLICY_MAP_DATA_PRIORITY, "iqlink_enabled": False})
+  assert src == "Dashboard"
+  assert abs(lim - camera) < 1e-6
+
+
+def test_map_only_falls_back_to_camera_tsr():
+  r = IQSpeedLimitResolver()
+  r.map_speed_limit = 0.0
+  camera = 16.67  # 60 kph
+  lim, src = r.resolve(camera, 0.0, {"slc_policy": POLICY_MAP_DATA_ONLY, "iqlink_enabled": False})
+  assert src == "Dashboard"
+  assert abs(lim - camera) < 1e-6
+
+
+def test_map_limit_still_beats_camera():
+  r = IQSpeedLimitResolver()
+  r.map_speed_limit = 27.78  # 100 kph OSM / mapd
+  lim, src = r.resolve(22.22, 0.0, {"slc_policy": POLICY_MAP_DATA_PRIORITY, "iqlink_enabled": False})
+  assert src == "Map Data"
+  assert abs(lim - 27.78) < 1e-6
+
+
+def test_disabled_iqlink_does_not_block_camera():
+  r = IQSpeedLimitResolver()
+  r.map_speed_limit = 0.0
+  lim, src = r.resolve(22.22, 0.0, {"slc_policy": POLICY_MAP_DATA_PRIORITY, "iqlink_enabled": False}, iqlink_limit=27.78)
+  assert src == "Dashboard"
+  assert abs(lim - 22.22) < 1e-6
+
+
 def test_below_min_ignored():
   r = IQSpeedLimitResolver()
   lim, src = r.resolve(0.0, 0.0, {"slc_policy": POLICY_MAP_DATA_PRIORITY}, iqlink_limit=5.0)
@@ -89,6 +123,28 @@ def test_update_iqlink_keeps_last_while_tbt_cap():
   )
   r.update_iqlink_nav(sm)
   assert abs(r.iqlink_speed_limit - 27.78) < 1e-6
+
+
+def test_stale_iqlink_shm_ignored_when_nav_inactive():
+  r = IQSpeedLimitResolver()
+  try:
+    open("/dev/shm/iqlink_road_speed_ms", "w", encoding="utf-8").write("27.78")
+  except OSError:
+    return
+  sm = _FakeSM(
+    {"iqNavState": True},
+    iqNavState=SimpleNamespace(
+      active=False,
+      targetSpeedValid=False,
+      navSpeedTargetActive=False,
+      longitudinalProvider="route",
+      targetSpeed=0.0,
+    ),
+  )
+  r.update_iqlink_nav(sm, iqlink_enabled=True)
+  assert r.iqlink_speed_limit == 0.0
+  lim, src = r.resolve(22.22, 0.0, {"slc_policy": POLICY_MAP_DATA_PRIORITY, "iqlink_enabled": True})
+  assert src == "Dashboard"
 
 
 def test_update_iqlink_shm_raw_beats_capped_target():

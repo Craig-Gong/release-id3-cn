@@ -68,6 +68,7 @@ class _FakeSLC:
 def _base_slc_params_controller():
   return {
     "slc_policy": POLICY_MAP_DATA_PRIORITY,
+    "iqlink_enabled": False,
     "slc_auto_confirm": False,
     "slc_fallback_previous_speed_limit": False,
     "slc_fallback_set_speed": False,

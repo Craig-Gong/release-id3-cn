@@ -89,13 +89,27 @@ class IQSpeedLimitResolver:
 
     self.map_speed_limit = current_limit
 
-  def update_iqlink_nav(self, sm):
+  def update_iqlink_nav(self, sm, iqlink_enabled=True):
     """Gaode road limit for HUD from iqNavState / bridge shm.
 
     Prefer /dev/shm/iqlink_road_speed_ms (raw nRoadLimitSpeed) so TBT/green-wave
     caps on targetSpeed do not blank the speed-limit sign.
     Fallback: uncapped iqNavState.targetSpeed while nav active.
+
+    Stale shm after IQ-link off / nav inactive must not block camera TSR.
     """
+    if not iqlink_enabled:
+      self.iqlink_speed_limit = 0.0
+      return
+
+    if not self._is_alive(sm, "iqNavState"):
+      self.iqlink_speed_limit = 0.0
+      return
+    n = sm["iqNavState"]
+    if not bool(getattr(n, "active", False)):
+      self.iqlink_speed_limit = 0.0
+      return
+
     shm_limit = 0.0
     try:
       with open("/dev/shm/iqlink_road_speed_ms", encoding="utf-8") as f:
@@ -106,13 +120,6 @@ class IQSpeedLimitResolver:
       self.iqlink_speed_limit = shm_limit
       return
 
-    if not self._is_alive(sm, "iqNavState"):
-      self.iqlink_speed_limit = 0.0
-      return
-    n = sm["iqNavState"]
-    if not bool(getattr(n, "active", False)):
-      self.iqlink_speed_limit = 0.0
-      return
     if bool(getattr(n, "navSpeedTargetActive", False)):
       return  # keep last road limit while approach/TBT caps targetSpeed
     if not bool(getattr(n, "targetSpeedValid", False)):
@@ -130,7 +137,8 @@ class IQSpeedLimitResolver:
       iqlink_limit = self.iqlink_speed_limit
 
     sources = {}
-    if float(iqlink_limit or 0.0) >= LIMIT_MIN_SPEED:
+    iqlink_on = bool(slc_params.get("iqlink_enabled", True))
+    if iqlink_on and float(iqlink_limit or 0.0) >= LIMIT_MIN_SPEED:
       sources["Iqlink"] = float(iqlink_limit)
     if dashboard_limit >= LIMIT_MIN_SPEED:
       sources["Dashboard"] = dashboard_limit
@@ -140,8 +148,8 @@ class IQSpeedLimitResolver:
       sources["Map Data"] = self.map_speed_limit
 
     if policy == POLICY_MAP_DATA_ONLY:
-      # Gaode (Iqlink) still preferred when present — OSM coverage is sparse in CN.
-      for src in ("Iqlink", "Map Data"):
+      # Gaode / map first. Camera TSR fills in when those LIMIT sources are unused.
+      for src in ("Iqlink", "Map Data", "Dashboard"):
         if src in sources:
           return sources[src], src
       return 0.0, "None"
@@ -797,7 +805,7 @@ class SpeedLimitController:
     lookahead_lower = slc_params.get("map_speed_lookahead_lower", 5.0)
     lookahead_higher = slc_params.get("map_speed_lookahead_higher", 5.0)
     self._resolver.update_map_data(v_ego, sm, lookahead_lower, lookahead_higher)
-    self._resolver.update_iqlink_nav(sm)
+    self._resolver.update_iqlink_nav(sm, iqlink_enabled=bool(slc_params.get("iqlink_enabled", True)))
 
     use_online = slc_params.get("slc_online_filler", False)
     if use_online:
