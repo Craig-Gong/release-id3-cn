@@ -71,10 +71,28 @@ def always_run(started: bool, params: Params, CP: car.CarParams) -> bool:
 def only_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started
 
+def iqlink_enabled(params: Params) -> bool:
+  # Default ON (fresh params / missing file) to match iq-link product keys.
+  try:
+    raw = params.get("IqlinkEnabled")
+  except Exception:
+    return True
+  if raw is None:
+    return True
+  return params.get_bool("IqlinkEnabled")
+
+def iqlink_needed(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return iqlink_enabled(params)
+
 def navd_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
+  # When IQ-link BLE is on, iqlinkd owns iqNavState — do not run Mapbox navd.
+  if iqlink_enabled(params):
+    return False
   return started and params.get_bool("NavigationEnabled")
 
 def navrenderd_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
+  if iqlink_enabled(params):
+    return False
   return started and params.get_bool("NavigationEnabled") and params.get_bool("OnScreenNavigation")
 
 def iqmapd_needed(params: Params) -> bool:
@@ -201,6 +219,7 @@ procs += [
   BundleProcess("navd", "iqpilot_navd_private", "iqpilot_private.navd.navd", navd_onroad, restart_if_crash=True),
   BundleProcess("navrenderd", "iqpilot_navd_private", "iqpilot_private.navd.navrenderd", navrenderd_onroad, restart_if_crash=True),
   BundleProcess("iqmapd", "iqpilot_navd_private", "iqpilot_private.navd.iqmapd", iqmapd_onroad, restart_if_crash=True),
+  PythonProcess("iqlinkd", "iqpilot.iqlink.bridge", iqlink_needed, restart_if_crash=True),
 
   # work-zone detector for Speed Limit Assist
   PythonProcess("constructiond", "iqpilot.selfdrive.constructiond", constructiond_onroad, restart_if_crash=True),

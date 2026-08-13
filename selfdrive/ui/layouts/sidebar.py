@@ -5,6 +5,7 @@ from collections.abc import Callable
 from cereal import log
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.lib.wifi_ssid import current_ssid
+from openpilot.selfdrive.ui.lib.iqlink_status import iqlink_home_visible, iqlink_status_color
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -108,6 +109,7 @@ class Sidebar(Widget):
       gui_app.texture(f"{_net_base}wifi_strength_full.png", 64, 64, keep_aspect_ratio=True),
       gui_app.texture(f"{_net_base}wifi_strength_full.png", 64, 64, keep_aspect_ratio=True),
     ]
+    self._icon_bluetooth = gui_app.texture("icons/iq/bluetooth.png", 48, 48, keep_aspect_ratio=True)
     self._mic_indicator_rect = rl.Rectangle(0, 0, 0, 0)
     self._font_regular = gui_app.font(FontWeight.MEDIUM)
     self._font_bold = gui_app.font(FontWeight.BOLD)
@@ -251,7 +253,11 @@ class Sidebar(Widget):
     icon_list = self._wifi_strength_icons if self._net_type in (NETWORK_TYPES[NetworkType.wifi], NETWORK_TYPES[NetworkType.ethernet]) else self._cell_strength_icons
     signal_icon = icon_list[min(self._net_strength, len(icon_list) - 1)]
     text_size = measure_text_cached(self._font_regular, net_text, 44)
-    content_w = signal_icon.width + 14 + text_size.x
+    show_bt = iqlink_home_visible(ui_state.params)
+    bt_color = iqlink_status_color(ui_state.params) if show_bt else None
+    bt_w = self._icon_bluetooth.width if show_bt else 0
+    bt_gap = 12 if show_bt else 0
+    content_w = signal_icon.width + 14 + text_size.x + bt_gap + bt_w
 
     icon_x = NETWORK_RECT.x + (NETWORK_RECT.width - content_w) / 2
     icon_y = NETWORK_RECT.y + (NETWORK_RECT.height - signal_icon.height) / 2
@@ -260,6 +266,11 @@ class Sidebar(Widget):
     text_x = icon_x + signal_icon.width + 14
     text_y = NETWORK_RECT.y + (NETWORK_RECT.height - text_size.y) / 2
     rl.draw_text_ex(self._font_regular, net_text, rl.Vector2(int(text_x), int(text_y)), 44, 0, rl.Color(215, 215, 215, 255))
+
+    if show_bt and bt_color is not None:
+      bt_x = text_x + text_size.x + bt_gap
+      bt_y = NETWORK_RECT.y + (NETWORK_RECT.height - self._icon_bluetooth.height) / 2
+      rl.draw_texture(self._icon_bluetooth, int(bt_x), int(bt_y), bt_color)
 
   def _draw_metrics(self, rect: rl.Rectangle):
     metric_count = 3

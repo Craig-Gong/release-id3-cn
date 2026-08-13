@@ -13,6 +13,7 @@ from openpilot.selfdrive.ui.widgets.map_panel_widget import MapPanelWidget
 from openpilot.iqpilot.ui.layouts.settings.drive_history import TripsLayout
 from openpilot.selfdrive.ui.layouts.sidebar import NETWORK_TYPES
 from openpilot.selfdrive.ui.lib.wifi_ssid import current_ssid
+from openpilot.selfdrive.ui.lib.iqlink_status import iqlink_home_visible, iqlink_status_color
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MouseEvent, MousePos
@@ -445,6 +446,7 @@ class HomeLayout(Widget):
 
     # Status-bar icons (white, tinted at draw time)
     self._icon_wifi = gui_app.texture("icons/iq/wifi.png", 64, 64, keep_aspect_ratio=True)
+    self._icon_bluetooth = gui_app.texture("icons/iq/bluetooth.png", 56, 56, keep_aspect_ratio=True)
     self._icon_battery = gui_app.texture("icons/iq/battery.png", 72, 72, keep_aspect_ratio=True)
 
     _net_base = "icons_mici/settings/network/"
@@ -724,7 +726,12 @@ class HomeLayout(Widget):
     net_w = measure_text_cached(font, net_text, text_fs).x
     _sig_icons = self._wifi_strength_icons if self._on_wifi else self._cell_strength_icons
     _icon_signal = _sig_icons[min(self._net_strength, len(_sig_icons) - 1)]
+    show_bt = iqlink_home_visible(self.params)
+    bt_color = iqlink_status_color(self.params) if show_bt else None
+    bt_w = self._icon_bluetooth.width if show_bt else 0
     cluster_w = pad + light_d + gap + (word_w + gap if show_word else 0) + _icon_signal.width + 14 + net_w
+    if show_bt:
+      cluster_w += gap + bt_w
     batt_text = None
     if self._battery_pct is not None:
       batt_text = f"{self._battery_pct}%"
@@ -753,7 +760,14 @@ class HomeLayout(Widget):
     x += _icon_signal.width + 14
     net_size = measure_text_cached(font, net_text, text_fs)
     rl.draw_text_ex(font, net_text, rl.Vector2(int(x), int(cy - net_size.y / 2)), text_fs, 0, rl.Color(215, 215, 215, 255))
-    x += net_w + gap
+    x += net_w
+
+    # iqlink BLE: hide when bridge off; green only when HMAC can push nav
+    if show_bt and bt_color is not None:
+      x += gap
+      rl.draw_texture(self._icon_bluetooth, int(x), int(cy - self._icon_bluetooth.height / 2), bt_color)
+      x += bt_w
+    x += gap
 
     # battery, if available
     if batt_text is not None:

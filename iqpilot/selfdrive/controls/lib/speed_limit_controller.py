@@ -51,6 +51,7 @@ class IQSpeedLimitResolver:
     self.map_speed_limit = 0.0
     self.next_speed_limit = 0.0
     self.next_speed_distance = 0.0
+    self.iqlink_speed_limit = 0.0
 
   @staticmethod
   def _is_alive(sm, key):
@@ -88,10 +89,49 @@ class IQSpeedLimitResolver:
 
     self.map_speed_limit = current_limit
 
-  def resolve(self, dashboard_limit, mapbox_limit, slc_params):
+  def update_iqlink_nav(self, sm):
+    """Gaode road limit for HUD from iqNavState / bridge shm.
+
+    Prefer /dev/shm/iqlink_road_speed_ms (raw nRoadLimitSpeed) so TBT/green-wave
+    caps on targetSpeed do not blank the speed-limit sign.
+    Fallback: uncapped iqNavState.targetSpeed while nav active.
+    """
+    shm_limit = 0.0
+    try:
+      with open("/dev/shm/iqlink_road_speed_ms", encoding="utf-8") as f:
+        shm_limit = float(f.read().strip() or 0.0)
+    except Exception:
+      shm_limit = 0.0
+    if shm_limit >= LIMIT_MIN_SPEED:
+      self.iqlink_speed_limit = shm_limit
+      return
+
+    if not self._is_alive(sm, "iqNavState"):
+      self.iqlink_speed_limit = 0.0
+      return
+    n = sm["iqNavState"]
+    if not bool(getattr(n, "active", False)):
+      self.iqlink_speed_limit = 0.0
+      return
+    if bool(getattr(n, "navSpeedTargetActive", False)):
+      return  # keep last road limit while approach/TBT caps targetSpeed
+    if not bool(getattr(n, "targetSpeedValid", False)):
+      return
+    provider = str(getattr(n, "longitudinalProvider", "") or "")
+    if provider not in ("", "route"):
+      return
+    v = float(getattr(n, "targetSpeed", 0.0) or 0.0)
+    if v >= LIMIT_MIN_SPEED:
+      self.iqlink_speed_limit = v
+
+  def resolve(self, dashboard_limit, mapbox_limit, slc_params, iqlink_limit=None):
     policy = slc_params.get("slc_policy", POLICY_MAP_DATA_PRIORITY)
+    if iqlink_limit is None:
+      iqlink_limit = self.iqlink_speed_limit
 
     sources = {}
+    if float(iqlink_limit or 0.0) >= LIMIT_MIN_SPEED:
+      sources["Iqlink"] = float(iqlink_limit)
     if dashboard_limit >= LIMIT_MIN_SPEED:
       sources["Dashboard"] = dashboard_limit
     if mapbox_limit >= LIMIT_MIN_SPEED:
@@ -100,12 +140,14 @@ class IQSpeedLimitResolver:
       sources["Map Data"] = self.map_speed_limit
 
     if policy == POLICY_MAP_DATA_ONLY:
-      if "Map Data" in sources:
-        return sources["Map Data"], "Map Data"
+      # Gaode (Iqlink) still preferred when present — OSM coverage is sparse in CN.
+      for src in ("Iqlink", "Map Data"):
+        if src in sources:
+          return sources[src], src
       return 0.0, "None"
 
     if policy == POLICY_MAP_DATA_PRIORITY:
-      for src in ("Map Data", "Dashboard", "Mapbox"):
+      for src in ("Iqlink", "Map Data", "Dashboard", "Mapbox"):
         if src in sources:
           return sources[src], src
       return 0.0, "None"
@@ -755,6 +797,7 @@ class SpeedLimitController:
     lookahead_lower = slc_params.get("map_speed_lookahead_lower", 5.0)
     lookahead_higher = slc_params.get("map_speed_lookahead_higher", 5.0)
     self._resolver.update_map_data(v_ego, sm, lookahead_lower, lookahead_higher)
+    self._resolver.update_iqlink_nav(sm)
 
     use_online = slc_params.get("slc_online_filler", False)
     if use_online:

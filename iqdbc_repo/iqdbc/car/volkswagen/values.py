@@ -502,11 +502,15 @@ class CAR(Platforms):
   VOLKSWAGEN_ID3_MK1 = VolkswagenMEBPlatformConfig(
     [
       VWCarDocs("Volkswagen ID.3 2020-23"),
+      VWCarDocs("Volkswagen ID.3 2021-23 (China, SAIC-VW, MEB Gen 1)"),
       VWCarDocs("Volkswagen MEB Gen 1 2020-23"),
     ],
     VolkswagenCarSpecs(mass=1935, wheelbase=2.77),
-    chassis_codes={"E1"},
-    wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR},
+    # China 2021 ID.3 is MEB Gen 1 (this platform, vw_meb DBC). Do not use MK2 / MEB_GEN2.
+    # E1: EU/US VIN (WVW/1V2 ... E1 ...)
+    # E9: China SAIC-VW VIN (LSVFx6E9..., e.g. LSVFA6E9 / LSVFB6E9 / LSVFC6E9 / LSVFE6E9)
+    chassis_codes={"E1", "E9"},
+    wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR, WMI.SAIC_VOLKSWAGEN},
     model_years={"L", "M", "N", "P"},
   )
   VOLKSWAGEN_ID3_MK2 = VolkswagenMEBPlatformConfig(

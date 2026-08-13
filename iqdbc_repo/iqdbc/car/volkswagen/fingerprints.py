@@ -389,6 +389,7 @@ FW_VERSIONS = {
     ],
   },
   CAR.VOLKSWAGEN_ID3_MK1: {
+    # EU 1EA… FW. China SAIC-VW ID.3 may differ — dump carFw + VIN if unrecognized.
     (Ecu.inverter, 0x17fc007c, None): [
       b'\xf1\x871EA907121AH\xf1\x896050\xf1\x82010\x00',
     ],

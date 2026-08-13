@@ -256,7 +256,35 @@ class VisualsLayout(Widget):
     # Display rows are shared with DisplayLayout (its row 0, Force Mici UI, stays there)
     display_rows = self._display_layout._scroller._items[1:]
 
+    def _iqlink_description():
+      from openpilot.selfdrive.ui.lib.iqlink_status import iqlink_hmac_up
+      if not self._params.get_bool("IqlinkEnabled"):
+        return tr("Phone IQ-link over BLE pushes road limit, lights, and turn-by-turn. Pairing code 999999.")
+      if iqlink_hmac_up(self._params):
+        return tr("Connected. Pairing code 999999.")
+      return tr("Waiting for phone IQ-link. Pairing code 999999.")
+
+    def _on_iqlink(enabled: bool):
+      if enabled:
+        try:
+          self._params.put_bool("IqlinkBlePairFailed", False)
+        except Exception:
+          pass
+
+    self._iqlink_toggle = toggle_item(
+      title=lambda: tr("IQ-link BLE"),
+      description=_iqlink_description,
+      param="IqlinkEnabled",
+      initial_state=self._params.get_bool("IqlinkEnabled"),
+      callback=_on_iqlink,
+    )
+
     return [
+      IQListItem(title=lambda: tr("IQ-link"), description="", action_item=None, inline=True,
+                 title_color=_SECTION_TITLE_COLOR),
+      IQLineSeparator(20),
+      self._iqlink_toggle,
+      IQLineSeparator(60),
       IQListItem(title=lambda: tr("Display"), description="", action_item=None, inline=True,
                  title_color=_SECTION_TITLE_COLOR),
       IQLineSeparator(20),
@@ -279,6 +307,7 @@ class VisualsLayout(Widget):
 
   def _update_state(self):
     super()._update_state()
+    self._iqlink_toggle.action_item.set_state(self._params.get_bool("IqlinkEnabled"))
     for key, row in self._toggles.items():
       row.action_item.set_state(self._params.get_bool(key))
     self._dev_ui_info.action_item.set_state(bool(int(ui_state.params.get("IQDevUIInfo", return_default=True))))

@@ -115,6 +115,20 @@ def test_button_enable_recovers_once_cruise_fault_clears():
   assert state.update_button_enable(button_events)
 
 
+def test_china_id3_vin_fuzzy_match():
+  # SAIC-VW ID.3 2021: LSVFA6E9... chassis E9 at VIN[6:8], year M at VIN[9]
+  vin = "LSVFA6E99M2010664"
+  radar_fw = b'\xf1\x871EA907572H \xf1\x890234'
+  live_fws = {(0x757, None): [radar_fw]}
+
+  matches = FW_QUERY_CONFIG.match_fw_to_car_fuzzy(live_fws, vin, FW_VERSIONS)
+  assert matches == {CAR.VOLKSWAGEN_ID3_MK1}
+
+  platform = CAR.VOLKSWAGEN_ID3_MK1
+  assert WMI.SAIC_VOLKSWAGEN in platform.config.wmis
+  assert "E9" in platform.config.chassis_codes
+
+
 def test_pq_hca_ready_does_not_complete_eps_initialization():
   state = object.__new__(CarState)
   state.eps_init_complete = False

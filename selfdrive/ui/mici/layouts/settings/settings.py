@@ -9,6 +9,7 @@ from openpilot.selfdrive.ui.mici.layouts.settings.toggles import TogglesLayoutMi
 from openpilot.selfdrive.ui.mici.layouts.settings.steering import SteeringLayoutMici
 from openpilot.selfdrive.ui.mici.layouts.settings.cruise import CruiseLayoutMici
 from openpilot.selfdrive.ui.mici.layouts.settings.visuals import VisualsLayoutMici
+from openpilot.selfdrive.ui.mici.layouts.settings.iqlink import IqlinkBigButton
 from openpilot.selfdrive.ui.mici.layouts.settings.models import ModelsLayoutMici
 from openpilot.selfdrive.ui.mici.layouts.settings.display import DisplayLayoutMici
 from openpilot.selfdrive.ui.mici.layouts.settings.drive_history import TripsLayoutMici
@@ -73,6 +74,8 @@ class SettingsLayout(NavScroller):
     visuals_btn = SettingsBigButton("visuals", "", gui_app.texture("icons_mici/onroad/eye_fill.png", 64, 46))
     visuals_btn.set_click_callback(lambda: gui_app.push_widget(visuals_panel))
 
+    iqlink_btn = IqlinkBigButton()
+
     models_panel = ModelsLayoutMici()
     models_btn = SettingsBigButton("models", "", gui_app.texture("icons_mici/models.png", 60, 60))
     models_btn.set_click_callback(lambda: gui_app.push_widget(models_panel))
@@ -113,6 +116,7 @@ class SettingsLayout(NavScroller):
     self._scroller.add_widgets([
       device_btn,
       network_btn,
+      iqlink_btn,
       PairBigButton(),
       models_btn,
       software_btn,

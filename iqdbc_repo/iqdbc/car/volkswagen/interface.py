@@ -227,8 +227,16 @@ class CarInterface(CarInterfaceBase):
       safety_configs[0].safetyParam |= VolkswagenSafetyFlags.PQ_ACC_FTS_EPB.value
 
     ret.pcmCruise = not ret.openpilotLongitudinalControl
-    ret.stopAccel = -0.55
     ret.autoResumeSng = ret.minEnableSpeed == -1
+    if ret.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
+      # OP long starting state: very slow start can fault EPB MEB cars (evo-release).
+      ret.startingState = True
+      ret.startAccel = 0.8
+      ret.vEgoStarting = 0.5
+      ret.vEgoStopping = 0.1
+      ret.stopAccel = -0.55
+    else:
+      ret.stopAccel = -0.55
     CAN = CanBus(fingerprint=fingerprint)
     if CAN.pt >= 4:
       safety_configs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))

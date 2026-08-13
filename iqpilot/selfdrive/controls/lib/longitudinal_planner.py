@@ -8,6 +8,7 @@ import numpy as np
 from cereal import messaging, custom
 from iqdbc.car import structs
 from openpilot.common.constants import CV
+from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX
 from openpilot.iqpilot.selfdrive.controls.lib.custom_stop_distance import CustomStopDistance
@@ -25,6 +26,9 @@ SpeedLimitAssistState = custom.IQPlan.SpeedLimit.AssistState
 SpeedLimitSource = custom.IQPlan.SpeedLimit.Source
 NavProvider = custom.IQNavState.LongitudinalProvider
 NavLongitudinalState = custom.IQNavState.LongitudinalState
+
+# IQ-link: non-stop nav execution floor (red-light stop is exempt).
+_NAV_EXEC_MIN_MS = 60.0 * CV.KPH_TO_MS
 
 class LongitudinalPlannerIQ:
   def __init__(self, CP: structs.CarParams, CP_IQ: structs.IQCarParams, mpc):
@@ -46,6 +50,11 @@ class LongitudinalPlannerIQ:
     self.nav_speed_target = 0.
     self.nav_accel_target = 0.
     self.nav_valid = False
+    self.nav_stop_request = False
+    try:
+      self._params = Params()
+    except Exception:
+      self._params = None
     self.force_stop_timer = 0.0
     self.forcing_stop = False
     self.override_force_stop = False
@@ -58,6 +67,27 @@ class LongitudinalPlannerIQ:
       return experimental_mode
 
     return experimental_mode and self.iq_dynamic.mode() == "blended"
+
+  def _iqlink_on(self) -> bool:
+    try:
+      return bool(self._params and self._params.get_bool("IqlinkEnabled"))
+    except Exception:
+      return False
+
+  def _nav_device_offset_ms(self) -> float:
+    """Device speed offset for nav execution (m/s). Prefer SLC band offset; fall back to value offset."""
+    offset = float(getattr(self.slimit, "slc_offset", 0.0) or 0.0)
+    if offset != 0.0:
+      return offset
+    if self._params is None:
+      return 0.0
+    try:
+      raw = self._params.get("IQSpeedAssistValueOffset", return_default=True)
+      value = float(raw) if raw is not None else 0.0
+      is_metric = bool(self._params.get_bool("IsMetric"))
+      return value * (CV.KPH_TO_MS if is_metric else CV.MPH_TO_MS)
+    except Exception:
+      return 0.0
 
   def update_targets(self, sm: messaging.SubMaster, v_ego: float, a_ego: float, v_cruise: float) -> tuple[float, float]:
     CS = sm['carState']
@@ -73,7 +103,20 @@ class LongitudinalPlannerIQ:
     self.nav_state = getattr(nav_state, "longitudinalState", NavLongitudinalState.disabled)
     self.nav_speed_target = float(getattr(nav_state, "speedTarget", 0.0))
     self.nav_accel_target = float(getattr(nav_state, "accelTarget", 0.0))
+    # Allow speedTarget==0 (nav red-light stop) while engaged/valid.
     self.nav_valid = bool(getattr(nav_state, "valid", False) and self.nav_engaged)
+    self.nav_stop_request = bool(self.nav_valid and self.nav_speed_target <= 0.0)
+
+    has_follow_lead = False
+    try:
+      lead = sm['radarState'].leadOne
+      has_follow_lead = bool(getattr(lead, "status", False))
+    except Exception:
+      has_follow_lead = False
+    if has_follow_lead:
+      self.nav_stop_request = False
+
+    iqlink_on = self._iqlink_on()
 
     # IQ.Pilot custom Speed Limit Controller
     now = datetime.now()
@@ -103,6 +146,7 @@ class LongitudinalPlannerIQ:
       "Dashboard": SpeedLimitSource.car,
       "Map Data": SpeedLimitSource.map,
       "Mapbox": SpeedLimitSource.map,
+      "Iqlink": SpeedLimitSource.map,  # Gaode via IQ-link BLE
       "None": SpeedLimitSource.none,
     }
     self.speed_limit_source = source_map.get(display_source, SpeedLimitSource.none)
@@ -111,12 +155,46 @@ class LongitudinalPlannerIQ:
       LongitudinalPlanSource.cruise: (v_cruise, a_ego),
       LongitudinalPlanSource.speedLimitAssist: (slc_v_cruise, a_ego),
     }
-    if self.nav_valid:
-      targets[LongitudinalPlanSource.nav] = (self.nav_speed_target, self.nav_accel_target)
+    # Follow-lead owns longitudinal; do not publish nav speed pressure while tracking.
+    if self.nav_valid and not has_follow_lead:
+      if iqlink_on:
+        if self.nav_stop_request:
+          nav_v = 0.0
+        elif self.nav_accel_target <= -1.9:
+          nav_v = max(self.nav_speed_target, 0.0)
+        else:
+          nav_v = max(self.nav_speed_target, 0.0, _NAV_EXEC_MIN_MS) + self._nav_device_offset_ms()
+        targets[LongitudinalPlanSource.nav] = (nav_v, self.nav_accel_target)
+      else:
+        targets[LongitudinalPlanSource.nav] = (self.nav_speed_target, self.nav_accel_target)
+
+    if iqlink_on and self.nav_valid and not has_follow_lead:
+      targets.pop(LongitudinalPlanSource.cruise, None)
+      if LongitudinalPlanSource.speedLimitAssist in targets and LongitudinalPlanSource.nav in targets:
+        nav_exec = targets[LongitudinalPlanSource.nav][0]
+        if self.nav_stop_request or targets[LongitudinalPlanSource.speedLimitAssist][0] >= nav_exec:
+          targets.pop(LongitudinalPlanSource.speedLimitAssist, None)
+
+    # MEB predicative curve: take stricter than nav when enabled (ID.3 / evo-release parity).
+    try:
+      pred_on = bool(self._params and self._params.get_bool("EnableSLPredReactToCurves"))
+      pred_v = float(getattr(CS.cruiseState, "speedLimitPredicative", 0.0) or 0.0)
+      if pred_on and pred_v > 0.0 and LongitudinalPlanSource.nav in targets and not self.nav_stop_request:
+        nav_v, nav_a = targets[LongitudinalPlanSource.nav]
+        if pred_v < nav_v:
+          targets[LongitudinalPlanSource.nav] = (pred_v, nav_a)
+    except Exception:
+      pass
 
     self.source = min(targets, key=lambda k: targets[k][0])
     self.output_v_target, self.output_a_target = targets[self.source]
-    self.output_v_target = self._apply_force_stop(self.output_v_target, v_ego, sm, slc_apply_enabled)
+    after_force = self._apply_force_stop(self.output_v_target, v_ego, sm, slc_apply_enabled)
+    if iqlink_on and self.nav_stop_request:
+      self.output_v_target = min(after_force, 0.0)
+      if self.nav_accel_target < self.output_a_target:
+        self.output_a_target = self.nav_accel_target
+    else:
+      self.output_v_target = after_force
     # envelope shaping only in Assist mode: info/warn must never change the plan
     self._envelope_enabled = (slc_apply_enabled and bool(getattr(self.slimit, "controller_enabled", False))
                               and bool(getattr(self.slimit, "mode_assist", False)))
