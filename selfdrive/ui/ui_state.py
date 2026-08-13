@@ -539,7 +539,10 @@ class Device(IQDevice):
     ignition_just_turned_off = not ui_state.ignition and self._ignition
     self._ignition = ui_state.ignition
 
-    if ignition_just_turned_off or any(ev.left_down for ev in gui_app.mouse_events):
+    if ignition_just_turned_off:
+      # Lock / KL15 off: blank immediately. Do not start a fresh 30s offroad timer.
+      self._interaction_time = time.monotonic()
+    elif any(ev.left_down for ev in gui_app.mouse_events):
       if gui_app.iqpilot_ui():
         IQDevice.wake_from_dimmed_onroad_brightness(ui_state, gui_app.mouse_events)
 

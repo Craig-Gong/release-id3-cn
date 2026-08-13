@@ -62,6 +62,15 @@ def test_meb_ignition_from_klemmens_status():
   assert not on
 
 
+def test_meb_ignition_uses_kl15_not_kl_s():
+  kl15 = SimpleNamespace(can=[SimpleNamespace(address=0x3C0, dat=bytes([0x00, 0x00, 0x02, 0x00]), src=0)])
+  kl_s = SimpleNamespace(can=[SimpleNamespace(address=0x3C0, dat=bytes([0x00, 0x00, 0x01, 0x00]), src=0)])
+  on, _ = meb_ignition_from_can([kl15], 10.0, None)
+  assert on
+  on, _ = meb_ignition_from_can([kl_s], 10.0, None)
+  assert not on
+
+
 def recovery_update(recovery: CanStartupRecovery, now: float, **kwargs) -> bool:
   defaults = {
     "ignition": True,

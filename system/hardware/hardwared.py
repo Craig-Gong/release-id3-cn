@@ -173,7 +173,9 @@ def is_supported_tici_branch(build_metadata) -> bool:
 
 
 def meb_ignition_from_can(packets, now: float, last_on_ts: float | None) -> tuple[bool, float | None]:
-  """MEB KL15/KL_S live on Klemmen_Status_01 (0x3C0) byte 2 bits 0-1.
+  """MEB ignition is ZAS_Kl_15 on Klemmen_Status_01 (0x3C0) byte 2 bit 1.
+  Same bit evo panda uses. Do not OR in ZAS_Kl_S: it stays set after lock and
+  would keep C3XL onroad with the screen awake.
   IQ.Pilot's prebuilt panda does not set ignitionCan for this frame."""
   for msg in packets:
     try:
@@ -186,8 +188,8 @@ def meb_ignition_from_can(packets, now: float, last_on_ts: float | None) -> tupl
       if c.address != MEB_KLEMMEN_ADDR:
         continue
       dat = bytes(c.dat)
-      # ZAS_Kl_S = bit 0, ZAS_Kl_15 = bit 1
-      if len(dat) >= 3 and (dat[2] & 0x03):
+      # ZAS_Kl_15 = bit 1. Match evo ignition_can_hook.
+      if len(dat) >= 3 and (dat[2] & 0x02):
         last_on_ts = now
   if last_on_ts is not None and (now - last_on_ts) < MEB_IGNITION_HOLD_S:
     return True, last_on_ts
