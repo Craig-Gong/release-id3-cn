@@ -155,11 +155,12 @@ class SpeedLimitManager:
     return speed
 
   def _receive_speed_limit_vze_meb(self, vze):
-    v_limit_vze = vze["VZE_Verkehrszeichen_1"] # main traffic sign
-    # "VZE_Anzeigemodus" has been seen not being stable for different drives in same USA mph car, no other flag has been found yet
-    # for now additionally assume a car with mph speed unit nav data sgements is also supplied with mph converted vze data ("PSD_06" is available on bus 0)
-    # mph speed unit set in signal "Einheiten_01" does not mean the speed data being supplied in mph unit!
-    v_limit_vze = v_limit_vze * CV.MPH_TO_KPH if vze["VZE_Anzeigemodus"] == 1 or self.v_limit_speed_unit_psd == PSD_UNIT_MPH else v_limit_vze
+    v_limit_vze = vze.get("VZE_Verkehrszeichen_1")  # main traffic sign
+    if v_limit_vze is None:
+      return
+    # 0=EU km/h, 1=USA mph, 2=Canada, 3=China km/h
+    display_mode = vze.get("VZE_Anzeigemodus", 0)
+    v_limit_vze = v_limit_vze * CV.MPH_TO_KPH if display_mode == 1 or self.v_limit_speed_unit_psd == PSD_UNIT_MPH else v_limit_vze
     self._speed_limit_vze_sanitiy_check(v_limit_vze)
     self.v_limit_vze = v_limit_vze
 

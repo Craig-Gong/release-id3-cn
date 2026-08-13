@@ -406,7 +406,12 @@ class CarState(CarStateBase):
       ret.cruiseState.speedCluster = ret.cruiseState.speed * cluster_ratio
 
     raining = pt_cp.vl["RLS_01"]["RS_Regenmenge"] > 0
-    vze_01_values = cam_cp.vl.get("MEB_VZE_01", cam_cp.vl.get("VZE_04", {}))
+    # vl.get() skips VLDict lazy-add, so TSR never parsed and cluster "识别到 xx" never fires.
+    vze_01_values = {}
+    for vze_name in ("MEB_VZE_01", "VZE_04"):
+      if vze_name in cam_cp.dbc.name_to_msg:
+        vze_01_values = cam_cp.vl[vze_name]
+        break
     psd_04_values = main_cp.vl["PSD_04"] if self.CP.flags & VolkswagenFlags.STOCK_PSD_PRESENT else {}
     psd_05_values = main_cp.vl["PSD_05"] if self.CP.flags & VolkswagenFlags.STOCK_PSD_PRESENT else {}
     psd_06_values = main_cp.vl["PSD_06"] if self.CP.flags & VolkswagenFlags.STOCK_PSD_PRESENT else {}
@@ -864,6 +869,8 @@ class CarState(CarStateBase):
     cam_messages = []
     if CP.networkLocation == NetworkLocation.gateway:
       cam_messages.append(("AWV_03", 1))
+    # Camera TSR for cluster ACC HUD event 5. nan = ignore_alive if the frame is missing.
+    cam_messages.append(("MEB_VZE_01", math.nan))
 
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus(CP).pt),
