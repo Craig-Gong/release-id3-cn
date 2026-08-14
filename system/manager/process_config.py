@@ -17,9 +17,8 @@ def driverview(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started or params.get_bool("IsDriverViewEnabled")
 
 def driver_monitoring(started: bool, params: Params, CP: car.CarParams) -> bool:
-  if os.path.exists('/tmp/lite_hw'):
-    return False
-  return driverview(started, params, CP)
+  # C3XL on this fork has no driver camera (evo-release always ignores dcam).
+  return False
 
 def notcar(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started and CP.notCar

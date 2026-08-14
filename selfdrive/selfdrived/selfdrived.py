@@ -39,10 +39,6 @@ from openpilot.iqpilot.vehicle.vehicle import VehicleEvents
 from openpilot.iqpilot.selfdrive.car.gap_button_actions import GapButtonActions
 from openpilot.iqpilot.selfdrive.selfdrived.events import IQEvents
 
-# camerad starts with onroad (P+READY on MEB). Driver ISP is often last;
-# the 6s init timeout otherwise flashes Camera Malfunction / driverCamera.
-CAMERA_MALFUNCTION_GRACE = 15.0
-
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
 TESTING_CLOSET = "TESTING_CLOSET" in os.environ
@@ -103,18 +99,17 @@ class SelfdriveD(GapButtonActions):
     self.gps_location_service = get_gps_location_service(self.params)
     self.gps_packets = [self.gps_location_service]
     self.sensor_packets = ["accelerometer", "gyroscope"]
-    self.camera_packets = ["roadCameraState", "driverCameraState", "wideRoadCameraState"]
-    if os.path.exists('/tmp/lite_hw'):
-      self.camera_packets.remove("driverCameraState")
+    # C3XL has no driver camera. evo-release always ignores driverCameraState
+    # (`if True:`). Requiring it flashes Camera Malfunction on every onroad wake.
+    self.camera_packets = ["roadCameraState", "wideRoadCameraState"]
 
     # TODO: de-couple selfdrived with card/conflate on carState without introducing controls mismatches
     self.car_state_sock = messaging.sub_sock('carState', timeout=20)
 
     ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan', 'iqDriveModelData', 'iqNavState', 'liveParameters', 'driverAssistance', 'testJoystick']
-    if os.path.exists('/tmp/lite_hw'):
-      ignore += ['driverCameraState', 'driverMonitoringState']
+    ignore += ['driverCameraState', 'driverMonitoringState']
     if SIMULATION:
-      ignore += ['driverCameraState', 'managerState']
+      ignore += ['managerState']
     if REPLAY:
       # no vipc in replay will make them ignored anyways
       ignore += ['roadCameraState', 'wideRoadCameraState']
@@ -440,10 +435,9 @@ class SelfdriveD(GapButtonActions):
         self.events_iq.add(custom.IQOnroadEvent.EventName.modelUpdating)
     else:
       if not SIMULATION and not self.rk.lagging:
-        cameras_up = self.sm.frame * DT_CTRL >= CAMERA_MALFUNCTION_GRACE
-        if cameras_up and not self.sm.all_alive(self.camera_packets):
+        if not self.sm.all_alive(self.camera_packets):
           self.events.add(EventName.cameraMalfunction)
-        elif cameras_up and not self.sm.all_freq_ok(self.camera_packets):
+        elif not self.sm.all_freq_ok(self.camera_packets):
           self.events.add(EventName.cameraFrameRate)
     if not REPLAY and self.rk.lagging:
       log_issue_limited(
@@ -595,6 +589,9 @@ class SelfdriveD(GapButtonActions):
         if VisionStreamType.VISION_STREAM_WIDE_ROAD not in available_streams:
           self.sm.ignore_alive.append('wideRoadCameraState')
           self.sm.ignore_valid.append('wideRoadCameraState')
+        if VisionStreamType.VISION_STREAM_DRIVER not in available_streams:
+          self.sm.ignore_alive.append('driverCameraState')
+          self.sm.ignore_valid.append('driverCameraState')
 
         if REPLAY and any(ps.controlsAllowed for ps in self.sm['pandaStates']):
           self.state_machine.state = State.enabled
