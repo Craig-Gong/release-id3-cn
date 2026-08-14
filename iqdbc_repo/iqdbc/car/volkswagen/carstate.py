@@ -32,6 +32,8 @@ class CarState(CarStateBase):
   CRUISE_FAULT_LATERAL_DISABLE_FRAMES = 20
   MEB_TEMP_CRUISE_FAULT = 6
   MEB_TOLERANCE_MAX = 100
+  # TSK 6/7 at READY often lasts longer than EPB Init. 1s was not enough.
+  MEB_ACC_FAULT_RECOVERY_FRAMES = 300
 
   def __init__(self, CP, CP_IQ):
     super().__init__(CP, CP_IQ)
@@ -388,7 +390,8 @@ class CarState(CarStateBase):
     ret.cruiseState.nonAdaptive = bool(acc_values.get("ACC_Limiter_Mode", 0)) if self.CP.pcmCruise else bool(pt_cp.vl["Motor_51"]["TSK_Limiter_ausgewaehlt"])
 
     acc_faulted = pt_cp.vl["Motor_51"]["TSK_Status"] in (6, 7)
-    ret.accFaulted = self.update_acc_fault(acc_faulted, parking_brake=ret.parkingBrake, drive_mode=drive_mode)
+    ret.accFaulted = self.update_acc_fault(acc_faulted, parking_brake=ret.parkingBrake, drive_mode=drive_mode,
+                                          recovery_frames_max=self.MEB_ACC_FAULT_RECOVERY_FRAMES)
 
     if self.CP.flags & VolkswagenFlags.MQB_EVO:
       self.esp_hold_confirmation = bool(pt_cp.vl["ESP_21"]["ESP_Haltebestaetigung"])
@@ -780,8 +783,13 @@ class CarState(CarStateBase):
     return temp_fault, perm_fault
 
   def update_acc_fault(self, acc_fault, parking_brake=False, drive_mode=True, recovery_frames_max=100):
+    # Ignore TSK 6/7 while not in D. evo required parkingBrake, but MEB EPB is
+    # still Init (not 1/4) at READY, so "Cruise Fault: Restart the Car" flashed.
     fault = acc_fault
-    if parking_brake and not drive_mode:
+    if not drive_mode:
+      fault = False
+      self.cruise_recovery_timer = self.frame
+    elif parking_brake:
       fault = False
       self.cruise_recovery_timer = self.frame
     elif self.frame - self.cruise_recovery_timer < recovery_frames_max:
