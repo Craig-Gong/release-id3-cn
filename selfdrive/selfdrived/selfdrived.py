@@ -39,6 +39,10 @@ from openpilot.iqpilot.vehicle.vehicle import VehicleEvents
 from openpilot.iqpilot.selfdrive.car.gap_button_actions import GapButtonActions
 from openpilot.iqpilot.selfdrive.selfdrived.events import IQEvents
 
+# camerad starts with onroad (P+READY on MEB). Driver ISP is often last;
+# the 6s init timeout otherwise flashes Camera Malfunction / driverCamera.
+CAMERA_MALFUNCTION_GRACE = 15.0
+
 REPLAY = "REPLAY" in os.environ
 SIMULATION = "SIMULATION" in os.environ
 TESTING_CLOSET = "TESTING_CLOSET" in os.environ
@@ -436,9 +440,10 @@ class SelfdriveD(GapButtonActions):
         self.events_iq.add(custom.IQOnroadEvent.EventName.modelUpdating)
     else:
       if not SIMULATION and not self.rk.lagging:
-        if not self.sm.all_alive(self.camera_packets):
+        cameras_up = self.sm.frame * DT_CTRL >= CAMERA_MALFUNCTION_GRACE
+        if cameras_up and not self.sm.all_alive(self.camera_packets):
           self.events.add(EventName.cameraMalfunction)
-        elif not self.sm.all_freq_ok(self.camera_packets):
+        elif cameras_up and not self.sm.all_freq_ok(self.camera_packets):
           self.events.add(EventName.cameraFrameRate)
     if not REPLAY and self.rk.lagging:
       log_issue_limited(
