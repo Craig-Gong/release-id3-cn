@@ -20,7 +20,7 @@ def params(*, radar_unavailable: bool = True) -> tuple[structs.CarParams, struct
 
 def test_default_mode_returns_real_oem_interface_without_changing_availability() -> None:
   cp, cp_sp = params(radar_unavailable=False)
-  _initialize_tesla_radar_backend(cp, cp_sp, {"TeslaRadarBackend": "0"})
+  _initialize_tesla_radar_backend(cp, cp_sp, {"TeslaARS408Radar": "0"})
   assert isinstance(RadarInterface(cp, cp_sp), OEMRadarInterface)
   assert not cp.radarUnavailable
   assert not cp_sp.flags & TeslaFlagsSP.ARS408_RADAR
@@ -28,7 +28,7 @@ def test_default_mode_returns_real_oem_interface_without_changing_availability()
 
 def test_ars408_mode_sets_cached_flags_and_returns_isolated_backend() -> None:
   cp, cp_sp = params()
-  _initialize_tesla_radar_backend(cp, cp_sp, {"TeslaRadarBackend": "1"})
+  _initialize_tesla_radar_backend(cp, cp_sp, {"TeslaARS408Radar": "1"})
   assert not cp.radarUnavailable
   assert cp.deprecated.radarTimeStep == pytest.approx(1.0 / 14.0)
   assert cp_sp.flags & TeslaFlagsSP.ARS408_RADAR
@@ -39,7 +39,7 @@ def test_ars408_mode_sets_cached_flags_and_returns_isolated_backend() -> None:
 def test_off_and_invalid_modes_fail_closed() -> None:
   for value in ("2", "invalid", "99"):
     cp, cp_sp = params(radar_unavailable=False)
-    _initialize_tesla_radar_backend(cp, cp_sp, {"TeslaRadarBackend": value})
+    _initialize_tesla_radar_backend(cp, cp_sp, {"TeslaARS408Radar": value})
     assert cp.radarUnavailable
     assert cp_sp.flags & TeslaFlagsSP.RADAR_DISABLED
     selected = RadarInterface(cp, cp_sp)

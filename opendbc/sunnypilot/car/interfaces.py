@@ -181,7 +181,7 @@ def _initialize_tesla_radar_backend(CP: structs.CarParams, CP_SP: structs.CarPar
   if CP.brand != "tesla":
     return
   try:
-    backend = TeslaRadarBackend(int(params_dict.get("TeslaRadarBackend", TeslaRadarBackend.OEM)))
+    backend = TeslaRadarBackend(int(params_dict.get("TeslaARS408Radar", TeslaRadarBackend.OEM)))
   except (TypeError, ValueError):
     backend = TeslaRadarBackend.OFF
 
