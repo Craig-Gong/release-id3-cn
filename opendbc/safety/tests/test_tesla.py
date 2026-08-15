@@ -25,6 +25,8 @@ MSG_UI_TRIP_PLANNING = 0x082
 MSG_UI_AUTOPILOT_CONTROL = 0x3FD
 MSG_EPAS3S_SYS_STATUS = 0x370
 MSG_ISA_CHIME_SUPPRESS = 0x399
+MSG_ARS408_SPEED = 0x300
+MSG_ARS408_YAW_RATE = 0x301
 OBSERVED_SPEED_WHEEL_IDLE = bytes.fromhex("010000c000000000")
 OBSERVED_BODY_CONTROLS_IDLE = bytes.fromhex("008802000000b026")
 
@@ -186,6 +188,62 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
     self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.HAS_VEHICLE_BUS | TeslaSafetyFlagsSP.AUTO_SPEED_LIMIT)
     self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
     self.safety.init_tests()
+
+  def _enable_ars408_radar(self):
+    self.addCleanup(self.safety.set_current_safety_param_sp, 0)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.ARS408_RADAR)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.SAFETY_PARAM)
+    self.safety.init_tests()
+    self.assertTrue(self._rx(self._pcm_status_msg(False)))
+
+  @staticmethod
+  def _ars408_speed_msg(raw_speed, direction, bus=CANBUS.vehicle, length=2, reserved=False):
+    payload = bytearray(max(length, 2))
+    payload[0] = ((direction & 0x3) << 6) | ((raw_speed >> 8) & 0x1F) | (0x20 if reserved else 0)
+    payload[1] = raw_speed & 0xFF
+    return libsafety_py.make_CANPacket(MSG_ARS408_SPEED, bus, payload[:length])
+
+  @staticmethod
+  def _ars408_yaw_msg(raw_yaw_rate, bus=CANBUS.vehicle, length=2):
+    payload = bytearray(max(length, 2))
+    payload[0] = (raw_yaw_rate >> 8) & 0xFF
+    payload[1] = raw_yaw_rate & 0xFF
+    return libsafety_py.make_CANPacket(MSG_ARS408_YAW_RATE, bus, payload[:length])
+
+  def test_ars408_motion_requires_feature_flag(self):
+    self.assertFalse(self._tx(self._ars408_speed_msg(1000, 1)))
+    self.assertFalse(self._tx(self._ars408_yaw_msg(32768)))
+
+  def test_ars408_motion_requires_exact_bus_and_dlc(self):
+    self._enable_ars408_radar()
+    self.assertTrue(self._tx(self._ars408_speed_msg(1000, 1)))
+    self.assertTrue(self._tx(self._ars408_yaw_msg(32768)))
+    for bus in (0, 2):
+      self.assertFalse(self._tx(self._ars408_speed_msg(1000, 1, bus=bus)))
+      self.assertFalse(self._tx(self._ars408_yaw_msg(32768, bus=bus)))
+    for length in (1, 3, 8):
+      self.assertFalse(self._tx(self._ars408_speed_msg(1000, 1, length=length)))
+      self.assertFalse(self._tx(self._ars408_yaw_msg(32768, length=length)))
+
+  def test_ars408_speed_fields_and_operational_range(self):
+    self._enable_ars408_radar()
+    for raw_speed, direction in ((0, 0), (1, 1), (4250, 2)):
+      self.assertTrue(self._tx(self._ars408_speed_msg(raw_speed, direction)))
+    for raw_speed, direction, reserved in ((4251, 1, False), (1000, 0, False), (0, 1, False),
+                                           (1000, 3, False), (1000, 1, True)):
+      self.assertFalse(self._tx(self._ars408_speed_msg(raw_speed, direction, reserved=reserved)))
+
+  def test_ars408_yaw_rate_operational_range(self):
+    self._enable_ars408_radar()
+    for raw_yaw_rate in (22768, 32768, 42768):
+      self.assertTrue(self._tx(self._ars408_yaw_msg(raw_yaw_rate)))
+    for raw_yaw_rate in (22767, 42769):
+      self.assertFalse(self._tx(self._ars408_yaw_msg(raw_yaw_rate)))
+
+  def test_ars408_configuration_frames_remain_blocked(self):
+    self._enable_ars408_radar()
+    for address, length in ((0x200, 8), (0x202, 5)):
+      self.assertFalse(self._tx(libsafety_py.make_CANPacket(address, CANBUS.vehicle, b"\x00" * length)))
 
   def test_turn_signal_validation_requires_flag(self):
     self.assertFalse(self._tx(self._body_control_msg(1, 8, 12)))
