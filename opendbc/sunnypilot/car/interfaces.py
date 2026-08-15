@@ -19,6 +19,7 @@ from opendbc.sunnypilot.car.hyundai.enable_radar_tracks import enable_radar_trac
 from opendbc.sunnypilot.car.hyundai.longitudinal.helpers import LongitudinalTuningType
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 from opendbc.sunnypilot.car.subaru.values_ext import SubaruFlagsSP, SubaruSafetyFlagsSP
+from opendbc.sunnypilot.car.tesla.ars408.constants import TeslaRadarBackend
 from opendbc.sunnypilot.car.tesla.values import MadsScreenButtonType, TeslaFlagsSP, TeslaSafetyFlagsSP
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
@@ -91,6 +92,7 @@ def setup_interfaces(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
   _initialize_tesla_turn_signal_validation(CP, CP_SP, params_dict)
   _initialize_tesla_speed_button_validation(CP, CP_SP, params_dict)
   _initialize_tesla_auto_speed_limit(CP, CP_SP, params_dict)
+  _initialize_tesla_radar_backend(CP, CP_SP, params_dict)
   _initialize_radar_tracks(CP, CP_SP, can_recv, can_send)
   _initialize_stop_and_go(CP, CP_SP, params_dict)
   _initialize_toyota(CP, CP_SP, params_dict)
@@ -172,6 +174,25 @@ def _initialize_tesla_auto_speed_limit(CP: structs.CarParams, CP_SP: structs.Car
       CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS):
     CP_SP.flags |= TeslaFlagsSP.AUTO_SPEED_LIMIT.value
     CP_SP.safetyParam |= TeslaSafetyFlagsSP.AUTO_SPEED_LIMIT
+
+
+def _initialize_tesla_radar_backend(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
+                                    params_dict: dict[str, str]) -> None:
+  if CP.brand != "tesla":
+    return
+  try:
+    backend = TeslaRadarBackend(int(params_dict.get("TeslaRadarBackend", TeslaRadarBackend.OEM)))
+  except (TypeError, ValueError):
+    backend = TeslaRadarBackend.OFF
+
+  if backend == TeslaRadarBackend.ARS408:
+    CP.radarUnavailable = False
+    CP.deprecated.radarTimeStep = 1.0 / 14.0
+    CP_SP.flags |= TeslaFlagsSP.ARS408_RADAR.value
+    CP_SP.safetyParam |= TeslaSafetyFlagsSP.ARS408_RADAR
+  elif backend == TeslaRadarBackend.OFF:
+    CP.radarUnavailable = True
+    CP_SP.flags |= TeslaFlagsSP.RADAR_DISABLED.value
 
 
 def _initialize_radar_tracks(CP: structs.CarParams, CP_SP: structs.CarParamsSP,

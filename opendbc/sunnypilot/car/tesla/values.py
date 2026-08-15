@@ -24,6 +24,8 @@ class TeslaFlagsSP(IntFlag):
   TURN_SIGNAL_VALIDATION = 32768  # Config: one-shot DAS body-control validation while disengaged
   SPEED_BUTTON_VALIDATION = 65536  # Config: one-shot replay of a fresh original 0x3C2 vehicle template while disengaged
   AUTO_SPEED_LIMIT = 131072  # Config: synchronize Tesla set speed to SP's resolved speed limit
+  ARS408_RADAR = 262144  # Config: use isolated external Continental ARS408 backend
+  RADAR_DISABLED = 524288  # Config: explicitly disable both Tesla radar backends
 
 
 class MadsScreenButtonType:
@@ -42,3 +44,4 @@ class TeslaSafetyFlagsSP:
   TURN_SIGNAL_VALIDATION = 256
   SPEED_BUTTON_VALIDATION = 512
   AUTO_SPEED_LIMIT = 1024
+  ARS408_RADAR = 2048
