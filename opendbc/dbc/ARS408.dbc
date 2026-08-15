@@ -1,0 +1,95 @@
+VERSION "SP minimal Continental ARS408 object interface"
+
+NS_ :
+  NS_DESC_
+  CM_
+  BA_DEF_
+  BA_
+  VAL_
+  SG_MUL_VAL_
+
+BS_:
+
+BU_: Radar Host
+
+BO_ 512 RadarConfiguration: 8 Host
+ SG_ RadarCfg_MaxDistance_valid : 0|1@0+ (1,0) [0|1] "" Radar
+ SG_ RadarCfg_SensorID_valid : 1|1@0+ (1,0) [0|1] "" Radar
+ SG_ RadarCfg_OutputType_valid : 3|1@0+ (1,0) [0|1] "" Radar
+ SG_ RadarCfg_SendQuality_valid : 4|1@0+ (1,0) [0|1] "" Radar
+ SG_ RadarCfg_SendExtInfo_valid : 5|1@0+ (1,0) [0|1] "" Radar
+ SG_ RadarCfg_StoreInNVM_valid : 7|1@0+ (1,0) [0|1] "" Radar
+ SG_ RadarCfg_MaxDistance : 15|10@0+ (2,0) [0|2046] "m" Radar
+ SG_ RadarCfg_OutputType : 36|2@0+ (1,0) [0|2] "" Radar
+ SG_ RadarCfg_SensorID : 34|3@0+ (1,0) [0|7] "" Radar
+ SG_ RadarCfg_SendQuality : 42|1@0+ (1,0) [0|1] "" Radar
+ SG_ RadarCfg_SendExtInfo : 43|1@0+ (1,0) [0|1] "" Radar
+ SG_ RadarCfg_StoreInNVM : 47|1@0+ (1,0) [0|1] "" Radar
+
+BO_ 513 RadarState: 8 Radar
+ SG_ RadarState_NVMReadStatus : 6|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_NVMwriteStatus : 7|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_MaxDistanceCfg : 15|10@0+ (2,0) [0|2046] "m" Host
+ SG_ RadarState_Voltage_Error : 17|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_Temporary_Error : 18|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_Temperature_Error : 19|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_Interference : 20|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_Persistent_Error : 21|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_SensorID : 34|3@0+ (1,0) [0|7] "" Host
+ SG_ RadarState_SortIndex : 38|3@0+ (1,0) [0|2] "" Host
+ SG_ RadarState_CtrlRelayCfg : 41|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_OutputTypeCfg : 43|2@0+ (1,0) [0|3] "" Host
+ SG_ RadarState_SendQualityCfg : 44|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_SendExtInfoCfg : 45|1@0+ (1,0) [0|1] "" Host
+ SG_ RadarState_MotionRxState : 47|2@0+ (1,0) [0|3] "" Host
+ SG_ RadarState_RCS_Threshold : 60|3@0+ (1,0) [0|7] "" Host
+
+BO_ 514 FilterCfg: 5 Host
+ SG_ FilterCfg_Type : 7|1@0+ (1,0) [0|1] "" Radar
+ SG_ FilterCfg_Index : 6|4@0+ (1,0) [0|15] "" Radar
+ SG_ FilterCfg_Active : 2|1@0+ (1,0) [0|1] "" Radar
+ SG_ FilterCfg_Valid : 1|1@0+ (1,0) [0|1] "" Radar
+ SG_ FilterCfg_MinRaw : 15|16@0+ (1,0) [0|65535] "" Radar
+ SG_ FilterCfg_MaxRaw : 31|16@0+ (1,0) [0|65535] "" Radar
+
+BO_ 515 FilterState_Header: 2 Radar
+ SG_ FilterState_NofClusterFilterCfg : 7|5@0+ (1,0) [0|31] "" Host
+ SG_ FilterState_NofObjectFilterCfg : 15|5@0+ (1,0) [0|31] "" Host
+
+BO_ 516 FilterState_Cfg: 5 Radar
+ SG_ FilterState_Type : 7|1@0+ (1,0) [0|1] "" Host
+ SG_ FilterState_Index : 6|4@0+ (1,0) [0|15] "" Host
+ SG_ FilterState_Active : 2|1@0+ (1,0) [0|1] "" Host
+ SG_ FilterState_MinRaw : 15|16@0+ (1,0) [0|65535] "" Host
+ SG_ FilterState_MaxRaw : 31|16@0+ (1,0) [0|65535] "" Host
+
+BO_ 768 SpeedInformation: 2 Host
+ SG_ RadarDevice_SpeedDirection : 7|2@0+ (1,0) [0|2] "" Radar
+ SG_ RadarDevice_Speed : 4|13@0+ (0.02,0) [0|163.8] "m/s" Radar
+
+BO_ 769 YawRateInformation: 2 Host
+ SG_ RadarDevice_YawRate : 7|16@0+ (0.01,-327.68) [-327.68|327.66] "deg/s" Radar
+
+BO_ 1546 Obj_0_Status: 4 Radar
+ SG_ Obj_NofObjects : 7|8@0+ (1,0) [0|255] "" Host
+ SG_ Obj_MeasCounter : 15|16@0+ (1,0) [0|65535] "" Host
+ SG_ Obj_InterfaceVersion : 31|4@0+ (1,0) [0|15] "" Host
+
+BO_ 1547 Obj_1_General: 8 Radar
+ SG_ Obj_ID : 7|8@0+ (1,0) [0|255] "" Host
+ SG_ Obj_DistLong : 15|13@0+ (0.2,-500) [-500|1138.2] "m" Host
+ SG_ Obj_DistLat : 18|11@0+ (0.2,-204.6) [-204.6|204.8] "m" Host
+ SG_ Obj_VrelLong : 39|10@0+ (0.25,-128) [-128|127.75] "m/s" Host
+ SG_ Obj_VrelLat : 45|9@0+ (0.25,-64) [-64|63.75] "m/s" Host
+ SG_ Obj_DynProp : 50|3@0+ (1,0) [0|7] "" Host
+ SG_ Obj_RCS : 63|8@0+ (0.5,-64) [-64|63.5] "dBm2" Host
+
+BO_ 1548 Obj_2_Quality: 7 Radar
+ SG_ Obj_ID : 7|8@0+ (1,0) [0|255] "" Host
+ SG_ Obj_MeasState : 52|3@0+ (1,0) [0|7] "" Host
+ SG_ Obj_ProbOfExist : 55|3@0+ (1,0) [0|7] "" Host
+
+BO_ 1549 Obj_3_Extended: 8 Radar
+ SG_ Obj_ID : 7|8@0+ (1,0) [0|255] "" Host
+ SG_ Obj_ArelLong : 15|11@0+ (0.01,-10) [-10|10.47] "m/s2" Host
+ SG_ Obj_Class : 26|3@0+ (1,0) [0|7] "" Host
