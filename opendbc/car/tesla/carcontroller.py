@@ -8,6 +8,7 @@ from opendbc.car.tesla.values import CarControllerParams
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.sunnypilot.car.tesla.coop_steering import CoopSteeringCarController
 from opendbc.sunnypilot.car.tesla.dynamic_acc_debug import log_dynamic_acc
+from opendbc.sunnypilot.car.tesla.ars408.transmitter import ARS408Transmitter
 from opendbc.sunnypilot.car.tesla.speed_limit_controller import TeslaSpeedLimitController
 
 SP_TAKEOVER_RAMP_FRAMES = 100
@@ -30,6 +31,7 @@ class CarController(CarControllerBase):
     self.apply_angle_last = 0
     self.packer = CANPacker(dbc_names[Bus.party])
     self.tesla_can = TeslaCAN(CP, self.packer)
+    self.ars408_transmitter = ARS408Transmitter(CP_SP)
 
     # Track longitudinal source transitions independently of the 25 Hz TX phase.
     self.prev_stock_longitudinal = False
@@ -46,6 +48,7 @@ class CarController(CarControllerBase):
   def update(self, CC, CC_SP, CS, now_nanos):
     actuators = CC.actuators
     can_sends = []
+    can_sends.extend(self.ars408_transmitter.update(self.frame, CS.out))
     speed_limit_sends = self.speed_limit_controller.update(CC, CS, now_nanos)
     can_sends.extend(speed_limit_sends)
     if speed_limit_sends:
