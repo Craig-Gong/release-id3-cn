@@ -22,7 +22,6 @@ from opendbc.sunnypilot.car.subaru.values_ext import SubaruFlagsSP, SubaruSafety
 from opendbc.sunnypilot.car.tesla.values import MadsScreenButtonType, TeslaFlagsSP, TeslaSafetyFlagsSP
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
-
 class LatControlInputs(NamedTuple):
   lateral_acceleration: float
   roll_compensation: float
@@ -168,9 +167,9 @@ def _initialize_tesla_speed_button_validation(CP: structs.CarParams, CP_SP: stru
 
 
 def _initialize_tesla_auto_speed_limit(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
-                                       params_dict: dict[str, str]) -> None:
+                                       _params_dict: dict[str, str]) -> None:
   if (CP.brand == 'tesla' and CP.openpilotLongitudinalControl and
-      CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS and int(params_dict.get("TeslaAutoSpeedLimit", 0)) == 1):
+      CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS):
     CP_SP.flags |= TeslaFlagsSP.AUTO_SPEED_LIMIT.value
     CP_SP.safetyParam |= TeslaSafetyFlagsSP.AUTO_SPEED_LIMIT
 

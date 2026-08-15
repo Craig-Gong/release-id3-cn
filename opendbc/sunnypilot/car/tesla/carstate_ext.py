@@ -73,7 +73,7 @@ class CarStateExt:
     self.tesla_autopilot_active = False
     self.tesla_stock_lateral_active = False
     self.prev_touch_points_for_long = 0
-    self._touch_longitudinal_switch_enabled = True
+    self._touch_longitudinal_switch_enabled = False
     self._dyn_enter_frames = 0
     self._dyn_exit_frames = 0
     self._dyn_cooldown_frames = 0
@@ -211,11 +211,11 @@ class CarStateExt:
       self._dyn_enabled = False
       self._ap_hybrid_enabled = False
       self._ap_dynamic_long_enabled = False
-      self._dyn_blinker_to_sp_enabled = True
-      self._dyn_curve_to_sp_enabled = True
+      self._dyn_blinker_to_sp_enabled = False
+      self._dyn_curve_to_sp_enabled = False
       self._dyn_high = 80
       self._dyn_low = 70
-      self._touch_longitudinal_switch_enabled = True
+      self._touch_longitudinal_switch_enabled = False
     self._dyn_high = (self._dyn_high // 5) * 5
     self._dyn_low = (self._dyn_low // 5) * 5
     if self._dyn_high == 0:

@@ -253,18 +253,18 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
   def test_auto_speed_limit_initialization_requires_vehicle_bus_and_sp_longitudinal(self):
     cp = SimpleNamespace(brand="tesla", openpilotLongitudinalControl=True)
     cp_sp = SimpleNamespace(flags=0, safetyParam=0)
-    _initialize_tesla_auto_speed_limit(cp, cp_sp, {"TeslaAutoSpeedLimit": "1"})
+    _initialize_tesla_auto_speed_limit(cp, cp_sp, {})
     self.assertEqual(cp_sp.flags, 0)
 
     cp_sp.flags = TeslaFlagsSP.HAS_VEHICLE_BUS
-    _initialize_tesla_auto_speed_limit(cp, cp_sp, {"TeslaAutoSpeedLimit": "1"})
+    _initialize_tesla_auto_speed_limit(cp, cp_sp, {})
     self.assertTrue(cp_sp.flags & TeslaFlagsSP.AUTO_SPEED_LIMIT)
     self.assertTrue(cp_sp.safetyParam & TeslaSafetyFlagsSP.AUTO_SPEED_LIMIT)
 
     cp.openpilotLongitudinalControl = False
     cp_sp.flags = TeslaFlagsSP.HAS_VEHICLE_BUS
     cp_sp.safetyParam = 0
-    _initialize_tesla_auto_speed_limit(cp, cp_sp, {"TeslaAutoSpeedLimit": "1"})
+    _initialize_tesla_auto_speed_limit(cp, cp_sp, {})
     self.assertFalse(cp_sp.flags & TeslaFlagsSP.AUTO_SPEED_LIMIT)
     self.assertFalse(cp_sp.safetyParam & TeslaSafetyFlagsSP.AUTO_SPEED_LIMIT)
 
