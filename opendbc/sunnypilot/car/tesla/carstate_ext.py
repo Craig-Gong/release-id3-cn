@@ -92,6 +92,7 @@ class CarStateExt:
     self.tesla_speed_auto_resume_gesture_counter = 0
     self._tesla_speed_resume_up_nanos = 0
     self._tesla_speed_resume_down_nanos = 0
+    self._tesla_speed_resume_wait_idle = False
 
   def update_speed_button_template(self, data: bytes, monotonic_nanos: int) -> None:
     if len(data) != 8 or (data[0] & 0x03) != 1:
@@ -101,6 +102,14 @@ class CarStateExt:
     if raw_tick == 0:
       self.tesla_speed_button_template = bytes(data)
       self.tesla_speed_button_template_nanos = int(monotonic_nanos)
+      self._tesla_speed_resume_wait_idle = False
+      return
+
+    # A single physical detent can repeat the same non-zero value before the
+    # wheel reports idle. Once an opposite-direction gesture has completed,
+    # those trailing frames belong to that gesture and must not immediately
+    # re-arm the manual speed override.
+    if self._tesla_speed_resume_wait_idle:
       return
 
     signed_tick = raw_tick - 0x40 if raw_tick & 0x20 else raw_tick
@@ -112,6 +121,7 @@ class CarStateExt:
       self.tesla_speed_auto_resume_gesture_counter += 1
       self._tesla_speed_resume_up_nanos = 0
       self._tesla_speed_resume_down_nanos = 0
+      self._tesla_speed_resume_wait_idle = True
     elif direction > 0:
       self._tesla_speed_resume_up_nanos = now_nanos
       self._tesla_speed_resume_down_nanos = 0

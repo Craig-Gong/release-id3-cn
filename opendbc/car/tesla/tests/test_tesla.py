@@ -276,6 +276,7 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
       tesla_speed_auto_resume_gesture_counter=0,
       _tesla_speed_resume_up_nanos=0,
       _tesla_speed_resume_down_nanos=0,
+      _tesla_speed_resume_wait_idle=False,
     )
     idle = bytes.fromhex("2955000000000080")
     up = bytes.fromhex("2955000100000080")
@@ -287,6 +288,7 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
     self.assertEqual(state.tesla_manual_speed_adjustment_counter, 2)
     self.assertEqual(state.tesla_speed_auto_resume_gesture_counter, 1)
 
+    CarStateExt.update_speed_button_template(state, idle, 2_600_000_000)
     CarStateExt.update_speed_button_template(state, up, 3_000_000_000)
     CarStateExt.update_speed_button_template(state, down, 4_500_000_001)
     self.assertEqual(state.tesla_speed_auto_resume_gesture_counter, 1)

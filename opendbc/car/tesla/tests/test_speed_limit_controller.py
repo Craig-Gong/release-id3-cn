@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from opendbc.sunnypilot.car.tesla.speed_limit_controller import TeslaSpeedLimitController, create_speed_wheel_frame
+from opendbc.sunnypilot.car.tesla.carstate_ext import CarStateExt
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 
@@ -158,6 +159,38 @@ def test_manual_adjustment_pauses_until_up_down_resume_gesture():
   state.tesla_speed_button_template_nanos = 1_650_000_000
   assert len(controller.update(fake_control(), state, 1_650_000_000)) == 1
   assert not controller.manual_override_active
+
+
+def test_resume_gesture_ignores_repeated_second_direction_until_wheel_returns_idle():
+  controller = TeslaSpeedLimitController(SimpleNamespace(flags=TeslaFlagsSP.AUTO_SPEED_LIMIT))
+  state = fake_state(current_speed=26.0, target_speed=25.0, template_time=1_000_000_000)
+  state._tesla_speed_resume_up_nanos = 0
+  state._tesla_speed_resume_down_nanos = 0
+  state._tesla_speed_resume_wait_idle = False
+  control = fake_control()
+  up = bytes.fromhex("2955000100000080")
+  down = bytes.fromhex("2955003f00000080")
+
+  assert controller.update(control, state, 1_000_000_000) == []
+
+  CarStateExt.update_speed_button_template(state, up, 1_100_000_000)
+  assert controller.update(control, state, 1_100_000_000) == []
+  assert controller.manual_override_active
+
+  CarStateExt.update_speed_button_template(state, down, 1_200_000_000)
+  controller.update(control, state, 1_200_000_000)
+  assert not controller.manual_override_active
+
+  # A physical detent can repeat its non-zero 0x3C2 value before returning
+  # idle. It belongs to the completed gesture and must not re-arm override.
+  CarStateExt.update_speed_button_template(state, down, 1_250_000_000)
+  controller.update(control, state, 1_250_000_000)
+  assert not controller.manual_override_active
+
+  CarStateExt.update_speed_button_template(state, IDLE_TEMPLATE, 1_300_000_000)
+  CarStateExt.update_speed_button_template(state, up, 1_400_000_000)
+  controller.update(control, state, 1_400_000_000)
+  assert controller.manual_override_active
 
 
 def test_manual_override_clears_when_speed_limit_changes():
