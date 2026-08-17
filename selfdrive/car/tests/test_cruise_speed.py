@@ -4,7 +4,7 @@ import numpy as np
 
 from parameterized import parameterized_class
 from cereal import log
-from openpilot.selfdrive.car.cruise import VCruiseHelper, V_CRUISE_MIN, V_CRUISE_MAX, V_CRUISE_INITIAL, IMPERIAL_INCREMENT
+from openpilot.selfdrive.car.cruise import VCruiseHelper, V_CRUISE_MIN, V_CRUISE_MAX, V_CRUISE_INITIAL, IMPERIAL_INCREMENT, GAS_SYNC_HOLD_FRAMES
 from cereal import car, custom
 from openpilot.common.constants import CV
 from openpilot.selfdrive.test.longitudinal_maneuvers.maneuver import Maneuver
@@ -190,3 +190,52 @@ class TestVCruiseHelper:
 
     self.enable(47 * CV.MPH_TO_MS, True, False)
     assert self.v_cruise_helper.v_cruise_kph == int(round(47 * CV.MPH_TO_KPH))
+
+  def _vw_alpha_long_helper(self):
+    self.CP.brand = "volkswagen"
+    self.CP.openpilotLongitudinalControl = True
+    self.CP.pcmCruise = False
+    self.v_cruise_helper = VCruiseHelper(self.CP, self.CP_IQ)
+    self.reset_cruise_speed_state()
+
+  def _engage_vw_alpha_long(self, v_ego_kph):
+    CS = car.CarState(vEgo=v_ego_kph * CV.KPH_TO_MS, cruiseState={"available": True})
+    self.v_cruise_helper.initialize_v_cruise(CS, False, False)
+    # update_enabled_state skips the first enabled frame
+    self.v_cruise_helper.update_v_cruise(CS, enabled=True, is_metric=True)
+    self.v_cruise_helper.update_v_cruise(CS, enabled=True, is_metric=True)
+    return CS
+
+  def test_gas_sync_set_speed(self):
+    self._vw_alpha_long_helper()
+    self.v_cruise_helper.params.put_bool("AutoGasSyncSpeed", True)
+    self._engage_vw_alpha_long(50.0)
+    assert self.v_cruise_helper.v_cruise_kph == 50
+
+    faster = car.CarState(vEgo=70.0 * CV.KPH_TO_MS, gasPressed=True, cruiseState={"available": True})
+    for _ in range(GAS_SYNC_HOLD_FRAMES):
+      self.v_cruise_helper.update_v_cruise(faster, enabled=True, is_metric=True)
+    assert self.v_cruise_helper.v_cruise_kph == 50
+
+    self.v_cruise_helper.update_v_cruise(faster, enabled=True, is_metric=True)
+    assert self.v_cruise_helper.v_cruise_kph == 70
+
+  def test_gas_sync_tap_does_not_raise(self):
+    self._vw_alpha_long_helper()
+    self.v_cruise_helper.params.put_bool("AutoGasSyncSpeed", True)
+    self._engage_vw_alpha_long(50.0)
+
+    tap = car.CarState(vEgo=70.0 * CV.KPH_TO_MS, gasPressed=True, cruiseState={"available": True})
+    for _ in range(10):
+      self.v_cruise_helper.update_v_cruise(tap, enabled=True, is_metric=True)
+    assert self.v_cruise_helper.v_cruise_kph == 50
+
+  def test_gas_sync_off(self):
+    self._vw_alpha_long_helper()
+    self.v_cruise_helper.params.put_bool("AutoGasSyncSpeed", False)
+    self._engage_vw_alpha_long(50.0)
+
+    faster = car.CarState(vEgo=70.0 * CV.KPH_TO_MS, gasPressed=True, cruiseState={"available": True})
+    for _ in range(GAS_SYNC_HOLD_FRAMES + 5):
+      self.v_cruise_helper.update_v_cruise(faster, enabled=True, is_metric=True)
+    assert self.v_cruise_helper.v_cruise_kph == 50

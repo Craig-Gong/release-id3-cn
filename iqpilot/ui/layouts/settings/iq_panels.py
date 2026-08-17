@@ -1086,6 +1086,11 @@ class CruiseLayout(Widget):
         "Use online sources (TomTom + Mapbox) to fill in missing speed limits when local map data is unavailable.",
         "SLCOnlineFiller",
       ),
+      self._toggle_item(
+        "Gas Sync Set Speed",
+        "While engaged, holding the accelerator raises MAX to the current speed. A short tap does not change it.",
+        "AutoGasSyncSpeed",
+      ),
       self._option_item(
         "IQ Map Lookahead Higher",
         "How far ahead IQ.Pilot should apply an upcoming higher map speed limit before the limit changes.",

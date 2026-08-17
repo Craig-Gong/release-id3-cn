@@ -217,6 +217,8 @@ V_CRUISE_MAX = 200  # ~ 124 mph
 V_CRUISE_UNSET = 255
 V_CRUISE_INITIAL = 40
 V_CRUISE_INITIAL_EXPERIMENTAL_MODE = 105
+# carrot AutoGasSyncSpeed: hold gas this long before MAX follows vEgo.
+GAS_SYNC_HOLD_FRAMES = 40  # 0.4 s at 100 Hz
 IMPERIAL_INCREMENT = round(CV.MPH_TO_KPH, 1)  # round here to avoid rounding errors incrementing set speed
 
 ButtonEvent = car.CarState.ButtonEvent
@@ -240,6 +242,7 @@ class VCruiseHelper(VCruiseHelperIQ):
     self.v_cruise_cluster_kph = V_CRUISE_UNSET
     self.v_cruise_kph_last = 0
     self.cruise_speed_user_set = False
+    self._gas_pressed_count = 0
     self.button_timers = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0}
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
 
@@ -265,6 +268,7 @@ class VCruiseHelper(VCruiseHelperIQ):
         # if stock cruise is completely disabled, then we can use our own set speed logic
         self._update_v_cruise_non_pcm(CS, _enabled, is_metric, self.volkswagen_standby_set_speed)
         self.update_speed_limit_assist_v_cruise_non_pcm()
+        self._sync_v_cruise_from_gas(CS, _enabled)
         self.v_cruise_cluster_kph = self.v_cruise_kph
         self.update_button_timers(CS, enabled)
       else:
@@ -282,6 +286,35 @@ class VCruiseHelper(VCruiseHelperIQ):
       self.v_cruise_kph = V_CRUISE_UNSET
       self.v_cruise_cluster_kph = V_CRUISE_UNSET
       self.cruise_speed_user_set = False
+      self._gas_pressed_count = 0
+
+  def _sync_v_cruise_from_gas(self, CS, enabled) -> None:
+    """While engaged, holding the accelerator raises MAX to current speed.
+
+    From carrot AutoGasSyncSpeed. Alpha Long VW owns set speed (pcmCruise=False).
+    A short tap does not change MAX; hold ~0.4 s, then only raise, never lower.
+    """
+    if CS.gasPressed:
+      self._gas_pressed_count += 1
+    else:
+      self._gas_pressed_count = 0
+      return
+
+    if not enabled or not self.volkswagen_standby_set_speed or not self.v_cruise_initialized:
+      return
+    try:
+      if not self.params.get_bool("AutoGasSyncSpeed"):
+        return
+    except Exception:
+      pass
+    if self._gas_pressed_count <= GAS_SYNC_HOLD_FRAMES:
+      return
+
+    v_ms = CS.vEgoCluster if CS.vEgoCluster > 0 else CS.vEgo
+    v_ego_kph = int(round(v_ms * CV.MS_TO_KPH))
+    if v_ego_kph > self.v_cruise_kph:
+      self._apply_v_cruise_kph(v_ego_kph)
+      self.cruise_speed_user_set = True
 
   def _update_v_cruise_non_pcm(self, CS, enabled, is_metric, allow_standby_adjustment=False):
     # handle button presses. TODO: this should be in state_control, but a decelCruise press

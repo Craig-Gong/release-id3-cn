@@ -29,20 +29,35 @@ IQLINK_BOOL_KEYS = {
 }
 IQLINK_INT_KEYS = {"IqlinkBleLinkState"}
 
+# Keys not in the prebuilt params_pyx.so. Default ON: hold gas raises MAX.
+EXTRA_PARAM_DEFAULTS = {
+  "AutoGasSyncSpeed": "1",
+}
+EXTRA_BOOL_KEYS = {
+  "AutoGasSyncSpeed",
+}
+
 
 def _iqlink_key_name(key):
   return key.decode() if isinstance(key, bytes) else key
 
 
 def _iqlink_is_extra(key) -> bool:
-  return _iqlink_key_name(key) in IQLINK_PARAM_DEFAULTS
+  name = _iqlink_key_name(key)
+  return name in IQLINK_PARAM_DEFAULTS or name in EXTRA_PARAM_DEFAULTS
+
+
+def _extra_default(name):
+  if name in EXTRA_PARAM_DEFAULTS:
+    return EXTRA_PARAM_DEFAULTS[name]
+  return IQLINK_PARAM_DEFAULTS.get(name)
 
 
 def _iqlink_decode(key, dat, encoding=None):
   name = _iqlink_key_name(key)
   if dat is None:
-    default = IQLINK_PARAM_DEFAULTS.get(name)
-    if name in IQLINK_BOOL_KEYS:
+    default = _extra_default(name)
+    if name in IQLINK_BOOL_KEYS or name in EXTRA_BOOL_KEYS:
       return default == "1"
     if name in IQLINK_INT_KEYS:
       return int(default or 0)
@@ -54,7 +69,7 @@ def _iqlink_decode(key, dat, encoding=None):
       text = dat.decode("utf-8") if isinstance(dat, (bytes, bytearray)) else str(dat)
     except UnicodeDecodeError:
       return dat
-  if name in IQLINK_BOOL_KEYS:
+  if name in IQLINK_BOOL_KEYS or name in EXTRA_BOOL_KEYS:
     return text == "1"
   if name in IQLINK_INT_KEYS:
     try:
@@ -66,7 +81,7 @@ def _iqlink_decode(key, dat, encoding=None):
 
 def _iqlink_encode(key, dat) -> bytes:
   name = _iqlink_key_name(key)
-  if name in IQLINK_BOOL_KEYS:
+  if name in IQLINK_BOOL_KEYS or name in EXTRA_BOOL_KEYS:
     if isinstance(dat, bool):
       return b"1" if dat else b"0"
     if dat in (b"1", b"0"):
