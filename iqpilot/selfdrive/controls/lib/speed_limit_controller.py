@@ -225,20 +225,24 @@ class IQSpeedLimitAssist:
           self._apply_limit(resolved_limit, resolved_source, v_ego, fire_changed_event=True)
 
     elif self._state == SpeedLimitAssistState.preActive:
-      self._pre_active_timer += DT_MDL
-      confirmed, denied = self._check_confirmation(sm, slc_params)
-
-      if denied:
-        self.denied_target = self.unconfirmed_limit
-        self.previous_source = self.unconfirmed_source
-        self.previous_target = self.unconfirmed_limit
-        self._reset_unconfirmed()
-        self._state = SpeedLimitAssistState.inactive
-      elif confirmed:
+      # Leave preActive without SET/RES: MEB RES does not complete confirm, and
+      # Control should apply the new limit immediately.
+      if not self._needs_confirmation(self.unconfirmed_limit, slc_params):
         self._confirm(v_ego)
-      elif not has_limit:
-        self._reset_unconfirmed()
-        self._state = SpeedLimitAssistState.inactive
+      else:
+        self._pre_active_timer += DT_MDL
+        confirmed, denied = self._check_confirmation(sm, slc_params)
+        if denied:
+          self.denied_target = self.unconfirmed_limit
+          self.previous_source = self.unconfirmed_source
+          self.previous_target = self.unconfirmed_limit
+          self._reset_unconfirmed()
+          self._state = SpeedLimitAssistState.inactive
+        elif confirmed:
+          self._confirm(v_ego)
+        elif not has_limit:
+          self._reset_unconfirmed()
+          self._state = SpeedLimitAssistState.inactive
 
     elif self._state in (SpeedLimitAssistState.active, SpeedLimitAssistState.adapting):
       if not has_limit:
@@ -292,9 +296,9 @@ class IQSpeedLimitAssist:
     self._state = SpeedLimitAssistState.adapting if v_offset < LIMIT_SPEED_OFFSET_TH else SpeedLimitAssistState.active
 
   def _needs_confirmation(self, new_limit, slc_params):
-    if new_limit < self.target:
-      return slc_params.get("speed_limit_confirmation_lower", False)
-    return slc_params.get("speed_limit_confirmation_higher", False)
+    # C3XL Alpha Long: SET/RES confirm never completes on MEB. Always apply.
+    _ = new_limit, slc_params
+    return False
 
   def _check_confirmation(self, sm, slc_params):
     confirmed = False

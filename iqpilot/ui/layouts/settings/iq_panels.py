@@ -1061,17 +1061,17 @@ class CruiseLayout(Widget):
       ),
       self._toggle_item(
         "IQ SLC Confirm Higher",
-        "Require confirmation before IQ.Pilot accepts a higher detected speed limit.",
+        "Unused on this car. Control applies a higher speed limit immediately without SET/RES.",
         "SpeedLimitConfirmationHigher",
       ),
       self._toggle_item(
         "IQ SLC Confirm Lower",
-        "Require confirmation before IQ.Pilot accepts a lower detected speed limit.",
+        "Unused on this car. Control applies a lower speed limit immediately without SET/RES.",
         "SpeedLimitConfirmationLower",
       ),
       self._toggle_item(
         "IQ SLC Auto Confirm",
-        "Automatically accept speed limit changes after a 5-second timeout without requiring a cruise button press.",
+        "Unused on this car. Control no longer waits for a confirm timeout.",
         "SLCAutoConfirm",
       ),
       self._toggle_item(

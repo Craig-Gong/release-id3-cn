@@ -144,15 +144,23 @@ class SLCVCruise:
       speed_limit_controller = False
       show_speed_limits = True
 
+    # Persist off so the hidden Cruise page matches runtime (no SET/RES wait).
+    for key in ("SpeedLimitConfirmationHigher", "SpeedLimitConfirmationLower"):
+      try:
+        if self.params.get_bool(key):
+          self.params.put_bool(key, False)
+      except Exception:
+        pass
+
     return {
       "speed_limit_controller": speed_limit_controller,
       "speed_limit_mode": speed_limit_mode,
       "show_speed_limits": show_speed_limits,
       "slc_policy": slc_policy,
       "iqlink_enabled": iqlink_enabled,
-      "slc_auto_confirm": get_param_bool("SLCAutoConfirm"),
-      "speed_limit_confirmation_higher": get_param_bool("SpeedLimitConfirmationHigher"),
-      "speed_limit_confirmation_lower": get_param_bool("SpeedLimitConfirmationLower"),
+      "slc_auto_confirm": False,
+      "speed_limit_confirmation_higher": False,
+      "speed_limit_confirmation_lower": False,
       "map_speed_lookahead_higher": get_param_float("MapSpeedLookaheadHigher", 5.0),
       "map_speed_lookahead_lower": get_param_float("MapSpeedLookaheadLower", 5.0),
       "slc_fallback_experimental_mode": get_param_bool("SLCFallbackExperimentalMode"),
@@ -168,8 +176,10 @@ class SLCVCruise:
 
   @staticmethod
   def _allow_auto_raise(slc_params):
-    # Reuse the existing "confirm higher" toggle as the gate:
-    # disabled confirm => allow SLC to raise cruise to a higher accepted limit.
+    # IQ-link on: never move MAX; nav set-speed / TBT must keep control.
+    # IQ-link off + Control: confirmation is disabled, so MAX can follow the limit.
+    if slc_params.get("iqlink_enabled"):
+      return False
     return not slc_params["speed_limit_confirmation_higher"]
 
   def update(self, apply_enabled, now, time_validated, v_cruise, v_ego, sm):

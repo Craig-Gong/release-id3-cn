@@ -218,6 +218,7 @@ def test_slc_vcruise_auto_raises_for_higher_limit_when_confirmation_disabled():
     "speed_limit_controller_override_manual": True,
     "speed_limit_controller_override_set_speed": False,
     "slc_online_filler": False,
+    "iqlink_enabled": False,
   }
 
   v_cruise = 13.5
@@ -226,6 +227,41 @@ def test_slc_vcruise_auto_raises_for_higher_limit_when_confirmation_disabled():
 
   assert out > v_cruise
   assert out == 20.0
+
+
+def test_slc_vcruise_does_not_auto_raise_when_iqlink_enabled():
+  slc = SLCVCruise()
+  slc.slc = _FakeSLC()
+  slc.slc.target = 20.0
+  slc.slc.source = "Iqlink"
+  slc.slc.active_target = 20.0
+  slc.slc.active_source = "Iqlink"
+
+  slc._get_slc_params = lambda: {
+    "speed_limit_controller": True,
+    "speed_limit_mode": 3,
+    "show_speed_limits": False,
+    "is_metric": True,
+    "slc_policy": POLICY_MAP_DATA_PRIORITY,
+    "slc_auto_confirm": False,
+    "speed_limit_confirmation_higher": False,
+    "speed_limit_confirmation_lower": False,
+    "map_speed_lookahead_higher": 5.0,
+    "map_speed_lookahead_lower": 5.0,
+    "slc_fallback_experimental_mode": False,
+    "slc_fallback_set_speed": False,
+    "slc_fallback_previous_speed_limit": False,
+    "speed_limit_controller_override_manual": True,
+    "speed_limit_controller_override_set_speed": False,
+    "slc_online_filler": False,
+    "iqlink_enabled": True,
+  }
+
+  v_cruise = 13.5
+  sm = _build_sm(v_cruise_cluster=v_cruise * CV.MS_TO_KPH, v_ego_cluster=13.5, iq_limit=20.0)
+  out = slc.update(apply_enabled=True, now=None, time_validated=True, v_cruise=v_cruise, v_ego=13.5, sm=sm)
+
+  assert out == v_cruise
 
 
 def test_slc_vcruise_does_not_auto_raise_when_higher_confirmation_enabled():
@@ -462,3 +498,43 @@ def test_construction_zone_fires_event_once_per_zone_entry():
   assert event not in controller.pending_events
   controller.update_limits(0.0, None, True, 33.0, 30.0, _construction_sm(), slc_params)
   assert event in controller.pending_events
+
+
+def test_assist_applies_limit_without_set_res_confirmation():
+  from cereal import custom
+  from openpilot.iqpilot.selfdrive.controls.lib.speed_limit_controller import IQSpeedLimitAssist
+
+  EventNameIQ = custom.IQOnroadEvent.EventName
+  AssistState = custom.IQPlan.SpeedLimit.AssistState
+  assist = IQSpeedLimitAssist(FakeParams())
+  slc_params = {
+    "speed_limit_confirmation_higher": True,
+    "speed_limit_confirmation_lower": True,
+    "slc_auto_confirm": False,
+  }
+  limit = 80.0 * CV.KPH_TO_MS
+  assist.update(True, 22.0, limit, "Dashboard", slc_params, _build_sm())
+
+  assert assist.state in (AssistState.active, AssistState.adapting)
+  assert assist.target == limit
+  assert EventNameIQ.speedLimitPreActive not in assist.pending_events
+  assert EventNameIQ.speedLimitChanged in assist.pending_events
+
+
+def test_assist_clears_stuck_preactive_without_buttons():
+  from cereal import custom
+  from openpilot.iqpilot.selfdrive.controls.lib.speed_limit_controller import IQSpeedLimitAssist
+
+  AssistState = custom.IQPlan.SpeedLimit.AssistState
+  assist = IQSpeedLimitAssist(FakeParams())
+  limit = 80.0 * CV.KPH_TO_MS
+  assist._enter_pre_active(limit, "Dashboard")
+  assert assist.state == AssistState.preActive
+
+  assist.update(True, 22.0, limit, "Dashboard", {
+    "speed_limit_confirmation_higher": True,
+    "speed_limit_confirmation_lower": True,
+    "slc_auto_confirm": False,
+  }, _build_sm())
+  assert assist.state in (AssistState.active, AssistState.adapting)
+  assert assist.target == limit
