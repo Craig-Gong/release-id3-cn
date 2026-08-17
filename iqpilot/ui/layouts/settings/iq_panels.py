@@ -70,7 +70,7 @@ from openpilot.system.ui.iqwidgets.widgets.list_view import (
   Spacer,
 )
 from openpilot.system.ui.iqwidgets.widgets.list_view import IQListItem
-from openpilot.system.ui.iqwidgets.widgets.list_view import IQListItem, IQMultipleButtonAction, IQToggleAction, IQLineSeparator
+from openpilot.system.ui.iqwidgets.widgets.list_view import IQListItem, IQMultipleButtonAction, IQToggleAction, SafeIQToggleAction, IQLineSeparator
 from openpilot.system.ui.iqwidgets.widgets.list_view import button_item, toggle_item
 from openpilot.system.ui.iqwidgets.widgets.list_view import NoticeModal
 from openpilot.system.ui.iqwidgets.widgets.list_view import PickerDialog, PickerItem, PickerGroup
@@ -996,6 +996,14 @@ class CruiseLayout(Widget):
     )
 
   @staticmethod
+  def _safe_toggle_item(title: str, description: str, param: str, default_on: bool = True):
+    return IQListItem(
+      title=lambda: tr(title),
+      description=lambda: tr(description),
+      action_item=SafeIQToggleAction(param=param, default_on=default_on),
+    )
+
+  @staticmethod
   def _mode_item(title: str, description: str, param: str, labels: list[str], width: int, inline: bool = False):
     return IQListItem(
       title=lambda: tr(title),
@@ -1086,11 +1094,6 @@ class CruiseLayout(Widget):
         "Use online sources (TomTom + Mapbox) to fill in missing speed limits when local map data is unavailable.",
         "SLCOnlineFiller",
       ),
-      self._toggle_item(
-        "Gas Sync Set Speed",
-        "While engaged, holding the accelerator raises MAX to the current speed. A short tap does not change it.",
-        "AutoGasSyncSpeed",
-      ),
       self._option_item(
         "IQ Map Lookahead Higher",
         "How far ahead IQ.Pilot should apply an upcoming higher map speed limit before the limit changes.",
@@ -1115,6 +1118,11 @@ class CruiseLayout(Widget):
       IQListItem(title=lambda: tr("IQ.Dynamic"), description="", action_item=None, inline=True,
                  title_color=rl.Color(16, 185, 169, 255)),
       IQLineSeparator(20),
+      self._safe_toggle_item(
+        "Gas Sync Set Speed",
+        "While engaged, holding the accelerator raises MAX to the current speed. A short tap does not change it.",
+        "AutoGasSyncSpeed",
+      ),
       self._toggle_item(
         "IQ.Dynamic Curves",
         "Allow IQ.Dynamic to enter blended control for curves and strong vision slowdown cues.",

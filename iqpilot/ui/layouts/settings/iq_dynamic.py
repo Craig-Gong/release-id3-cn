@@ -114,6 +114,12 @@ class IQDynamicLayout(Widget):
     self._pq_only_items = [self._blend_radar_toggle]
 
     return [
+      _safe_toggle_item(
+        "Gas Sync Set Speed",
+        "While engaged, holding the accelerator raises MAX to the current speed. A short tap does not change it.",
+        "AutoGasSyncSpeed",
+        default_on=True,
+      ),
       self._blend_radar_toggle,
       _toggle_item(
         "IQ.Dynamic Curves",
