@@ -7,6 +7,7 @@ from cereal import car, custom
 from iqdbc.car import structs
 from openpilot.common.params import Params
 from openpilot.iqpilot.selfdrive.car.long_increments import LongIncrementConfig, read_long_increment_config, resolve_button_step
+from openpilot.iqpilot.common.speed_assist_tiers import set_speed_follows_limit
 
 
 # ===== VCruiseHelperIQ (dissolved from iqpilot vcruise_helper_iq) =====
@@ -86,7 +87,7 @@ class VCruiseHelperIQ:
 
   def _read_set_speed_to_limit(self) -> bool:
     try:
-      return self.params.get_bool("SLCSetSpeedToLimit")
+      return set_speed_follows_limit(self.params)
     except Exception:
       return False
 

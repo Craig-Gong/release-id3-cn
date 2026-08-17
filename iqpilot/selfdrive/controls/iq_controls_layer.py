@@ -14,6 +14,7 @@ from iqdbc.car import structs
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
+from openpilot.iqpilot.common.speed_assist_tiers import set_speed_follows_limit
 from openpilot.iqpilot.common.steer_delay import resolve_steer_delay
 from openpilot.iqpilot.selfdrive.car.enhanced_stock_longitudinal_control import build_iq_control_params_from_plan
 from openpilot.iqpilot.selfdrive.iqmodeld.models.inference_state import InferenceStateBase
@@ -49,7 +50,7 @@ class IQControlsLayer(InferenceStateBase):
 
   def _want_set_speed_to_limit(self) -> bool:
     try:
-      return self.params.get_bool("SLCSetSpeedToLimit")
+      return set_speed_follows_limit(self.params)
     except Exception:
       return False
 

@@ -89,6 +89,34 @@ def test_set_speed_does_not_follow_limit_when_feature_off():
   assert helper.v_cruise_kph == pytest.approx(22.35 * CV.MS_TO_KPH, abs=0.1)
 
 
+class _Params:
+  def __init__(self, *, iqlink=False, mode=1, explicit=False):
+    self.iqlink = iqlink
+    self.mode = mode
+    self.explicit = explicit
+
+  def get_bool(self, key):
+    if key == "SLCSetSpeedToLimit":
+      return self.explicit
+    if key == "IqlinkEnabled":
+      return self.iqlink
+    return False
+
+  def get(self, key, return_default=True):
+    if key == "IQSpeedAssistMode":
+      return self.mode
+    return None
+
+
+def test_set_speed_follows_limit_control_without_iqlink():
+  from openpilot.iqpilot.common.speed_assist_tiers import set_speed_follows_limit
+  assert set_speed_follows_limit(_Params(iqlink=False, mode=3)) is True
+  assert set_speed_follows_limit(_Params(iqlink=False, mode=1)) is False
+  assert set_speed_follows_limit(_Params(iqlink=True, mode=3)) is False
+  assert set_speed_follows_limit(_Params(iqlink=True, mode=3, explicit=True)) is True
+  assert set_speed_follows_limit(_Params(iqlink=False, mode=3, explicit=True)) is True
+
+
 def test_enhanced_stock_longitudinal_control_syncs_once_then_follows_cluster_speed():
   CP = car.CarParams(pcmCruise=True, openpilotLongitudinalControl=True)
   resolver = SimpleNamespace(speedLimitFinalLast=17.88)
