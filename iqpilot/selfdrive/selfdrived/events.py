@@ -50,11 +50,12 @@ def speed_limit_pre_active_alert(CP: car.CarParams, CS: car.CarState, sm: messag
   last_speed = resolver.speedLimitFinalLast * speed_conv
   is_lower = pending_speed < last_speed or last_speed <= 0
   confirm_hint = "SET" if is_lower else "RES"
+  # Same hold as speedLimitActive / constructionZone (4s). 0.1s was unreadable.
   return Alert(
     f"Speed Limit: {pending_speed} {unit}",
     f"Press {confirm_hint} to apply",
     AlertStatus.normal, AlertSize.mid,
-    Priority.LOW, VisualAlert.none, AudibleAlertIQ.promptSingleLow, .1)
+    Priority.LOW, VisualAlert.none, AudibleAlertIQ.promptSingleLow, 4.)
 
 
 def speed_limit_changed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:

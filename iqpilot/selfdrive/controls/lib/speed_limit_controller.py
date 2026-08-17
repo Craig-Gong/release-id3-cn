@@ -332,11 +332,13 @@ class IQSpeedLimitAssist:
   def _fire_transition_events(self):
     prev = self._prev_state
     curr = self._state
-    if prev == curr:
-      return
+    # Keep the SET/RES toast up for the whole wait, not just the rising edge.
     if curr == SpeedLimitAssistState.preActive:
       self.pending_events.append(EventNameIQ.speedLimitPreActive)
-    elif curr in (SpeedLimitAssistState.adapting, SpeedLimitAssistState.active):
+      return
+    if prev == curr:
+      return
+    if curr in (SpeedLimitAssistState.adapting, SpeedLimitAssistState.active):
       if prev not in (SpeedLimitAssistState.adapting, SpeedLimitAssistState.active):
         self.pending_events.append(EventNameIQ.speedLimitActive)
 
