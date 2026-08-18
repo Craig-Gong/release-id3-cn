@@ -44,7 +44,17 @@ class SignalPauseEngine:
     self._pull_setup()
 
   def is_paused(self, cs: car.CarState) -> bool:
-    return bool(self._state["on"] and self._one_signal(cs) and cs.vEgo < self._gate_mps())
+    if not (self._state["on"] and self._one_signal(cs) and cs.vEgo < self._gate_mps()):
+      return False
+    # Do not drop lateral while the car is in the blinker-turn speed band — that is
+    # exactly when Low-Speed Turn Planning needs steering to follow the turn path.
+    try:
+      from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_turn import TURN_TRIGGER_MPS
+      if cs.vEgo < TURN_TRIGGER_MPS:
+        return False
+    except Exception:
+      pass
+    return True
 
   @property
   def enabled(self):

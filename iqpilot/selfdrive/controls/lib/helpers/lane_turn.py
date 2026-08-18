@@ -13,15 +13,19 @@ from openpilot.common.params import Params
 
 TurnDirection = custom.IQTurnSignalDirection
 
-TURN_TRIGGER_MPS = 20 * CV.MPH_TO_MS
+# Urban intersection approach with blinker on (China). Hard cap used to be 20 mph /
+# 32 km/h — too low for typical turn approaches, so the blinker fell into the lane-
+# change FSM and the model kept lane-centering instead of turning.
+TURN_TRIGGER_MPS = 45.0 * CV.KPH_TO_MS  # ~28 mph
 TURN_SPEED_GATE_MPS = TURN_TRIGGER_MPS
 LANE_CHANGE_SPEED_MIN = TURN_SPEED_GATE_MPS
+DEFAULT_TURN_GATE_MPS = 40.0 * CV.KPH_TO_MS
 
 
 @dataclass
 class _TurnGateState:
-  active: bool = False
-  speed_limit_mps: float = TURN_TRIGGER_MPS
+  active: bool = True
+  speed_limit_mps: float = DEFAULT_TURN_GATE_MPS
   outcome: int = TurnDirection.none
   refresh_tick: int = 0
 
@@ -30,15 +34,16 @@ def _mph_param_to_mps(raw_value) -> float:
   try:
     return float(raw_value) * CV.MPH_TO_MS
   except (TypeError, ValueError):
-    return TURN_TRIGGER_MPS
+    return DEFAULT_TURN_GATE_MPS
 
 
 def _resolve_signal_choice(speed_mps: float,
                            speed_limit_mps: float,
                            left_signal: bool,
                            right_signal: bool,
-                           left_blocked: bool,
-                           right_blocked: bool) -> int:
+                           left_blocked: bool = False,
+                           right_blocked: bool = False) -> int:
+  """Blinker → turn desire below the gate. Same-side BSM blocks (side traffic)."""
   if speed_mps >= speed_limit_mps:
     return TurnDirection.none
   if left_signal and not right_signal and not left_blocked:
@@ -59,8 +64,13 @@ class TurnSignalPlanner:
 
   def _refresh_from_params(self) -> None:
     requested_gate = _mph_param_to_mps(self._params.get("IQLaneTurnValue", return_default=True))
-    self._state.active = self._params.get_bool("IQLaneTurnDesire")
-    self._state.speed_limit_mps = min(TURN_TRIGGER_MPS, requested_gate)
+    # Default ON: missing key → True. Explicit off still wins.
+    stored = self._params.get("IQLaneTurnDesire")
+    if stored is None:
+      self._state.active = True
+    else:
+      self._state.active = self._params.get_bool("IQLaneTurnDesire")
+    self._state.speed_limit_mps = min(TURN_TRIGGER_MPS, max(requested_gate, 5.0 * CV.MPH_TO_MS))
 
   def _consume_legacy_kwargs(self, **legacy) -> tuple[bool, bool, bool, bool, float]:
     return (

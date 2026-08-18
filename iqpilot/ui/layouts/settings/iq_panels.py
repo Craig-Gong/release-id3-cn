@@ -889,14 +889,16 @@ class SteeringLayout(Widget):
     )
     self._lane_turn_desire_toggle = toggle_item(
       tr("Low-Speed Turn Planning"),
-      tr("If you're driving at 20 mph (32 km/h) or below and have your blinker on,"
-         " the car will plan a turn in that direction at the nearest drivable path."
-         " This prevents situations (like at red lights) where the car might plan the wrong turn direction."),
+      tr("With the blinker on below about 45 km/h (28 mph), plan a turn onto the nearest "
+         "drivable path instead of holding the lane or starting a lane change. Helps at "
+         "urban intersections when you signal early. Same-side blind-spot (BSM) holds the "
+         "turn while side traffic is flagged. Default on."),
       param="IQLaneTurnDesire"
     )
     self._lane_turn_value_control = option_item(
-      tr("Adjust Lane Turn Desire Speed"), "IQLaneTurnValue", 500, 2000,
-      tr("Sets the speed threshold used by Lane Turn Desires. Below this value, turn desires can plan into the nearest drivable turn path. Default is 19 mph."),
+      tr("Adjust Lane Turn Desire Speed"), "IQLaneTurnValue", 500, 2800,
+      tr("Speed threshold for blinker turn planning. Below this, turn desires apply. "
+         "Hard cap is 45 km/h. Default is about 40 km/h."),
       int(round(100 / CV.MPH_TO_KPH)), None, True, "", style.BUTTON_ACTION_WIDTH, None, True,
       lambda v: f"{int(round(v * (CV.MPH_TO_KPH if ui_state.is_metric else 1)))}"
                 f" {'km/h' if ui_state.is_metric else 'mph'}"
@@ -947,7 +949,12 @@ class SteeringLayout(Widget):
     self._aol_settings_button.action_item.set_enabled(ui_state.is_offroad() and self._aol_toggle.action_item.get_state())
     self._nnff_toggle.action_item.set_enabled(ui_state.is_offroad() and steering_supported)
 
-    turn_desire = ui_state.params.get_bool("IQLaneTurnDesire")
+    turn_desire_stored = ui_state.params.get("IQLaneTurnDesire")
+    if turn_desire_stored is None:
+      ui_state.params.put_bool("IQLaneTurnDesire", True)
+      turn_desire = True
+    else:
+      turn_desire = ui_state.params.get_bool("IQLaneTurnDesire")
     live_delay = ui_state.params.get_bool("IQLiveSteerDelay")
     self._lane_turn_desire_toggle.action_item.set_state(turn_desire)
     self._lane_turn_value_control.set_visible(turn_desire)

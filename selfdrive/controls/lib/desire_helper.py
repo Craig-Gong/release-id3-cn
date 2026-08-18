@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from cereal import car, custom, log
 
-from openpilot.common.constants import CV
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_change import (
@@ -14,19 +13,22 @@ from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_change import (
   AutoLaneChangeMode,
   NavExitLaneChangeController,
 )
-from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_turn import IQNavTurnController
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_turn import IQNavTurnController, TURN_TRIGGER_MPS
 
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
 TurnDirection = custom.IQTurnSignalDirection
 NavManeuverPhase = custom.IQNavState.ManeuverPhase
 
-LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
+# Lane-change FSM is for highway swaps. Below the turn-desire gate, blinker means
+# intersection turn — keep LC cleared so it cannot starve turnLeft/turnRight.
+LANE_CHANGE_SPEED_MIN = TURN_TRIGGER_MPS
 LANE_CHANGE_TIME_MAX = 10.0
 TURN_DESIRE_STOP_HOLD_TIME = 4.8
 TURN_DESIRE_STOP_GAP_TIME = 1.0
 TURN_DESIRE_STOP_CYCLE_TIME = TURN_DESIRE_STOP_HOLD_TIME + TURN_DESIRE_STOP_GAP_TIME
 TURN_DESIRE_STOP_SPEED_EPS = 0.1
+
 
 _LANE_CHANGE_DESIRES = {
   (LaneChangeDirection.none, LaneChangeState.off): log.Desire.none,
@@ -34,11 +36,11 @@ _LANE_CHANGE_DESIRES = {
   (LaneChangeDirection.none, LaneChangeState.laneChangeStarting): log.Desire.none,
   (LaneChangeDirection.none, LaneChangeState.laneChangeFinishing): log.Desire.none,
   (LaneChangeDirection.left, LaneChangeState.off): log.Desire.none,
-  (LaneChangeDirection.left, LaneChangeState.preLaneChange): log.Desire.none,
+  (LaneChangeDirection.left, LaneChangeState.preLaneChange): log.Desire.keepLeft,
   (LaneChangeDirection.left, LaneChangeState.laneChangeStarting): log.Desire.laneChangeLeft,
   (LaneChangeDirection.left, LaneChangeState.laneChangeFinishing): log.Desire.laneChangeLeft,
   (LaneChangeDirection.right, LaneChangeState.off): log.Desire.none,
-  (LaneChangeDirection.right, LaneChangeState.preLaneChange): log.Desire.none,
+  (LaneChangeDirection.right, LaneChangeState.preLaneChange): log.Desire.keepRight,
   (LaneChangeDirection.right, LaneChangeState.laneChangeStarting): log.Desire.laneChangeRight,
   (LaneChangeDirection.right, LaneChangeState.laneChangeFinishing): log.Desire.laneChangeRight,
 }
@@ -97,6 +99,7 @@ class DesireHelper:
     self.lane_change_direction = LaneChangeDirection.none
     self.lane_change_timer = 0.0
     self.lane_change_ll_prob = 1.0
+    self.keep_pulse_timer = 0.0
     self.prev_one_blinker = False
     self.prev_nav_exit_active = False
     self.desire = log.Desire.none
@@ -114,14 +117,20 @@ class DesireHelper:
     return _direction_from_blinkers(carstate)
 
   @staticmethod
-  def _nav_turn_desire(nav_state):
+  def _nav_turn_desire(nav_state, carstate):
     if nav_state is None or not getattr(nav_state, "active", False):
       return TurnDirection.none
     if getattr(nav_state, "maneuverPhase", NavManeuverPhase.none) != NavManeuverPhase.turnActive:
       return TurnDirection.none
     if not getattr(nav_state, "shouldSendTurnDesire", False):
       return TurnDirection.none
-    return getattr(nav_state, "turnDesireDirection", TurnDirection.none)
+    direction = getattr(nav_state, "turnDesireDirection", TurnDirection.none)
+    # Same-side BSM: hold the nav turn while side traffic is flagged.
+    if direction == TurnDirection.turnLeft and bool(getattr(carstate, "leftBlindspot", False)):
+      return TurnDirection.none
+    if direction == TurnDirection.turnRight and bool(getattr(carstate, "rightBlindspot", False)):
+      return TurnDirection.none
+    return direction
 
   def _clear_lane_change(self) -> None:
     self.lane_change_state = LaneChangeState.off
@@ -138,7 +147,7 @@ class DesireHelper:
       v_ego=speed_mps,
     )
     self.lane_turn_direction = self.lane_turn_controller.get_turn_direction()
-    self.nav_turn_direction = self._nav_turn_desire(nav_state)
+    self.nav_turn_direction = self._nav_turn_desire(nav_state, carstate)
 
     self.nav_exit.update_params()
     self.nav_exit.update(nav_state, carstate)
@@ -250,14 +259,31 @@ class DesireHelper:
 
     self.desire = self._cycle_turn_desire_when_stopped(desired_output)
 
+  def _apply_keep_pulse(self) -> None:
+    """evo/stock: during preLaneChange hold keepLeft/Right, pulse none ~1 Hz so the desire buffer stays fresh."""
+    if self.lane_change_state in (LaneChangeState.off, LaneChangeState.laneChangeStarting):
+      self.keep_pulse_timer = 0.0
+      return
+    if self.lane_change_state != LaneChangeState.preLaneChange:
+      self.keep_pulse_timer = 0.0
+      return
+
+    self.keep_pulse_timer += DT_MDL
+    if self.keep_pulse_timer > 1.0:
+      self.keep_pulse_timer = 0.0
+    elif self.desire in (log.Desire.keepLeft, log.Desire.keepRight):
+      self.desire = log.Desire.none
+
   def update(self, carstate, lateral_active, lane_change_prob, nav_state=None, modeldata=None, radar_state=None):
     self._last_carstate = carstate
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
+    # Below the turn-desire gate, blinker is an intersection turn — do not run LC.
     below_speed = carstate.vEgo < LANE_CHANGE_SPEED_MIN
     nav_exit_active = self._refresh_turn_overrides(carstate, nav_state)
+    turn_owns_blinker = self.lane_turn_direction != TurnDirection.none or self.nav_turn_direction != TurnDirection.none
 
     self.alc.update_params()
-    if self._reset_required(lateral_active, nav_exit_active):
+    if turn_owns_blinker or self._reset_required(lateral_active, nav_exit_active):
       self._clear_lane_change()
     else:
       self._advance_lane_change_machine(one_blinker, nav_exit_active, below_speed, lane_change_prob)
@@ -267,3 +293,4 @@ class DesireHelper:
     self.prev_nav_exit_active = nav_exit_active
     self.alc.update_state()
     self._pick_desire_output()
+    self._apply_keep_pulse()
