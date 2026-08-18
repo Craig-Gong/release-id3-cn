@@ -39,6 +39,7 @@ class TeslaSpeedLimitController:
     self.manual_adjustment_counter_seen = None
     self.resume_gesture_counter_seen = None
     self.manual_override_active = False
+    self.manual_resume_feedback_guard_until_nanos = 0
     self.last_current_display = None
     self.target_change_nanos = 0
     self.target_stabilizing = False
@@ -61,6 +62,7 @@ class TeslaSpeedLimitController:
     self.target_change_nanos = 0
     self.target_stabilizing = False
     if clear_manual_override:
+      self.manual_resume_feedback_guard_until_nanos = 0
       self._clear_manual_override("cruise_disengaged")
 
   def _sync_manual_counters(self, CS) -> tuple[bool, bool]:
@@ -116,20 +118,25 @@ class TeslaSpeedLimitController:
       # also covers the first valid target after engagement, where an
       # intermediate offset target must never produce a wrong-direction tick.
       self.target_stabilizing = True
+      self.manual_resume_feedback_guard_until_nanos = 0
       self._clear_manual_override("speed_limit_changed")
 
     if resume_changed:
+      self.manual_resume_feedback_guard_until_nanos = now_nanos + FEEDBACK_TIMEOUT_NS
       self._clear_manual_override("wheel_opposite_direction_gesture")
     elif manual_changed:
+      self.manual_resume_feedback_guard_until_nanos = 0
       if not self.manual_override_active:
         log_dynamic_acc("speed_limit_controller", "manual_speed_override", current_display=current_display,
                         target_display=target_display)
       self.manual_override_active = True
       self._reset_pending()
 
+    resume_feedback_guard_active = now_nanos < self.manual_resume_feedback_guard_until_nanos
     external_speed_change = (self.last_current_display is not None and current_display != self.last_current_display and
                              not self.pending_direction and self.feedback_blocked_signature is None and
-                             not self.target_stabilizing and not target_changed and not manual_changed and not resume_changed)
+                             not self.target_stabilizing and not resume_feedback_guard_active and
+                             not target_changed and not manual_changed and not resume_changed)
     self.last_current_display = current_display
     if external_speed_change and not self.manual_override_active:
       self.manual_override_active = True

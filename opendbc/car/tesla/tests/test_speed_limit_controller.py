@@ -193,6 +193,45 @@ def test_resume_gesture_ignores_repeated_second_direction_until_wheel_returns_id
   assert controller.manual_override_active
 
 
+def test_resume_gesture_ignores_delayed_manual_speed_feedback():
+  up = bytes.fromhex("2955000100000080")
+  down = bytes.fromhex("2955003f00000080")
+
+  for first_direction, second_direction in ((up, down), (down, up)):
+    controller = TeslaSpeedLimitController(SimpleNamespace(flags=TeslaFlagsSP.AUTO_SPEED_LIMIT))
+    state = fake_state(current_speed=25.0, target_speed=25.0, template_time=2_000_000_000)
+    state._tesla_speed_resume_up_nanos = 0
+    state._tesla_speed_resume_down_nanos = 0
+    state._tesla_speed_resume_wait_idle = False
+    control = fake_control()
+
+    assert controller.update(control, state, 1_000_000_000) == []
+    assert controller.update(control, state, 1_500_000_000) == []
+
+    # The wheel event can reach CarState before the corresponding set-speed
+    # feedback. Manual override must still be active at this point.
+    CarStateExt.update_speed_button_template(state, up, 1_600_000_000)
+    assert controller.update(control, state, 1_600_000_000) == []
+    assert controller.manual_override_active
+    CarStateExt.update_speed_button_template(state, IDLE_TEMPLATE, 1_700_000_000)
+
+    # Start a fresh gesture after the preceding manual event has aged out.
+    CarStateExt.update_speed_button_template(state, first_direction, 3_300_000_000)
+    assert controller.update(control, state, 3_300_000_000) == []
+    assert controller.manual_override_active
+    CarStateExt.update_speed_button_template(state, IDLE_TEMPLATE, 3_350_000_000)
+    CarStateExt.update_speed_button_template(state, second_direction, 3_400_000_000)
+    controller.update(control, state, 3_400_000_000)
+    assert not controller.manual_override_active
+
+    # Tesla can publish the set-speed result after the gesture counter. This is
+    # feedback from the completed manual gesture, not a new manual adjustment.
+    state.out.cruiseState.speedCluster = 26.0
+    state.tesla_speed_button_template_nanos = 3_500_000_000
+    controller.update(control, state, 3_500_000_000)
+    assert not controller.manual_override_active
+
+
 def test_manual_override_clears_when_speed_limit_changes():
   controller = TeslaSpeedLimitController(SimpleNamespace(flags=TeslaFlagsSP.AUTO_SPEED_LIMIT))
   state = fake_state(current_speed=25.0, target_speed=25.0)
