@@ -57,9 +57,10 @@ T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
-# evo uses 6.0. Acados codegen still has 3.0 baked in; runtime shifts the obstacle
-# by (STOP_DISTANCE - GENERATED_STOP_DISTANCE) so onset matches evo without regen.
-STOP_DISTANCE = 6.0
+# Parked follow gap. evo uses 6.0 (US); this car wants ~2-3 m bumper-to-bumper.
+# Personality t_follow vanishes at standstill, so Aggressive cannot close that gap.
+# Matches Acados codegen 3.0, so runtime obstacle shift is zero.
+STOP_DISTANCE = 3.0
 GENERATED_STOP_DISTANCE = 3.0
 MIN_X_LEAD_FACTOR = 0.5
 LEAD_PULLAWAY_VREL = 0.5
@@ -379,7 +380,7 @@ class LongitudinalMpc:
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance
     # and then treat that as a stopped car/obstacle at this new distance.
-    # Shift obstacle closer by the STOP_DISTANCE delta vs codegen so onset matches evo.
+    # Shift obstacle closer by the STOP_DISTANCE delta vs codegen (no Acados regen).
     stop_delta = STOP_DISTANCE - GENERATED_STOP_DISTANCE
     lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1]) - stop_delta
     lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1]) - stop_delta
