@@ -29,6 +29,11 @@ NavLongitudinalState = custom.IQNavState.LongitudinalState
 
 # IQ-link: non-stop nav execution floor (red-light stop is exempt).
 _NAV_EXEC_MIN_MS = 60.0 * CV.KPH_TO_MS
+# Red-stop signature from protocol.py (_RED_LIGHT_ACCEL).
+_NAV_RED_DECEL = -1.9
+# Once stopped for a light / model stop, require this long of a clean "go" before launch.
+_STANDSTILL_HOLD_RELEASE_S = 1.0
+_STANDSTILL_HOLD_SPEED = 1.0  # m/s: below this, a red-decel approach becomes a hard hold
 
 class LongitudinalPlannerIQ:
   def __init__(self, CP: structs.CarParams, CP_IQ: structs.IQCarParams, mpc):
@@ -60,6 +65,8 @@ class LongitudinalPlannerIQ:
     self.override_force_stop = False
     self.override_force_stop_timer = 0.0
     self.tracked_model_length = 0.0
+    self._standstill_hold = False
+    self._standstill_hold_s = 0.0
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
     experimental_mode = sm['selfdriveState'].experimentalMode
@@ -106,6 +113,9 @@ class LongitudinalPlannerIQ:
     # Allow speedTarget==0 (nav red-light stop) while engaged/valid.
     self.nav_valid = bool(getattr(nav_state, "valid", False) and self.nav_engaged)
     self.nav_stop_request = bool(self.nav_valid and self.nav_speed_target <= 0.0)
+    # Approach curve still has a few m/s left at the line; once crawling, hold instead of creeping.
+    if self.nav_valid and self.nav_accel_target <= _NAV_RED_DECEL and v_ego <= _STANDSTILL_HOLD_SPEED:
+      self.nav_stop_request = True
 
     has_follow_lead = False
     try:
@@ -113,8 +123,7 @@ class LongitudinalPlannerIQ:
       has_follow_lead = bool(getattr(lead, "status", False))
     except Exception:
       has_follow_lead = False
-    if has_follow_lead:
-      self.nav_stop_request = False
+    # A flickering lead must not drop a red-light hold.
 
     iqlink_on = self._iqlink_on()
 
@@ -155,12 +164,12 @@ class LongitudinalPlannerIQ:
       LongitudinalPlanSource.cruise: (v_cruise, a_ego),
       LongitudinalPlanSource.speedLimitAssist: (slc_v_cruise, a_ego),
     }
-    # Follow-lead owns longitudinal; do not publish nav speed pressure while tracking.
-    if self.nav_valid and not has_follow_lead:
+    # Follow-lead owns cruise pressure; a nav red-stop still publishes so the car stays held.
+    if self.nav_valid and (self.nav_stop_request or not has_follow_lead):
       if iqlink_on:
         if self.nav_stop_request:
           nav_v = 0.0
-        elif self.nav_accel_target <= -1.9:
+        elif self.nav_accel_target <= _NAV_RED_DECEL:
           nav_v = max(self.nav_speed_target, 0.0)
         else:
           nav_v = max(self.nav_speed_target, 0.0, _NAV_EXEC_MIN_MS) + self._nav_device_offset_ms()
@@ -168,7 +177,7 @@ class LongitudinalPlannerIQ:
       else:
         targets[LongitudinalPlanSource.nav] = (self.nav_speed_target, self.nav_accel_target)
 
-    if iqlink_on and self.nav_valid and not has_follow_lead:
+    if iqlink_on and self.nav_valid and (not has_follow_lead or self.nav_stop_request):
       targets.pop(LongitudinalPlanSource.cruise, None)
       if LongitudinalPlanSource.speedLimitAssist in targets and LongitudinalPlanSource.nav in targets:
         nav_exec = targets[LongitudinalPlanSource.nav][0]
@@ -232,6 +241,53 @@ class LongitudinalPlannerIQ:
     if not self.is_e2e(sm):
       return a_target, should_stop
     return self.custom_stop_distance.adjust_e2e_stop(a_target, should_stop, v_ego, sm['modelV2'])
+
+  def apply_standstill_hold(self, should_stop: bool, a_target: float, v_ego: float, sm: messaging.SubMaster) -> tuple[bool, float]:
+    """Keep the car held after a light / model stop until go is stable.
+
+    Works with or without IQ-link: nav red-stop, Force Stop, and vision model-stop all arm the hold.
+    Stops pre-green brake-release and go-then-brake jerk when shouldStop flickers. Gas always wins.
+    """
+    cs = sm['carState']
+    standstill = bool(getattr(cs, "standstill", False) or v_ego <= 0.3)
+    accel_pressed = False
+    try:
+      accel_pressed = bool(getattr(sm['iqCarState'], "accelPressed", False))
+    except Exception:
+      accel_pressed = False
+    gas = bool(getattr(cs, "gasPressed", False) or accel_pressed)
+    nav_hold = bool(self.nav_stop_request)
+    force = bool(self.forcing_stop)
+    # IQ-link off: same lock using IQ.Dynamic vision stop (stop light / stop sign style).
+    model_hold = bool(
+      getattr(self.iq_dynamic, "stop_light_detected", False)
+      or getattr(self.iq_dynamic, "model_stopped", False)
+    )
+
+    if gas or v_ego > 2.0:
+      self._standstill_hold = False
+      self._standstill_hold_s = 0.0
+      return should_stop, a_target
+
+    if standstill and (should_stop or nav_hold or force or model_hold):
+      self._standstill_hold = True
+
+    if not self._standstill_hold:
+      self._standstill_hold_s = 0.0
+      return should_stop, a_target
+
+    can_go = (not should_stop) and (not nav_hold) and (not force) and (not model_hold)
+    if can_go:
+      self._standstill_hold_s += DT_MDL
+    else:
+      self._standstill_hold_s = 0.0
+
+    if self._standstill_hold_s < _STANDSTILL_HOLD_RELEASE_S:
+      return True, min(float(a_target), 0.0)
+
+    self._standstill_hold = False
+    self._standstill_hold_s = 0.0
+    return should_stop, a_target
 
   def _apply_force_stop(self, v_target: float, v_ego: float, sm: messaging.SubMaster, apply_enabled: bool) -> float:
     force_stop = self.iq_dynamic.force_stop_requested() and apply_enabled and self.override_force_stop_timer <= 0.0

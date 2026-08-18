@@ -169,8 +169,8 @@ def test_red_remain_3_still_stops():
   assert f["trafficLight"] == "red"
 
 
-def test_red_remain_1_prestart_releases_nav_stop():
-  # Clock = APK remainS: ==1 clears nav red stop, accel>=0 for MEB auto RELEASE.
+def test_red_remain_1_still_stops():
+  # Countdown==1 is still red: do not release nav stop / HMS before green.
   raw = {
     "nRoadLimitSpeed": 60,
     "trafficLight": "red",
@@ -179,8 +179,8 @@ def test_red_remain_1_prestart_releases_nav_stop():
   }
   f = map_carrot_to_nav_fields(raw)
   assert f is not None
-  assert abs(f["speedTarget"] - 60 / 3.6) < 1e-3
-  assert f["accelTarget"] >= 0.0
+  assert f["accelTarget"] == -2.0
+  assert f["speedTarget"] < 60 / 3.6
   assert f["trafficLight"] == "red"
   assert f["longitudinalEngaged"] is True
 

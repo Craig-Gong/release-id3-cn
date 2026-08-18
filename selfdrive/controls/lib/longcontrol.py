@@ -8,16 +8,21 @@ from openpilot.iqpilot.selfdrive.controls.lib.smooth_stops import SmoothStopCont
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
+# Linear pull-away ramp while in starting (m/s^2 per second). Snappier than PID climbing from ~0.
+START_ACCEL_RAMP = 2.5
+
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
 
-def long_control_state_trans(CP_IQ, active, long_control_state, should_stop, brake_pressed, cruise_standstill):
+def long_control_state_trans(CP, CP_IQ, active, long_control_state, v_ego, should_stop, brake_pressed, cruise_standstill):
   # Gas Interceptor
   cruise_standstill = cruise_standstill and not CP_IQ.enableGasInterceptor
 
+  stopping_condition = should_stop
   starting_condition = (not should_stop and
                         not cruise_standstill and
                         not brake_pressed)
+  started_condition = v_ego > CP.vEgoStarting
 
   if not active:
     long_control_state = LongCtrlState.off
@@ -26,17 +31,28 @@ def long_control_state_trans(CP_IQ, active, long_control_state, should_stop, bra
     if long_control_state == LongCtrlState.off:
       if not starting_condition:
         long_control_state = LongCtrlState.stopping
+      elif CP.startingState:
+        long_control_state = LongCtrlState.starting
       else:
         long_control_state = LongCtrlState.pid
 
     elif long_control_state == LongCtrlState.stopping:
-      if starting_condition:
+      if starting_condition and CP.startingState:
+        long_control_state = LongCtrlState.starting
+      elif starting_condition:
+        long_control_state = LongCtrlState.pid
+
+    elif long_control_state == LongCtrlState.starting:
+      if stopping_condition:
+        long_control_state = LongCtrlState.stopping
+      elif started_condition:
         long_control_state = LongCtrlState.pid
 
     elif long_control_state == LongCtrlState.pid:
-      if should_stop:
+      if stopping_condition:
         long_control_state = LongCtrlState.stopping
   return long_control_state
+
 
 class LongControl:
   def __init__(self, CP, CP_IQ):
@@ -64,8 +80,10 @@ class LongControl:
     else:
       stop_now = should_stop
 
-    self.long_control_state = long_control_state_trans(self.CP_IQ, active, self.long_control_state, stop_now, CS.brakePressed,
-                                                       CS.cruiseState.standstill)
+    self.long_control_state = long_control_state_trans(
+      self.CP, self.CP_IQ, active, self.long_control_state, CS.vEgo, stop_now,
+      CS.brakePressed, CS.cruiseState.standstill)
+
     if self.long_control_state == LongCtrlState.off:
       self.reset()
       self.smooth.reset()
@@ -77,6 +95,17 @@ class LongControl:
         output_accel = min(output_accel, 0.0)
         # TODO: can we just go straight to stopAccel?
         output_accel -= self.stopping_decel_rate * DT_CTRL  # m/s^2/s while trying to stop
+      self.reset()
+      self.smooth.reset()
+
+    elif self.long_control_state == LongCtrlState.starting:
+      # MEB needs a firm floor (startAccel) then a linear climb — PID from ~0 feels sluggish.
+      floor = float(self.CP.startAccel)
+      desired = max(floor, float(a_target))
+      if self.last_output_accel < floor:
+        output_accel = floor
+      else:
+        output_accel = min(desired, self.last_output_accel + START_ACCEL_RAMP * DT_CTRL)
       self.reset()
       self.smooth.reset()
 

@@ -28,9 +28,9 @@ ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
 
 LAUNCH_DISARM_SPEED = 2.0
-LAUNCH_COMMIT_T = 3.5
-LAUNCH_MOVING_SPEED = 1.2
-LAUNCH_MAX_ACCEL = 1.5
+LAUNCH_COMMIT_T = 2.5
+LAUNCH_MOVING_SPEED = 1.0
+LAUNCH_MAX_ACCEL = 2.0
 
 E2E_CRUISE_CONVERGENCE_TAU = 15.0
 E2E_CRUISE_ACCEL_MAX = 0.5
@@ -221,6 +221,7 @@ class LongitudinalPlanner(LongitudinalPlannerIQ):
     elif v_ego > LAUNCH_DISARM_SPEED:
       self.launch_armed = False
     if (self.launch_armed and self.is_e2e(sm) and not output_should_stop_e2e and
+        not self.nav_stop_request and not self._standstill_hold and
         np.interp(LAUNCH_COMMIT_T, T_IDXS_MPC, model_v) > LAUNCH_DISARM_SPEED):
       t_cut = min(float(T_IDXS_MPC[np.argmax(model_v > LAUNCH_MOVING_SPEED)]), LAUNCH_COMMIT_T)
       t_shifted = T_IDXS_MPC + t_cut
@@ -247,6 +248,8 @@ class LongitudinalPlanner(LongitudinalPlannerIQ):
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
 
     self.output_should_stop = self.output_should_stop or self.forcing_stop
+    self.output_should_stop, output_a_target = self.apply_standstill_hold(
+      self.output_should_stop, output_a_target, v_ego, sm)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
 
     self.a_desired = float(self.output_a_target)

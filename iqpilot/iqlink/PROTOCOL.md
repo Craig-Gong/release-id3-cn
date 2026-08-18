@@ -33,7 +33,7 @@ Deprecated (do not use as fallback): UDP 7705 / 7706, TCP 7713.
 - **TBT distance:** tighten `speedTarget` near turns / forks / exits.
 - **Green wave / SDI:** not in scope (no phone uplink; device ignores).
 - **Road limit:** BLE reports raw `nRoadLimitSpeed` for HUD; execution = raw + device offset with a **usual floor of 60 km/h**. Invalid limit → do not invent; no snapshot → follow lead / model.
-- **Traffic lights:** red/yellow aggressive decel toward stop (`accelTarget≈-2`); yellow near-distance treated like red; lead has priority; no fake green. Optional countdown: `remainS==3` still stop; `remainS==1` release nav red-stop with `accelTarget≥0`.
+- **Traffic lights:** red/yellow aggressive decel toward stop (`accelTarget≈-2`); yellow near-distance treated like red; no fake green. Stay stopped through the APK countdown (`remainS==1` still stop). Planner holds at standstill until green; a flickering lead does not release a red stop.
 - **Lane B (gate only):** `KEY_TYPE=13012` → `laneRecommend`; `straight` suppresses auto lane-change desire. No lane-change HUD.
 - **Cruise UI:** product max set speed `V_CRUISE_PRODUCT_MAX_KPH=120`.
 
@@ -95,6 +95,6 @@ canonical_json = json.dumps(data, ensure_ascii=True, sort_keys=True, separators=
 
 - **产品**：车上无导航会话；IQ-link只推即时参数；停导不清参；已连 = 设备 `LinkState=2`。
 - **传输**：仅 BLE GATT；7705/7706/7713 已废弃。
-- **纵向**：变更驱动 + 粘限速；限速原值上报、执行侧常保底 60；红黄猛减速；无绿波/SDI；车道 B 仅直行门控。
+- **纵向**：变更驱动 + 粘限速；限速原值上报、执行侧常保底 60；红黄猛减速，倒计时到 1 仍停；停稳后锁住到绿灯；无绿波/SDI；车道 B 仅直行门控。
 - **PSK**：固定 `999999`，设置页不显示。
 - **契约细节以上方英文为准**；字段以实现 `protocol.py` 为准。

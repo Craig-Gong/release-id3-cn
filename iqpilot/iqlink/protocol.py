@@ -161,17 +161,16 @@ def map_carrot_to_nav_fields(
 
   light = _s(data, "trafficLight", "none").strip().lower()
   light_dist = _f(data, "trafficLightDistM")
-  # APK red countdown (Gaode redLightCountDownSeconds). 0 / omitted = no reliable clock.
-  light_remain_s = int(_f(data, "trafficLightRemainS"))
+  # APK red countdown (Gaode redLightCountDownSeconds). Parsed for BLE contract only —
+  # remainS is never a go gate (remainS==1 must not release). Green is the go signal.
+  _ = int(_f(data, "trafficLightRemainS"))
   vision_stop = bool(vision_stop) or bool(data.get("visionStop"))
   # China: right-turn-on-red — do not issue nav red stop; leave to E2E/follow.
   right_turn_pending = bucket == "turn_right" and turn_dist > 0
-  # Pre-start (locked product): remainS==3 arms while still red-stopping; remainS==1
-  # releases nav red stop with accel>=0 so MEB auto-start can HMS RELEASE. Clock = APK.
-  # Do not treat omitted/0 as <=1 (BleCrypto omits zero). Never fake green.
-  red_prestart_go = (light == "red" and light_remain_s == 1 and not right_turn_pending)
+  # Stay in red-stop through the whole APK countdown. Early RELEASE caused pre-green
+  # creep then a model brake slam. Never fake green.
   stop_for_light = False
-  if not right_turn_pending and not red_prestart_go:
+  if not right_turn_pending:
     if light == "red":
       stop_for_light = True
     elif light == "yellow" and light_dist > 0 and light_dist <= _YELLOW_STOP_DIST_M:
@@ -184,10 +183,6 @@ def map_carrot_to_nav_fields(
     else:
       long_speed = 0.0
     accel_target = _RED_LIGHT_ACCEL
-    long_provider = "route"
-  elif red_prestart_go:
-    # Keep road/TBT long_speed; force non-negative accel so hold can release.
-    accel_target = max(accel_target, 0.0)
     long_provider = "route"
 
   engaged = bool(stop_for_light or long_speed > 0.0)
