@@ -221,6 +221,9 @@ class IQDynamicController:
     self.curve_slowdown_active = False
     if self.hasIQL:
       self._request_blended(1.0, True)
+    elif self.hasIQFilterLED and not (self.ss_c > 3):
+      # evo DEC radar mode: tracked lead → ACC so lead MPC owns distant follow-stop.
+      self._request_acc(1.0)
     elif self.stop_light_detected and self.conditional_model_stops:
       self._request_blended(1.0, self.model_stopped)
     elif self.low_speed_detected or self.low_speed_lead_detected:
@@ -232,8 +235,6 @@ class IQDynamicController:
       self._request_blended(max(0.8, min(1.0, self.IQDynamicU * 1.3)))
     elif self.conditional_slc_fallback and self.slc_experimental_mode:
       self._request_blended(0.8)
-    elif self.hasIQFilterLED and not (self.ss_c > 3):
-      self._request_acc(1.0)
     elif self.ss_c > 3:
       self._request_blended(0.9)
     elif self.hasIQSFL and not self.hasIQSDL:

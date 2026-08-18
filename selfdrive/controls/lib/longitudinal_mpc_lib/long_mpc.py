@@ -39,7 +39,8 @@ X_EGO_OBSTACLE_COST = 3.
 X_EGO_COST = 0.
 V_EGO_COST = 0.
 A_EGO_COST = 0.
-J_EGO_COST = 20.
+# Match evo-release comfort (was 20 on newer OP); lower jerk cost starts braking sooner.
+J_EGO_COST = 5.
 DANGER_ZONE_COST = 100.
 CRASH_DISTANCE = .25
 LEAD_DANGER_FACTOR = 0.75
@@ -56,7 +57,10 @@ T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
-STOP_DISTANCE = 3.0
+# evo uses 6.0. Acados codegen still has 3.0 baked in; runtime shifts the obstacle
+# by (STOP_DISTANCE - GENERATED_STOP_DISTANCE) so onset matches evo without regen.
+STOP_DISTANCE = 6.0
+GENERATED_STOP_DISTANCE = 3.0
 MIN_X_LEAD_FACTOR = 0.5
 LEAD_PULLAWAY_VREL = 0.5
 LEAD_PULLAWAY_ABRAKE = -0.5
@@ -328,6 +332,9 @@ class LongitudinalMpc:
       # prior formula. On radar cars, real radar measurements anchor the trajectory.
       x_lead_traj = float(radar_lead.dRel) + (np.asarray(model_lead.x, dtype=np.float64) - model_lead.x[0])
       v_lead_traj = float(radar_lead.vLead) + (np.asarray(model_lead.v, dtype=np.float64) - model_lead.v[0])
+    elif radar_lead.status:
+      # evo-style: radar-only when vision has not locked yet (distant stopped leads).
+      return self.process_lead_legacy(radar_lead)
     else:
       # Fake a fast lead so MPC stays in the same mode.
       x_lead_traj = 50.0 + (v_ego + 10.0) * LEAD_T_IDXS_MODEL
@@ -355,8 +362,10 @@ class LongitudinalMpc:
     model_leads = modelV2.leadsV3
 
     if self.new_lead_mpc:
-      # PR #37824: use the model's full predicted lead horizon
-      self.status = model_leads[0].prob > 0.5 or model_leads[1].prob > 0.5
+      # PR #37824: use the model's full predicted lead horizon; keep radar status so
+      # distant radar-only leads still enter the MPC (evo behavior).
+      self.status = (model_leads[0].prob > 0.5 or model_leads[1].prob > 0.5 or
+                     radarstate.leadOne.status or radarstate.leadTwo.status)
       lead_xv_0 = self.process_lead(model_leads[0], radarstate.leadOne)
       lead_xv_1 = self.process_lead(model_leads[1], radarstate.leadTwo)
     else:
@@ -370,8 +379,10 @@ class LongitudinalMpc:
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance
     # and then treat that as a stopped car/obstacle at this new distance.
-    lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1])
-    lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
+    # Shift obstacle closer by the STOP_DISTANCE delta vs codegen so onset matches evo.
+    stop_delta = STOP_DISTANCE - GENERATED_STOP_DISTANCE
+    lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1]) - stop_delta
+    lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1]) - stop_delta
 
     x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle])
     self.source = MPC_SOURCES[np.argmin(x_obstacles[0])]
