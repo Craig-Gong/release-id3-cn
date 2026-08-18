@@ -33,7 +33,7 @@ Deprecated (do not use as fallback): UDP 7705 / 7706, TCP 7713.
 - **TBT distance:** tighten `speedTarget` near turns / forks / exits.
 - **Green wave / SDI:** not in scope (no phone uplink; device ignores).
 - **Road limit:** BLE reports raw `nRoadLimitSpeed` for HUD; execution = raw + device offset with a **usual floor of 60 km/h**. Invalid limit → do not invent; no snapshot → follow lead / model.
-- **Traffic lights:** red/yellow aggressive decel toward stop (`accelTarget≈-2`); yellow near-distance treated like red; no fake green. Stay stopped through the APK countdown (`remainS==1` still stop). Planner holds at standstill until green; a flickering lead does not release a red stop.
+- **Traffic lights:** red/yellow aggressive decel toward stop (`accelTarget≈-2`); yellow near-distance treated like red; no fake green. Stay stopped through the APK countdown (`remainS==1` still stop). Planner holds at standstill until green; a flickering lead does not release a red stop. `remainS` / lamp color / distance are **HUD-only** (C3XL bar + cluster Kreuzung). They are not a go gate. IQ-link off still shows a plain stop-ahead cue from the vision model.
 - **Lane B (gate only):** `KEY_TYPE=13012` → `laneRecommend`; `straight` suppresses auto lane-change desire. No lane-change HUD.
 - **Cruise UI:** product max set speed `V_CRUISE_PRODUCT_MAX_KPH=120`.
 

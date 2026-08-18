@@ -289,6 +289,9 @@ class IqlinkBridge:
     n.cameraSpeedLimit = float(fields.get("cameraSpeedLimit") or 0.0)
     n.navTurnDesireDirection = nav_d if fields.get("shouldSendTurnDesire") else NavDir.none
     n.navLaneChangeDesireDirection, _ = _enum_dir(str(fields.get("navLaneChangeDesireDirection") or "none"))
+    n.trafficLight = str(fields.get("trafficLight") or "none")
+    n.trafficLightDistM = float(fields.get("trafficLightDistM") or 0.0)
+    n.trafficLightRemainS = float(fields.get("trafficLightRemainS") or 0.0)
     return msg
 
   def _maybe_timeout(self) -> None:

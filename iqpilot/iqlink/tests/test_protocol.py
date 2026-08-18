@@ -152,6 +152,9 @@ def test_red_light_stop_keeps_engaged():
   assert f["valid"] is True
   assert f["accelTarget"] == -2.0
   assert f["cameraType"] != "redLight"
+  assert f["trafficLight"] == "red"
+  assert f["trafficLightDistM"] == 40.0
+  assert f["trafficLightRemainS"] == 20.0
 
 
 def test_red_remain_3_still_stops():

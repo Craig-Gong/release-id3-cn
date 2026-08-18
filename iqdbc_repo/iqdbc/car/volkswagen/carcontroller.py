@@ -617,17 +617,24 @@ class CarController(CarControllerBase):
           self.iq_curve_changed_timer = self.frame
         self.iq_curve_last = iq_curve
         iq_curve_hud = iq_curve and (self.frame - self.iq_curve_changed_timer < 400)
+        junction_hud = bool(getattr(CC_IQ, "junctionHud", False))
 
         speed_limit = CS.out.vEgo if iq_curve_hud else (
           CS.out.cruiseState.speedLimitPredicative if sl_predicative_active else (CS.out.cruiseState.speedLimit if sl_active else 0)
         )
 
         acc_hud_event = self.CCS.acc_hud_event(acc_hud_status, CS.esp_hold_confirmation, sl_predicative_active,
-                                               CS.speed_limit_predicative_type, sl_active, iq_curve=iq_curve_hud)
+                                               CS.speed_limit_predicative_type, sl_active, iq_curve=iq_curve_hud,
+                                               junction=junction_hud)
+        # Kreuzung pictogram while approaching; at standstill keep event 3 (ready to start).
+        acc_primary_text = self.CCS.ACC_TEXT_KREUZUNG if (
+          junction_hud and not CS.esp_hold_confirmation and not fcw_alert
+        ) else 0
 
         can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, hud_control.setSpeed * CV.MS_TO_KPH,
                                                          hud_control.leadVisible, hud_control.leadDistanceBars + 1, show_distance_bars,
-                                                         CS.esp_hold_confirmation, distance, gap, fcw_alert, acc_hud_event, speed_limit))
+                                                         CS.esp_hold_confirmation, distance, gap, fcw_alert, acc_hud_event, speed_limit,
+                                                         acc_primary_text=acc_primary_text))
       else:
         leadDistance = min(8, hud_control.leadDistance) if hud_control.leadDistance != 0 else 0
         self.leadDistanceBars = min(3, hud_control.leadDistanceBars)

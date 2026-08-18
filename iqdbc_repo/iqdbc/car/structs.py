@@ -121,6 +121,7 @@ class IQCarControl:
   radarSetSpeedKph: float = auto_field()
   radarGapBars: int = auto_field()
   curveSlowdown: bool = auto_field()
+  junctionHud: bool = auto_field()
 
   @auto_dataclass
   class Param:

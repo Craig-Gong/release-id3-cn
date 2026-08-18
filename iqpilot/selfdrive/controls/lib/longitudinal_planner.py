@@ -15,6 +15,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.custom_stop_distance import Custom
 from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.engine import IQDynamicController
 from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.imahelper import IQConstants
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.e2e_alerts import EndToEndAlertEngine
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.junction_hud import junction_hud_active
 from openpilot.iqpilot.selfdrive.controls.lib.slc_vcruise import SLCVCruise
 from openpilot.iqpilot.selfdrive.controls.lib.speed_limit_controller import LIMIT_ADAPT_ACC
 from openpilot.iqpilot.selfdrive.selfdrived.events import IQEvents
@@ -67,6 +68,7 @@ class LongitudinalPlannerIQ:
     self.tracked_model_length = 0.0
     self._standstill_hold = False
     self._standstill_hold_s = 0.0
+    self.junction_hud = False
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
     experimental_mode = sm['selfdriveState'].experimentalMode
@@ -322,6 +324,18 @@ class LongitudinalPlannerIQ:
     return v_target
 
   def publish_longitudinal_plan_iq(self, sm: messaging.SubMaster, pm: messaging.PubMaster) -> None:
+    has_follow_lead = False
+    try:
+      has_follow_lead = bool(getattr(sm['radarState'].leadOne, "status", False))
+    except Exception:
+      has_follow_lead = False
+    self.junction_hud = junction_hud_active(
+      has_lead=has_follow_lead,
+      nav_red_decel=bool(self.nav_valid and self.nav_accel_target <= _NAV_RED_DECEL),
+      stop_light=bool(getattr(self.iq_dynamic, "stop_light_detected", False)),
+      standstill_hold=bool(self._standstill_hold),
+    )
+
     def fill_plan(plan_msg) -> None:
       plan_msg.longitudinalPlanSource = self.source
       plan_msg.vTarget = float(self.output_v_target)
@@ -382,6 +396,7 @@ class LongitudinalPlannerIQ:
       e2eAlerts = plan_msg.e2eAlerts
       e2eAlerts.pathOpen = self.e2e_alerts.path_alert
       e2eAlerts.leadPullaway = self.e2e_alerts.lead_alert
+      e2eAlerts.junctionStop = bool(self.junction_hud)
 
     valid = sm.all_checks(service_list=['carState', 'controlsState'])
 

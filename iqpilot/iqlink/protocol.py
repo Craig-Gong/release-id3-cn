@@ -161,9 +161,9 @@ def map_carrot_to_nav_fields(
 
   light = _s(data, "trafficLight", "none").strip().lower()
   light_dist = _f(data, "trafficLightDistM")
-  # APK red countdown (Gaode redLightCountDownSeconds). Parsed for BLE contract only —
+  # APK red countdown (Gaode redLightCountDownSeconds). HUD only —
   # remainS is never a go gate (remainS==1 must not release). Green is the go signal.
-  _ = int(_f(data, "trafficLightRemainS"))
+  remain_s = int(_f(data, "trafficLightRemainS"))
   vision_stop = bool(vision_stop) or bool(data.get("visionStop"))
   # China: right-turn-on-red — do not issue nav red stop; leave to E2E/follow.
   right_turn_pending = bucket == "turn_right" and turn_dist > 0
@@ -237,5 +237,7 @@ def map_carrot_to_nav_fields(
     "navTurnDesireDirection": direction if send_turn else "none",
     "navLaneChangeDesireDirection": direction if send_lc else "none",
     "trafficLight": light,
+    "trafficLightDistM": float(light_dist or 0.0),
+    "trafficLightRemainS": float(max(remain_s, 0)),
     "visionStop": vision_stop,
   }

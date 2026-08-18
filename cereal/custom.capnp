@@ -245,6 +245,7 @@ struct IQPlan @0xda401323ae805f2b {
   struct E2eAlerts {
     pathOpen @0 :Bool;
     leadPullaway @1 :Bool;
+    junctionStop @2 :Bool;  # nav red-stop or vision stop-ahead, no lead
   }
 }
 
@@ -361,6 +362,7 @@ struct IQCarControl @0xdc6c97009c7ba28f {
   radarSetSpeedKph @9 :Float32;  # OP set speed (km/h) to sync radar ACA_V_Wunsch toward via GRA_Up/Down
   radarGapBars @10 :UInt8;       # OP follow-distance bars to mirror to radar GRA_Zeitluecke
   curveSlowdown @11 :Bool;       # IQ.Dynamic Curves is requesting blended slowdown
+  junctionHud @12 :Bool;         # MEB cluster Kreuzung symbol: nav/model stop-ahead, no lead
 
   struct Param {
     key @0 :Text;
@@ -580,6 +582,10 @@ struct IQNavState @0xaae9afb364368cd9 {
   cameraType @46 :CameraType;                         # Type of the upcoming speed camera
   cameraDistance @47 :Float32;                        # Distance to the upcoming camera (m)
   cameraSpeedLimit @48 :Float32;                      # Enforced speed limit at the camera (m/s)
+  # Gaode light fields are HUD-only. remainS must never be a go/release gate.
+  trafficLight @49 :Text;                             # "none" / "red" / "yellow" / "green"
+  trafficLightDistM @50 :Float32;                     # Distance to the light (m); 0 if unknown
+  trafficLightRemainS @51 :Float32;                   # APK countdown seconds; display only
 
   enum CameraType {
     none @0;
