@@ -231,9 +231,9 @@ class CarInterface(CarInterfaceBase):
     if ret.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
       # OP long starting state: very slow start can fault EPB MEB cars (evo-release).
       # IQ.Pilot cereal renamed vEgoStopping -> vEgoStoppingDEPRECATED; do not set it.
-      # startAccel 1.2 + longcontrol linear ramp: firmer pull-away than stock 0.8 / PID-from-0.
+      # startAccel 1.8 + longcontrol linear ramp: firmer pull-away than 1.2 / 2.5; stock evo is 0.8.
       ret.startingState = True
-      ret.startAccel = 1.2
+      ret.startAccel = 1.8
       ret.vEgoStarting = 0.5
       ret.stopAccel = -0.55
     else:

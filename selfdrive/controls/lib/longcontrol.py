@@ -9,7 +9,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.smooth_stops import SmoothStopCont
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
 # Linear pull-away ramp while in starting (m/s^2 per second). Snappier than PID climbing from ~0.
-START_ACCEL_RAMP = 2.5
+START_ACCEL_RAMP = 5.0
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
