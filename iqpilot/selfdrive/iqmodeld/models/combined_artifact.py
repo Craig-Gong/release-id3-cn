@@ -17,7 +17,9 @@ _OVERRIDE_KEYS = (
   "combinedSplitArtifact",
   "iqCombinedArtifact",
 )
-_SPLIT_ROLE_PATTERN = re.compile(r"^driving_(vision|policy|off_policy|on_policy)_(.+)_tinygrad\.pkl$")
+_SPLIT_ROLE_PATTERN = re.compile(
+  r"^(?:big_)?driving_(vision|policy|off_policy|on_policy)_(.+)_tinygrad\.pkl$"
+)
 
 
 def _bundle_models(bundle) -> list:
@@ -55,6 +57,7 @@ def _derived_candidates(bundle) -> list[str]:
   for suffix in _split_suffixes(bundle):
     for candidate in (
       f"driving_combined_{suffix}.pkl",
+      f"big_driving_combined_{suffix}.pkl",
       f"iqmodeld_combined_{suffix}.pkl",
     ):
       if candidate not in seen:
@@ -66,6 +69,7 @@ def _derived_candidates(bundle) -> list[str]:
     short_ref = str(ref)[:8]
     for candidate in (
       f"driving_combined_{short_ref}.pkl",
+      f"big_driving_combined_{short_ref}.pkl",
       f"iqmodeld_combined_{short_ref}.pkl",
     ):
       if candidate not in seen:

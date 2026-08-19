@@ -11,7 +11,7 @@ from cereal import custom
 from openpilot.system.hardware.hw import Paths as _hw_paths
 from openpilot.iqpilot.selfdrive.iqmodeld.models.combined_artifact import has_combined_split_artifact
 from openpilot.iqpilot.selfdrive.iqmodeld.models.helpers import get_active_bundle as _fetch_bundle
-from openpilot.iqpilot.selfdrive.iqmodeld.runtime.usbgpu import configure_accelerator
+from openpilot.iqpilot.selfdrive.iqmodeld.runtime.usbgpu import configure_accelerator, normalize_artifact_basename, prepare_usbgpu_runtime
 
 # ---- runtime type surface (native OpenCL/frame handles resolve to Any off-device) ----
 if TYPE_CHECKING:
@@ -152,7 +152,10 @@ class ModelRunner(RunnerRoot):
 # ---- runner selection (which backend to build for the active bundle) ----------
 
 def _single_artifact_prefix(bundle, prefix: str) -> bool:
-  return len(bundle.models) == 1 and bundle.models[0].artifact.fileName.startswith(prefix)
+  if len(bundle.models) != 1:
+    return False
+  name = normalize_artifact_basename(bundle.models[0].artifact.fileName)
+  return name.startswith(prefix)
 
 
 def _is_fused_bundle(bundle) -> bool:
@@ -173,9 +176,11 @@ def get_model_runner() -> "ModelRunner":
   """Build the runner backend that fits the active bundle (supercombo / fused /
   combined-split / split / single). Concrete runners are imported lazily so one
   backend failing to load can't take down the others at import time."""
+  global USBGPU
+  bundle = _fetch_bundle()
+  USBGPU = prepare_usbgpu_runtime(bundle)
   from openpilot.iqpilot.selfdrive.iqmodeld.models.runners.tinygrad.tinygrad_runner import (TinygradRunner,
                                                                                              TinygradSplitRunner)
-  bundle = _fetch_bundle()
   if not (bundle and bundle.models):
     return TinygradRunner(ModelType.supercombo)
 

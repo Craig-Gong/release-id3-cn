@@ -11,6 +11,7 @@ from cereal import custom
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.iqpilot._proprietary_loader import ProprietaryModuleMissing, load_private_module
+from openpilot.iqpilot.selfdrive.iqmodeld.runtime.usbgpu import apply_usbgpu_overlay
 from openpilot.system.hardware.hw import Paths
 
 try:
@@ -270,9 +271,9 @@ def get_active_bundle(params: Params = None):
   replacement = _find_runtime_upgrade(bundle, params)
   if replacement is not None and replacement is not bundle and bundle_files_ready(replacement):
     persist_active_bundle(params, replacement)
-    return replacement
+    bundle = replacement
 
-  return bundle
+  return apply_usbgpu_overlay(bundle, _MODEL_ROOT)
 
 
 def get_active_model_runner(params: Params = None, force_check=False):
