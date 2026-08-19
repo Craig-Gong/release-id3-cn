@@ -17,7 +17,6 @@ from openpilot.iqpilot.selfdrive.iqmodeld.models.runners.model_runner import CUS
 from openpilot.iqpilot.selfdrive.iqmodeld.models.runners.model_runner import ModelRunner
 from openpilot.iqpilot.selfdrive.iqmodeld.models.split_model_constants import SplitModelConstants
 from openpilot.iqpilot.selfdrive.iqmodeld.parser import PhaseParser
-from openpilot.iqpilot.selfdrive.iqmodeld.runtime.usbgpu import backend_matches_captured, tinygrad_backend_name
 
 
 def _tinygrad_imports():
@@ -131,7 +130,7 @@ class TinygradSupercomboRunner(ModelRunner):
         img = self._ish['img']
         n_frames = img[1] // 6
         expected_depth = self._frame_skip * (n_frames - 1) + 1
-        expected_device = tinygrad_backend_name()
+        expected_device = os.getenv('DEV')
 
         mismatches: list[str] = []
         for cam, warp_jit in sorted(self._warp_jits.items()):
@@ -141,7 +140,7 @@ class TinygradSupercomboRunner(ModelRunner):
                 mismatches.append(
                     f"{cam[0]}x{cam[1]} queue-depth captured={captured_depth} expected={expected_depth}"
                 )
-            if not backend_matches_captured(captured_devices):
+            if expected_device and captured_devices and expected_device not in captured_devices:
                 mismatches.append(
                     f"{cam[0]}x{cam[1]} device captured={sorted(captured_devices)} expected={expected_device}"
                 )

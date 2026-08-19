@@ -35,7 +35,6 @@ from openpilot.iqpilot.common.steer_delay import resolve_steer_delay
 from openpilot.iqpilot.selfdrive.iqmodeld.models.helpers import get_active_bundle
 from openpilot.iqpilot.selfdrive.iqmodeld.models.inference_state import InferenceStateBase
 from openpilot.iqpilot.selfdrive.iqmodeld.models.runners.model_runner import get_model_runner
-from openpilot.iqpilot.selfdrive.iqmodeld.runtime.usbgpu import usbgpu_enabled, usbgpu_present
 from openpilot.iqpilot.selfdrive.iqmodeld.camera import CameraOffsetHelper
 from openpilot.iqpilot.selfdrive.iqmodeld.config import Plan
 from openpilot.iqpilot.selfdrive.iqmodeld.messaging import (
@@ -473,10 +472,7 @@ class InferenceDaemon:
     sentry.set_tag("daemon", PROCESS_NAME)
     cloudlog.bind(daemon=PROCESS_NAME)
     setproctitle(PROCESS_NAME)
-    # USB GPU saturates a core; also needs aux USB IRQs moved for good timings.
-    if not usbgpu_enabled():
-      config_realtime_process(7, 54)
-    cloudlog.warning(f"usbgpu dock={'present' if usbgpu_present() else 'absent'} enabled={usbgpu_enabled()}")
+    config_realtime_process(7, 54)
 
     cloudlog.warning("setting up CL context")
     self._gpu = WarpContext()

@@ -30,7 +30,6 @@ from openpilot.iqpilot.selfdrive.iqmodeld.models.runners.tinygrad.model_types im
 from openpilot.iqpilot.selfdrive.iqmodeld.models.split_model_constants import SplitModelConstants
 from openpilot.iqpilot.selfdrive.iqmodeld.config import ModelConstants
 from openpilot.iqpilot.selfdrive.iqmodeld.runtime.tinygrad import qcom_tensor_from_opencl_address
-from openpilot.iqpilot.selfdrive.iqmodeld.runtime.usbgpu import usbgpu_enabled
 from openpilot.system.hardware import TICI
 
 
@@ -95,7 +94,7 @@ class TinygradRunner(ModelRunner, SupercomboTinygrad, PolicyTinygrad, VisionTiny
   def _attach_vision_tensor(self, stream_name: str, frame_buffers: CLMemDict, frame_views: FrameDict) -> None:
     spec = self._input_plan[stream_name]
     frame_buffer = frame_buffers[stream_name]
-    if TICI and not usbgpu_enabled():
+    if TICI:
       self.inputs[stream_name] = qcom_tensor_from_opencl_address(frame_buffer.mem_address,
                                                                  self.input_shapes[stream_name],
                                                                  dtype=spec.dtype)
@@ -110,7 +109,7 @@ class TinygradRunner(ModelRunner, SupercomboTinygrad, PolicyTinygrad, VisionTiny
 
   def prepare_vision_inputs(self, imgs_cl: CLMemDict, frames: FrameDict):
     for stream_name in imgs_cl:
-      if stream_name not in self.inputs or not TICI or usbgpu_enabled():
+      if stream_name not in self.inputs or not TICI:
         self._attach_vision_tensor(stream_name, imgs_cl, frames)
 
   def prepare_policy_inputs(self, numpy_inputs: NumpyDict):
