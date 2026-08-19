@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from cereal import custom
-from openpilot.system.hardware import TICI
 from openpilot.system.hardware.hw import Paths as _hw_paths
-from openpilot.iqpilot.selfdrive.iqmodeld.models.helpers import get_active_bundle as _fetch_bundle
 from openpilot.iqpilot.selfdrive.iqmodeld.models.combined_artifact import has_combined_split_artifact
+from openpilot.iqpilot.selfdrive.iqmodeld.models.helpers import get_active_bundle as _fetch_bundle
+from openpilot.iqpilot.selfdrive.iqmodeld.runtime.usbgpu import configure_accelerator
 
 # ---- runtime type surface (native OpenCL/frame handles resolve to Any off-device) ----
 if TYPE_CHECKING:
@@ -41,22 +41,8 @@ CUSTOM_MODEL_PATH = _hw_paths.model_root()
 
 _META_FIELDS = ("input_shapes", "output_slices")
 
-USBGPU = "USBGPU" in os.environ
-
-
-def _configure_accelerator():
-  """Point tinygrad at the right backend. Must run before tinygrad is imported,
-  which is why it fires at module import."""
-  backend, extra = ("QCOM" if TICI else "CPU"), {}
-  if USBGPU:
-    backend, extra = "AMD", {"AMD_IFACE": "USB"}
-  elif TICI:
-    extra = {"QCOM_PRIORITY": "8"}
-  os.environ["DEV"] = backend
-  os.environ.update(extra)
-
-
-_configure_accelerator()
+# Must run before tinygrad is imported by the runners.
+USBGPU = configure_accelerator()
 
 
 def load_artifact_metadata(metadata_filename):
