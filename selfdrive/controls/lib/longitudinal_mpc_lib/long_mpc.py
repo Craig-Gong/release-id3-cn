@@ -57,10 +57,10 @@ T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
-# Parked follow gap. evo uses 6.0 (US); this car wants ~2-3 m bumper-to-bumper.
+# Parked follow gap. evo uses 6.0 (US). 3.0 matched codegen but stopped ~2 m;
+# 3.5 is a small runtime-only bump (stop_delta=+0.5 vs GENERATED 3.0).
 # Personality t_follow vanishes at standstill, so Aggressive cannot close that gap.
-# Matches Acados codegen 3.0, so runtime obstacle shift is zero.
-STOP_DISTANCE = 3.0
+STOP_DISTANCE = 3.5
 GENERATED_STOP_DISTANCE = 3.0
 MIN_X_LEAD_FACTOR = 0.5
 LEAD_PULLAWAY_VREL = 0.5
