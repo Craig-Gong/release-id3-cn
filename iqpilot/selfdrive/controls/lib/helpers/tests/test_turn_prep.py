@@ -149,7 +149,7 @@ def test_turn_in_from_near_nav_turn():
   )
   assert helper.stage == STAGE_TURN_IN
   assert abs(v - TURN_IN_MS) < 1e-6
-  # Unknown path is not "straight" — keep 30 until the blinker cancels.
+  # Unknown path is not "straight" — keep turn-in until the blinker cancels.
   v2 = _update(
     helper, 32.0,
     nav_maneuver_type=MANEUVER_TURN,
