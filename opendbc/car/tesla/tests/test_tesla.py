@@ -315,8 +315,12 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
       self.assertEqual({"event": "handoff", "source": "test"}, json.loads(log_path.read_text()))
 
   def _stock_ready(self, *, acc_state=4, set_speed=82.0, speed_kph=80.0,
-                   accel_min=0.2, accel_max=0.6, a_ego=0.2):
+                   accel_min=0.2, accel_max=0.6, a_ego=0.2,
+                   sp_requested_accel=0.4, sp_long_active=True, sp_context_valid=True):
     car_state = CarStateExt.__new__(CarStateExt)
+    car_state._sp_requested_accel = sp_requested_accel
+    car_state._sp_long_active = sp_long_active
+    car_state._sp_longitudinal_context_valid = sp_context_valid
     car_state.das_control = {
       "DAS_setSpeed": set_speed,
       "DAS_accState": acc_state,
@@ -337,6 +341,9 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
     car_state._dyn_manual_override = False
     car_state._dyn_manual_saw_sp_off = False
     car_state._ap_dynamic_long_enabled = False
+    car_state._sp_requested_accel = 0.0
+    car_state._sp_long_active = True
+    car_state._sp_longitudinal_context_valid = True
     car_state.das_control = {
       "DAS_setSpeed": 80.0,
       "DAS_accState": acc_state,
@@ -385,14 +392,26 @@ class TestTeslaLongitudinalHandoff(unittest.TestCase):
   def test_dynamic_stock_handoff_is_reachable_with_matched_demand(self):
     self.assertTrue(self._stock_ready())
 
+  def test_dynamic_stock_handoff_does_not_wait_for_vehicle_speed_to_reach_cruise_setpoint(self):
+    self.assertTrue(self._stock_ready(
+      speed_kph=81.0,
+      set_speed=120.0,
+      accel_min=0.2,
+      accel_max=0.8,
+      sp_requested_accel=0.5,
+    ))
+
   def test_stock_handoff_rejects_unmatched_demand(self):
-    self.assertFalse(self._stock_ready(set_speed=90.0))
     self.assertFalse(self._stock_ready(accel_min=0.8, accel_max=1.0))
     self.assertFalse(self._stock_ready(a_ego=0.5))
 
   def test_dynamic_stock_handoff_rejects_acceleration_spike_risk(self):
     self.assertFalse(self._stock_ready(set_speed=87.5, speed_kph=80.0, accel_min=-1.12, accel_max=0.24))
     self.assertFalse(self._stock_ready(set_speed=82.0, speed_kph=80.0, accel_min=-1.12, accel_max=2.0))
+
+  def test_stock_handoff_requires_fresh_active_sp_acceleration(self):
+    self.assertFalse(self._stock_ready(sp_long_active=False))
+    self.assertFalse(self._stock_ready(sp_context_valid=False))
 
   @staticmethod
   def _override_state(owner=TeslaLongitudinalSource.sp):

@@ -16,8 +16,6 @@ from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
-DYNAMIC_STOCK_MAX_SPEED_ERROR_KPH = 8.0
-DYNAMIC_STOCK_MAX_SET_SPEED_OVERSHOOT_KPH = 3.0
 DYNAMIC_STOCK_MAX_ACCEL_ERROR = 0.7
 DYNAMIC_STOCK_MAX_ACCEL_MAX = 1.0
 DYNAMIC_STOCK_MAX_EGO_ACCEL = 0.35
@@ -248,7 +246,7 @@ class CarStateExt:
       return 0.0
     return (float(das["DAS_accelMin"]) + float(das["DAS_accelMax"])) / 2.0
 
-  def _ap_dynamic_accel_compatible(self) -> bool:
+  def _stock_accel_compatible(self) -> bool:
     if not self._sp_longitudinal_context_valid or not self._sp_long_active:
       return False
 
@@ -262,11 +260,11 @@ class CarStateExt:
             accel_max + AP_DYNAMIC_LONG_ACCEL_ENVELOPE_TOLERANCE)
 
   def _ap_dynamic_stock_ready(self, ret: structs.CarState, speed_kph: float) -> bool:
-    return self._stock_longitudinal_ready(ret, speed_kph) and self._ap_dynamic_accel_compatible()
+    return self._stock_longitudinal_available(ret) and self._stock_accel_compatible()
 
   def _ap_dynamic_sp_ready(self, ret: structs.CarState) -> bool:
     return (not ret.brakePressed and not ret.gasPressed and ret.cruiseState.enabled and
-            not ret.accFaulted and self._ap_dynamic_accel_compatible())
+            not ret.accFaulted and self._stock_accel_compatible())
 
   def _update_ap_dynamic_longitudinal(self, ret: structs.CarState, speed_kph: float, autopilot_state: int) -> None:
     if not self._ap_dynamic_long_enabled:
@@ -594,7 +592,7 @@ class CarStateExt:
     self._log_dynamic_state("dynamic_force_sp", ret, speed_kph, force_reason=reason)
     return True
 
-  def _stock_longitudinal_ready(self, ret: structs.CarState, speed_kph: float) -> bool:
+  def _stock_longitudinal_available(self, ret: structs.CarState) -> bool:
     if ret.brakePressed or ret.gasPressed or not ret.cruiseState.enabled or ret.accFaulted:
       return False
 
@@ -602,18 +600,22 @@ class CarStateExt:
     if das is None:
       return False
 
-    stock_set_speed = float(das["DAS_setSpeed"])
-    stock_speed_error = stock_set_speed - speed_kph
     stock_accel_max = float(das["DAS_accelMax"])
-    stock_accel = (float(das["DAS_accelMin"]) + stock_accel_max) / 2.0
     stock_acc_active = int(das["DAS_accState"]) in (2, 3, 4, 5)
     return (stock_acc_active and
             int(das["DAS_aebEvent"]) == 0 and
-            abs(stock_speed_error) < DYNAMIC_STOCK_MAX_SPEED_ERROR_KPH and
-            stock_speed_error <= DYNAMIC_STOCK_MAX_SET_SPEED_OVERSHOOT_KPH and
-            abs(stock_accel) < DYNAMIC_STOCK_MAX_ACCEL_ERROR and
             stock_accel_max <= DYNAMIC_STOCK_MAX_ACCEL_MAX and
             abs(ret.aEgo) < DYNAMIC_STOCK_MAX_EGO_ACCEL)
+
+  def _stock_longitudinal_ready(self, ret: structs.CarState, _speed_kph: float) -> bool:
+    das = getattr(self, "das_control", None)
+    if not self._stock_longitudinal_available(ret) or das is None:
+      return False
+
+    stock_accel = (float(das["DAS_accelMin"]) + float(das["DAS_accelMax"])) / 2.0
+    return (abs(stock_accel) < DYNAMIC_STOCK_MAX_ACCEL_ERROR and
+            abs(stock_accel - self._sp_requested_accel) < DYNAMIC_STOCK_MAX_ACCEL_ERROR and
+            self._stock_accel_compatible())
 
   def _toggle_stock_longitudinal_from_touch(self, ret: structs.CarState, speed_kph: float) -> bool:
     if not self.tesla_stock_longitudinal_active and not self._stock_longitudinal_ready(ret, speed_kph):
