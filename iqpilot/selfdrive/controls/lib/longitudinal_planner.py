@@ -16,6 +16,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.engine import IQDynamic
 from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.imahelper import IQConstants
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.e2e_alerts import EndToEndAlertEngine
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.junction_hud import junction_hud_active
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
 from openpilot.iqpilot.selfdrive.controls.lib.slc_vcruise import SLCVCruise
 from openpilot.iqpilot.selfdrive.controls.lib.speed_limit_controller import LIMIT_ADAPT_ACC
 from openpilot.iqpilot.selfdrive.selfdrived.events import IQEvents
@@ -69,6 +70,7 @@ class LongitudinalPlannerIQ:
     self._standstill_hold = False
     self._standstill_hold_s = 0.0
     self.junction_hud = False
+    self.turn_prep = UrbanTurnPrep(params=self._params)
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
     experimental_mode = sm['selfdriveState'].experimentalMode
@@ -206,10 +208,52 @@ class LongitudinalPlannerIQ:
         self.output_a_target = self.nav_accel_target
     else:
       self.output_v_target = after_force
+    prep_v = self._turn_prep_speed(sm, float(getattr(CS, "vEgo", v_ego)), slc_apply_enabled)
+    if prep_v is not None:
+      self.output_v_target = min(float(self.output_v_target), float(prep_v))
     # envelope shaping only in Assist mode: info/warn must never change the plan
     self._envelope_enabled = (slc_apply_enabled and bool(getattr(self.slimit, "controller_enabled", False))
                               and bool(getattr(self.slimit, "mode_assist", False)))
     return self.output_v_target, self.output_a_target
+
+  def _turn_prep_speed(self, sm: messaging.SubMaster, v_ego: float, apply_enabled: bool) -> float | None:
+    """Cap planned speed for an urban blinker turn. Never writes MAX; caller must min()."""
+    try:
+      cs = sm['carState']
+      model = sm['modelV2']
+      nav = sm['iqNavState']
+    except Exception:
+      return None
+    posted = float(self.speed_limit_last or 0.0)
+    if posted <= 0.0:
+      posted = float(getattr(getattr(cs, "cruiseState", None), "speedLimit", 0.0) or 0.0)
+    try:
+      path_x = model.position.x
+      path_y = model.position.y
+    except Exception:
+      path_x, path_y = None, None
+    try:
+      lane_change_state = model.meta.laneChangeState
+    except Exception:
+      lane_change_state = 0
+    return self.turn_prep.update(
+      v_ego=float(v_ego),
+      enabled=bool(apply_enabled),
+      left_blinker=bool(getattr(cs, "leftBlinker", False)),
+      right_blinker=bool(getattr(cs, "rightBlinker", False)),
+      gas_pressed=bool(getattr(cs, "gasPressed", False)),
+      steering_angle_deg=float(getattr(cs, "steeringAngleDeg", 0.0) or 0.0),
+      posted_limit_ms=posted,
+      lane_change_state=lane_change_state,
+      path_x=path_x,
+      path_y=path_y,
+      nav_phase=getattr(nav, "maneuverPhase", 0),
+      nav_maneuver_type=getattr(nav, "nextManeuverType", 0),
+      nav_maneuver_dir=getattr(nav, "nextManeuverDirection", 0),
+      nav_phase_dir=getattr(nav, "maneuverDirection", 0),
+      nav_turn_dist_m=float(getattr(nav, "nextManeuverDistance", 0.0) or 0.0),
+      nav_send_lc=bool(getattr(nav, "shouldSendLaneChangeDesire", False)),
+    )
 
   def cruise_envelope(self, v_target: float, v_ego: float, t_idxs) -> np.ndarray:
     """Per-timestep cruise speed over the MPC horizon: the scalar target, shaped down
