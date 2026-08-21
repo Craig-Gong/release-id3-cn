@@ -195,6 +195,9 @@ _MQB_CLUSTER_EXEMPT = (VolkswagenFlags.PQ | VolkswagenFlags.MLB | VolkswagenFlag
                        VolkswagenFlags.MEB_GEN2 | VolkswagenFlags.MQB_EVO)
 
 
+_SPEED_TOP = 52
+
+
 class IQSpeedOverlay:
   def __init__(self):
     self.speed: float = 0.0
@@ -218,7 +221,7 @@ class IQSpeedOverlay:
     return extent.y
 
   def render(self, rect) -> None:
-    top = rect.y + 52
+    top = rect.y + _SPEED_TOP
     number_h = self._stack(self._heavy, str(round(self.speed)), FONT_SIZES.current_speed, rect, top, COLORS.WHITE)
     unit = tr("km/h") if ui_state.is_metric else tr("mph")
     self._stack(self._mid, unit, FONT_SIZES.speed_unit, rect, top + number_h - 10, COLORS.WHITE_TRANSLUCENT)
@@ -283,7 +286,8 @@ ellipsize = clip_to_width
 #  Junction / traffic-stop bar (IQ-link color optional)
 # ============================================================================
 _JUNC_H = 56
-_JUNC_Y = 68
+# Number at _SPEED_TOP, unit tucked 10 px into the glyph box. Sit under km/h.
+_JUNC_Y = _SPEED_TOP + FONT_SIZES.current_speed - 10 + FONT_SIZES.speed_unit + 12
 _JUNC_FONT = 34
 _JUNC_PAD = 36
 _JUNC_MIN_W = 220
