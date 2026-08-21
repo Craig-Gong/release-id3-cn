@@ -845,85 +845,30 @@ class TestTeslaIgnition(unittest.TestCase):
                                            {"DI_systemStatusCounter": counter,
                                             "DI_gear": gear})
 
-  def _ui_msg(self, counter, buckled, door_open):
-    return self.packer.make_can_msg_safety("UI_warning", 0,
-                                           {"UI_warningCounter": counter,
-                                            "buckleStatus": 1 if buckled else 0,
-                                            "anyDoorOpen": 1 if door_open else 0})
-
   def _power_msg(self, counter, state):
     return self.packer.make_can_msg_safety("VCFRONT_LVPowerState", 0,
                                            {"VCFRONT_LVPowerStateCounter": counter,
                                             "VCFRONT_vehiclePowerState": state})
 
-  def test_power_state_wakes_without_setting_ignition(self):
+  def test_power_state_drive_sets_ignition(self):
+    self.safety.ignition_can_hook(self._power_msg(0, 3))
+    self.assertFalse(self.safety.get_ignition_can())
+    self.safety.ignition_can_hook(self._power_msg(1, 3))
+    self.assertTrue(self.safety.get_ignition_can())
+
+  def test_power_state_leaving_drive_clears_ignition(self):
     self.safety.ignition_can_hook(self._power_msg(0, 3))
     self.safety.ignition_can_hook(self._power_msg(1, 3))
-    self.assertTrue(self.safety.get_wake_on_can())
-    self.assertFalse(self.safety.get_ignition_can())
-
-    self.safety.ignition_can_hook(self._power_msg(2, 0))
-    self.safety.ignition_can_hook(self._power_msg(3, 0))
-    self.assertFalse(self.safety.get_wake_on_can())
-
-  # DI_gear=4 (D) -> ignition on (counter-gated)
-  def test_ignition_on_drive(self):
-    for i in range(16):
-      self.safety.init_tests()
-      self.safety.ignition_can_hook(self._gear_msg(i, 4))
-      self.assertFalse(self.safety.get_ignition_can())
-      self.safety.ignition_can_hook(self._gear_msg((i + 1) % 16, 4))
-      self.assertTrue(self.safety.get_ignition_can())
-
-  def test_ignition_on_reverse(self):
-    self.safety.ignition_can_hook(self._gear_msg(0, 2))
-    self.assertFalse(self.safety.get_ignition_can())
-    self.safety.ignition_can_hook(self._gear_msg(1, 2))
     self.assertTrue(self.safety.get_ignition_can())
 
-  def test_ignition_on_neutral(self):
-    self.safety.ignition_can_hook(self._gear_msg(0, 3))
+    self.safety.ignition_can_hook(self._power_msg(2, 2))
+    self.safety.ignition_can_hook(self._power_msg(3, 2))
     self.assertFalse(self.safety.get_ignition_can())
-    self.safety.ignition_can_hook(self._gear_msg(1, 3))
-    self.assertTrue(self.safety.get_ignition_can())
 
-  def _set_ignition_on_in_drive(self):
+  def test_gear_does_not_set_ignition(self):
     self.safety.ignition_can_hook(self._gear_msg(0, 4))
     self.safety.ignition_can_hook(self._gear_msg(1, 4))
-    self.assertTrue(self.safety.get_ignition_can())
-
-  def _set_occupancy(self, buckled, door_open):
-    self.safety.ignition_can_hook(self._ui_msg(2, buckled, door_open))
-    self.safety.ignition_can_hook(self._ui_msg(3, buckled, door_open))
-
-  def _shift_to_park(self):
-    self.safety.ignition_can_hook(self._gear_msg(4, 1))
-    self.safety.ignition_can_hook(self._gear_msg(5, 1))
-
-  def test_ignition_stays_on_park_seatbelt_latched_door_closed(self):
-    self._set_ignition_on_in_drive()
-    self._set_occupancy(True, False)
-    self._shift_to_park()
-    self.assertTrue(self.safety.get_ignition_can())
-
-  def test_ignition_off_park_unlatched(self):
-    self._set_ignition_on_in_drive()
-    self._set_occupancy(False, False)
-    self._shift_to_park()
     self.assertFalse(self.safety.get_ignition_can())
-
-  def test_ignition_off_park_door_open(self):
-    self._set_ignition_on_in_drive()
-    self._set_occupancy(True, True)
-    self._shift_to_park()
-    self.assertFalse(self.safety.get_ignition_can())
-
-  def test_ignition_off_park_door_open_unlatched(self):
-    self._set_ignition_on_in_drive()
-    self._set_occupancy(False, True)
-    self._shift_to_park()
-    self.assertFalse(self.safety.get_ignition_can())
-
 
 class TestTeslaVehicleBusSafety(TestTeslaSafetyBase):
 
