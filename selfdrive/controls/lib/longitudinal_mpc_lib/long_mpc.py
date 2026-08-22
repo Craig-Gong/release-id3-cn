@@ -58,9 +58,9 @@ FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
 # Parked follow gap. evo uses 6.0 (US). 3.0 matched codegen but stopped ~2 m;
-# 3.5 is a small runtime-only bump (stop_delta=+0.5 vs GENERATED 3.0).
+# 4.0 is a runtime-only bump (stop_delta=+1.0 vs GENERATED 3.0).
 # Personality t_follow vanishes at standstill, so Aggressive cannot close that gap.
-STOP_DISTANCE = 3.5
+STOP_DISTANCE = 4.0
 GENERATED_STOP_DISTANCE = 3.0
 MIN_X_LEAD_FACTOR = 0.5
 LEAD_PULLAWAY_VREL = 0.5
