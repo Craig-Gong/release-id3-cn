@@ -3,7 +3,7 @@
 Two stages, matching Low-Speed Turn Planning:
   1. Blinker on while still above the turn gate G → approach ~G (command G-3 so
      desire can latch without sitting on the gate). Typical G is 40 km/h, hard cap 45.
-  2. Below G and the path / nav / steering shows the matching turn → ~22 km/h
+  2. Below G and the path / nav / steering shows the matching turn → ~20 km/h
      turn-in. E2E may still go slower via min() in the planner.
 
 Does not switch IQ.Dynamic modes. Planner must only min() this onto v_target.
@@ -40,7 +40,7 @@ LC_FINISHING = 3
 
 APPROACH_BELOW_GATE_MS = 3.0 * CV.KPH_TO_MS
 ENTER_ABOVE_GATE_MS = 1.0 * CV.KPH_TO_MS
-TURN_IN_MS = 22.0 * CV.KPH_TO_MS
+TURN_IN_MS = 20.0 * CV.KPH_TO_MS
 URBAN_V_MAX_MS = 65.0 * CV.KPH_TO_MS
 HIGHWAY_LIMIT_MS = 70.0 * CV.KPH_TO_MS
 PATH_LATERAL_M = 2.2
