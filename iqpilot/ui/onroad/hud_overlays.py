@@ -285,10 +285,10 @@ ellipsize = clip_to_width
 # ============================================================================
 #  Junction / traffic-stop bar (IQ-link color optional)
 # ============================================================================
-_JUNC_H = 56
-# Number at _SPEED_TOP, unit tucked 10 px into the glyph box. Sit under km/h.
-_JUNC_Y = _SPEED_TOP + FONT_SIZES.current_speed - 10 + FONT_SIZES.speed_unit + 12
-_JUNC_FONT = 34
+_JUNC_H = 44
+# Top-center strip above the speed digits (_SPEED_TOP). Keep a few px of air.
+_JUNC_Y = 4
+_JUNC_FONT = 32
 _JUNC_PAD = 36
 _JUNC_MIN_W = 220
 _JUNC_DOT = 18
