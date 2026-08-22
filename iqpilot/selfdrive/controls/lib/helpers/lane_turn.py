@@ -16,6 +16,10 @@ TurnDirection = custom.IQTurnSignalDirection
 # Urban intersection approach with blinker on (China). Hard cap used to be 20 mph /
 # 32 km/h — too low for typical turn approaches, so the blinker fell into the lane-
 # change FSM and the model kept lane-centering instead of turning.
+#
+# Desire always uses this 45 km/h split (same as "no LC below here"). The prep
+# slider default is still ~40 (G−3 approach / turn-in); using that for desire
+# left a 40–45 dead band — no LC and no turn, so the car went straight.
 TURN_TRIGGER_MPS = 45.0 * CV.KPH_TO_MS  # ~28 mph
 TURN_SPEED_GATE_MPS = TURN_TRIGGER_MPS
 LANE_CHANGE_SPEED_MIN = TURN_SPEED_GATE_MPS
@@ -98,8 +102,10 @@ class TurnSignalPlanner:
              **legacy) -> None:
     if legacy:
       blocked_l, blocked_r, blink_l, blink_r, speed_mps = self._consume_legacy_kwargs(**legacy)
+    # IQLaneTurnValue is the longitudinal prep gate only. Desire follows the
+    # LC/turn split so 40–45 km/h with a blinker is still a turn.
     self._state.outcome = _resolve_signal_choice(speed_mps,
-                                                 self._state.speed_limit_mps,
+                                                 TURN_TRIGGER_MPS,
                                                  blink_l,
                                                  blink_r,
                                                  blocked_l,

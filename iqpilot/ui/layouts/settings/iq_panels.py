@@ -889,7 +889,7 @@ class SteeringLayout(Widget):
     )
     self._lane_turn_desire_toggle = toggle_item(
       tr("Low-Speed Turn Planning"),
-      tr("With the blinker on below about 45 km/h (28 mph), plan a turn onto the nearest "
+      tr("With the blinker on below 45 km/h (28 mph), plan a turn onto the nearest "
          "drivable path instead of holding the lane or starting a lane change. Helps at "
          "urban intersections when you signal early. Same-side blind-spot (BSM) holds the "
          "turn while side traffic is flagged. Default on."),
@@ -897,8 +897,8 @@ class SteeringLayout(Widget):
     )
     self._lane_turn_value_control = option_item(
       tr("Adjust Lane Turn Desire Speed"), "IQLaneTurnValue", 500, 2800,
-      tr("Speed threshold for blinker turn planning. Below this, turn desires apply. "
-         "Hard cap is 45 km/h. Default is about 40 km/h."),
+      tr("Approach and turn-in speed gate for blinker prep (default about 40 km/h). "
+         "Turn desire itself is always below 45 km/h. Hard cap is 45 km/h."),
       int(round(100 / CV.MPH_TO_KPH)), None, True, "", style.BUTTON_ACTION_WIDTH, None, True,
       lambda v: f"{int(round(v * (CV.MPH_TO_KPH if ui_state.is_metric else 1)))}"
                 f" {'km/h' if ui_state.is_metric else 'mph'}"
