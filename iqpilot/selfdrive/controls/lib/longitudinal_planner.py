@@ -15,7 +15,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.custom_stop_distance import Custom
 from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.engine import IQDynamicController
 from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.imahelper import IQConstants
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.e2e_alerts import EndToEndAlertEngine
-from openpilot.iqpilot.selfdrive.controls.lib.helpers.junction_hud import junction_hud_active
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.junction_hud import junction_hud_active, light_token
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
 from openpilot.iqpilot.selfdrive.controls.lib.slc_vcruise import SLCVCruise
 from openpilot.iqpilot.selfdrive.controls.lib.speed_limit_controller import LIMIT_ADAPT_ACC
@@ -69,6 +69,8 @@ class LongitudinalPlannerIQ:
     self.tracked_model_length = 0.0
     self._standstill_hold = False
     self._standstill_hold_s = 0.0
+    self._green_launch = False
+    self._hold_released = False
     self.junction_hud = False
     self.turn_prep = UrbanTurnPrep(params=self._params)
 
@@ -291,8 +293,10 @@ class LongitudinalPlannerIQ:
   def apply_standstill_hold(self, should_stop: bool, a_target: float, v_ego: float, sm: messaging.SubMaster) -> tuple[bool, float]:
     """Keep the car held after a light / model stop until go is stable.
 
-    Works with or without IQ-link: nav red-stop, Force Stop, and vision model-stop all arm the hold.
-    Stops pre-green brake-release and go-then-brake jerk when shouldStop flickers. Gas always wins.
+    Arm on nav red-stop, Force Stop, planner shouldStop, or vision model-stop.
+    Release does not wait for sticky vision-stop at the line (short E2E path).
+    IQ-link green is the go signal: ignore shouldStop/vision for release, and do not
+    re-arm from them while still stopped. Gas always wins.
     """
     cs = sm['carState']
     standstill = bool(getattr(cs, "standstill", False) or v_ego <= 0.3)
@@ -304,25 +308,52 @@ class LongitudinalPlannerIQ:
     gas = bool(getattr(cs, "gasPressed", False) or accel_pressed)
     nav_hold = bool(self.nav_stop_request)
     force = bool(self.forcing_stop)
-    # IQ-link off: same lock using IQ.Dynamic vision stop (stop light / stop sign style).
     model_hold = bool(
       getattr(self.iq_dynamic, "stop_light_detected", False)
       or getattr(self.iq_dynamic, "model_stopped", False)
     )
+    nav_green = False
+    try:
+      nav_green = light_token(getattr(sm['iqNavState'], "trafficLight", None)) == "green"
+    except Exception:
+      nav_green = False
+
+    if not hasattr(self, "_green_launch"):
+      self._green_launch = False
+    if not hasattr(self, "_hold_released"):
+      self._hold_released = False
 
     if gas or v_ego > 2.0:
       self._standstill_hold = False
       self._standstill_hold_s = 0.0
+      self._green_launch = False
+      self._hold_released = False
       return should_stop, a_target
 
-    if standstill and (should_stop or nav_hold or force or model_hold):
-      self._standstill_hold = True
+    if standstill:
+      if nav_green:
+        arm = force
+      elif self._hold_released or self._green_launch:
+        arm = should_stop or nav_hold or force
+      else:
+        arm = should_stop or nav_hold or force or model_hold
+      if arm:
+        self._standstill_hold = True
+        self._green_launch = False
+        self._hold_released = False
+
+    if self._green_launch and nav_green and not nav_hold and not force:
+      return False, a_target
 
     if not self._standstill_hold:
       self._standstill_hold_s = 0.0
       return should_stop, a_target
 
-    can_go = (not should_stop) and (not nav_hold) and (not force) and (not model_hold)
+    if nav_green and not force:
+      can_go = True
+    else:
+      can_go = (not should_stop) and (not nav_hold) and (not force)
+
     if can_go:
       self._standstill_hold_s += DT_MDL
     else:
@@ -333,6 +364,10 @@ class LongitudinalPlannerIQ:
 
     self._standstill_hold = False
     self._standstill_hold_s = 0.0
+    self._hold_released = True
+    if nav_green:
+      self._green_launch = True
+      return False, a_target
     return should_stop, a_target
 
   def _apply_force_stop(self, v_target: float, v_ego: float, sm: messaging.SubMaster, apply_enabled: bool) -> float:
@@ -373,11 +408,17 @@ class LongitudinalPlannerIQ:
       has_follow_lead = bool(getattr(sm['radarState'].leadOne, "status", False))
     except Exception:
       has_follow_lead = False
+    nav_light = "none"
+    try:
+      nav_light = light_token(getattr(sm['iqNavState'], "trafficLight", None))
+    except Exception:
+      nav_light = "none"
     self.junction_hud = junction_hud_active(
       has_lead=has_follow_lead,
       nav_red_decel=bool(self.nav_valid and self.nav_accel_target <= _NAV_RED_DECEL),
       stop_light=bool(getattr(self.iq_dynamic, "stop_light_detected", False)),
       standstill_hold=bool(self._standstill_hold),
+      light=nav_light,
     )
 
     def fill_plan(plan_msg) -> None:

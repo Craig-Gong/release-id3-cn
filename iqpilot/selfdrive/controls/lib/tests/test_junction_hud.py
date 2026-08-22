@@ -27,3 +27,9 @@ def test_junction_hold_after_stop():
 
 def test_junction_idle():
   assert not junction_hud_active(has_lead=False, nav_red_decel=False, stop_light=False, standstill_hold=False)
+
+
+def test_junction_hidden_on_green():
+  assert not junction_hud_active(has_lead=False, nav_red_decel=False, stop_light=True,
+                                 standstill_hold=True, light="green")
+

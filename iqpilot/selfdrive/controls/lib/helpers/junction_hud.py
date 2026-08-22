@@ -15,7 +15,10 @@ def light_token(raw: str | None) -> str:
 
 
 def junction_hud_active(*, has_lead: bool, nav_red_decel: bool, stop_light: bool,
-                        standstill_hold: bool) -> bool:
+                        standstill_hold: bool, light: str | None = None) -> bool:
   if has_lead:
+    return False
+  # Green is the go signal. Sticky vision-stop at the line must not keep the bar.
+  if light_token(light) == "green":
     return False
   return bool(nav_red_decel or stop_light or standstill_hold)
