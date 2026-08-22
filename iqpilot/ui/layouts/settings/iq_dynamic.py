@@ -105,6 +105,13 @@ class IQDynamicLayout(Widget):
         return "--.-s"
       return f"{seconds:.1f}s"
 
+    def traffic_stop_label(value: float | int) -> str:
+      try:
+        meters = int(value)
+      except (TypeError, ValueError):
+        return "-- m"
+      return "Off" if meters == 0 else f"{meters} m"
+
     self._blend_radar_toggle = _toggle_item(
       "Blend IQ.Pilot + Stock ACC Radar",
       "VW PQ only. Keep the factory ACC radar engaged and use its acceleration as IQ.Dynamic's ACC "
@@ -160,6 +167,16 @@ class IQDynamicLayout(Widget):
         "every stop so it settles gently instead of rocking on its suspension. Yields full braking authority when a lead "
         "is close. Override with the accelerator.",
         "IQForceStops",
+      ),
+      _option_item(
+        "IQ Traffic Stop Offset",
+        "Stop this many meters short of a vision red / model-held stop. Only with no lead and no right blinker. "
+        "Does not change follow gap or Custom Stop Distance. IQ-link nav red is left to the map distance. 0 is off.",
+        "IQTrafficStopOffset",
+        0,
+        6,
+        step=1,
+        label_callback=traffic_stop_label,
       ),
       _option_item(
         "IQ.Dynamic Lead Speed",

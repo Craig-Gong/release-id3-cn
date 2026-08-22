@@ -30,11 +30,16 @@ IQLINK_BOOL_KEYS = {
 IQLINK_INT_KEYS = {"IqlinkBleLinkState"}
 
 # Keys not in the prebuilt params_pyx.so. Default ON: hold gas raises MAX.
+# IQTrafficStopOffset: meters short of a vision red/model stop (not follow gap).
 EXTRA_PARAM_DEFAULTS = {
   "AutoGasSyncSpeed": "1",
+  "IQTrafficStopOffset": "3",
 }
 EXTRA_BOOL_KEYS = {
   "AutoGasSyncSpeed",
+}
+EXTRA_INT_KEYS = {
+  "IQTrafficStopOffset",
 }
 
 
@@ -59,7 +64,7 @@ def _iqlink_decode(key, dat, encoding=None):
     default = _extra_default(name)
     if name in IQLINK_BOOL_KEYS or name in EXTRA_BOOL_KEYS:
       return default == "1"
-    if name in IQLINK_INT_KEYS:
+    if name in IQLINK_INT_KEYS or name in EXTRA_INT_KEYS:
       return int(default or 0)
     return default
   if encoding is not None:
@@ -71,7 +76,7 @@ def _iqlink_decode(key, dat, encoding=None):
       return dat
   if name in IQLINK_BOOL_KEYS or name in EXTRA_BOOL_KEYS:
     return text == "1"
-  if name in IQLINK_INT_KEYS:
+  if name in IQLINK_INT_KEYS or name in EXTRA_INT_KEYS:
     try:
       return int(text)
     except (TypeError, ValueError):

@@ -5,8 +5,8 @@ Original concept ("Increased Stop Distance") by SpysyWeeb (github.com/SpysyWeeb)
 IQ.Pilot and made bidirectional.
 
 Custom Stop Distance: nudge how far back IQ.Pilot stops behind a stopped lead vehicle or a
-model-held stop (red light). Independent of IQ Force Stops -- works whether Force Stops is on
-or off.
+model-held stop. Independent of IQ Force Stops -- works whether Force Stops is on
+or off. For a lights-only offset that does not change follow gap, use IQTrafficStopOffset.
 
 IQCustomStopDistance (meters, -2..2): positive stops further back, negative settles in closer.
 0 is stock.
