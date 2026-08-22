@@ -24,7 +24,15 @@ _LEAD_ACCEL_TAU = 1.5
 SPEED, ACCEL = 0, 1     # Kalman filter states enum
 
 # stationary qualification parameters
-V_EGO_STATIONARY = 4.   # no stationary object flag below this speed
+V_EGO_STATIONARY = 4.   # stock radar-only lead only below this speed (~14 km/h)
+
+# Cruise radar-only (vision often misses a distant stopped bus). Tight yRel
+# keeps guardrails out; vLead cap is parked/crawling, not a moving car.
+_CRUISE_RADAR_YREL = 1.2      # m, in-path (bus corner still qualifies)
+_CRUISE_RADAR_D_MIN = 5.0     # m
+_CRUISE_RADAR_D_MAX = 90.0    # m, ~60 km/h comfort stop is ~80 m
+_CRUISE_RADAR_VLEAD = 3.0     # m/s world speed
+_CRUISE_RADAR_MIN_CNT = 6     # ~0.3 s at 20 Hz
 
 RADAR_TO_CENTER = 2.7   # (deprecated) RADAR is ~ 2.7m ahead from center of car
 RADAR_TO_CAMERA = 1.52  # RADAR is ~ 1.5m ahead from center of mesh frame
@@ -106,6 +114,22 @@ class Track:
     # Radar points closer than 0.75, are almost always glitches on toyota radars
     return abs(self.yRel) < 1.0 and (v_ego < V_EGO_STATIONARY) and (0.75 < self.dRel < 25)
 
+  def potential_cruise_stationary_lead(self, v_ego: float):
+    # In-lane stopped/crawling radar target at cruise. Stock only does this
+    # below 4 m/s, so a distant bus never becomes leadOne until vision locks.
+    if v_ego < V_EGO_STATIONARY:
+      return False
+    if not self.measured or self.cnt < _CRUISE_RADAR_MIN_CNT:
+      return False
+    if abs(self.yRel) >= _CRUISE_RADAR_YREL:
+      return False
+    if not (_CRUISE_RADAR_D_MIN < self.dRel < _CRUISE_RADAR_D_MAX):
+      return False
+    return self.vLead <= _CRUISE_RADAR_VLEAD
+
+  def potential_radar_only_lead(self, v_ego: float):
+    return self.potential_low_speed_lead(v_ego) or self.potential_cruise_stationary_lead(v_ego)
+
   def is_potential_fcw(self, model_prob: float):
     return model_prob > .9
 
@@ -176,9 +200,9 @@ def get_lead(v_ego: float, ready: bool, tracks: dict[int, Track], lead_msg: capn
     lead_dict = get_RadarState_from_vision(lead_msg, v_ego, model_v_ego)
 
   if low_speed_override:
-    low_speed_tracks = [c for c in tracks.values() if c.potential_low_speed_lead(v_ego)]
-    if len(low_speed_tracks) > 0:
-      closest_track = min(low_speed_tracks, key=lambda c: c.dRel)
+    radar_only_tracks = [c for c in tracks.values() if c.potential_radar_only_lead(v_ego)]
+    if len(radar_only_tracks) > 0:
+      closest_track = min(radar_only_tracks, key=lambda c: c.dRel)
 
       # Only choose new track if it is actually closer than the previous one
       if (not lead_dict['status']) or (closest_track.dRel < lead_dict['dRel']):
