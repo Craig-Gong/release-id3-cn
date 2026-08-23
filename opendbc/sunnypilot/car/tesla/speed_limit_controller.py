@@ -8,6 +8,8 @@ VEHICLE_BUS = 1
 TEMPLATE_MAX_AGE_NS = 1_500_000_000
 MIN_TX_INTERVAL_NS = 500_000_000
 FEEDBACK_TIMEOUT_NS = 1_200_000_000
+FEEDBACK_RETRY_COOLDOWN_NS = 2_000_000_000
+MAX_FEEDBACK_RETRIES = 2
 TARGET_STABLE_NS = 500_000_000
 KPH_TO_MS = 1.0 / 3.6
 MPH_TO_MS = 0.44704
@@ -36,6 +38,8 @@ class TeslaSpeedLimitController:
     self.target_display = 0
     self.remaining_steps = 0
     self.feedback_blocked_signature = None
+    self.feedback_retry_after_nanos = 0
+    self.feedback_retry_count = 0
     self.manual_adjustment_counter_seen = None
     self.resume_gesture_counter_seen = None
     self.manual_override_active = False
@@ -57,6 +61,8 @@ class TeslaSpeedLimitController:
     self._reset_pending()
     self.remaining_steps = 0
     self.feedback_blocked_signature = None
+    self.feedback_retry_after_nanos = 0
+    self.feedback_retry_count = 0
     self.last_current_display = None
     self.planned_target_display = 0
     self.target_change_nanos = 0
@@ -95,6 +101,20 @@ class TeslaSpeedLimitController:
     if not self.configured or not CC.enabled or CC.cruiseControl.cancel or not CS.out.cruiseState.enabled:
       self._reset(clear_manual_override=True)
       return []
+
+    # Consume the physical resume gesture before checking target validity.
+    # A manual wheel change can temporarily make SLA publish an invalid target;
+    # dropping the counter in that window would leave override latched forever.
+    if resume_changed:
+      self.manual_resume_feedback_guard_until_nanos = now_nanos + FEEDBACK_TIMEOUT_NS
+      self._clear_manual_override("wheel_opposite_direction_gesture")
+    elif manual_changed:
+      self.manual_resume_feedback_guard_until_nanos = 0
+      if not self.manual_override_active:
+        log_dynamic_acc("speed_limit_controller", "manual_speed_override")
+      self.manual_override_active = True
+      self._reset_pending()
+
     if CS.out.brakePressed or not getattr(CS, "tesla_speed_limit_target_valid", False):
       self._reset(clear_manual_override=False)
       return []
@@ -112,6 +132,8 @@ class TeslaSpeedLimitController:
     if target_changed:
       self._reset_pending()
       self.feedback_blocked_signature = None
+      self.feedback_retry_after_nanos = 0
+      self.feedback_retry_count = 0
       self.planned_target_display = target_display
       self.target_change_nanos = now_nanos
       # Wait for the complete resolver update before pressing the wheel. This
@@ -120,17 +142,6 @@ class TeslaSpeedLimitController:
       self.target_stabilizing = True
       self.manual_resume_feedback_guard_until_nanos = 0
       self._clear_manual_override("speed_limit_changed")
-
-    if resume_changed:
-      self.manual_resume_feedback_guard_until_nanos = now_nanos + FEEDBACK_TIMEOUT_NS
-      self._clear_manual_override("wheel_opposite_direction_gesture")
-    elif manual_changed:
-      self.manual_resume_feedback_guard_until_nanos = 0
-      if not self.manual_override_active:
-        log_dynamic_acc("speed_limit_controller", "manual_speed_override", current_display=current_display,
-                        target_display=target_display)
-      self.manual_override_active = True
-      self._reset_pending()
 
     resume_feedback_guard_active = now_nanos < self.manual_resume_feedback_guard_until_nanos
     external_speed_change = (self.last_current_display is not None and current_display != self.last_current_display and
@@ -162,12 +173,20 @@ class TeslaSpeedLimitController:
       self._reset_pending()
       if not feedback_received:
         self.feedback_blocked_signature = signature
+        self.feedback_retry_after_nanos = now_nanos + FEEDBACK_RETRY_COOLDOWN_NS
         return []
+      self.feedback_retry_after_nanos = 0
+      self.feedback_retry_count = 0
 
     if self.feedback_blocked_signature is not None:
       if signature == self.feedback_blocked_signature:
-        return []
+        if now_nanos < self.feedback_retry_after_nanos or self.feedback_retry_count >= MAX_FEEDBACK_RETRIES:
+          return []
+        self.feedback_retry_count += 1
+      else:
+        self.feedback_retry_count = 0
       self.feedback_blocked_signature = None
+      self.feedback_retry_after_nanos = 0
 
     self.remaining_steps = target_display - current_display
     if self.remaining_steps == 0:

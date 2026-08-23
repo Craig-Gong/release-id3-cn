@@ -143,6 +143,39 @@ def test_controller_does_not_retry_forever_without_feedback():
   assert len(controller.update(fake_control(), state, 3_100_000_000)) == 1
 
 
+def test_controller_retries_after_bounded_cooldown_without_feedback():
+  controller = TeslaSpeedLimitController(SimpleNamespace(flags=TeslaFlagsSP.AUTO_SPEED_LIMIT))
+  state = fake_state(template_time=2_500_000_000)
+
+  assert controller.update(fake_control(), state, 1_050_000_000) == []
+  assert len(controller.update(fake_control(), state, 1_550_000_000)) == 1
+  assert controller.update(fake_control(), state, 2_800_000_000) == []
+  assert controller.update(fake_control(), state, 4_799_999_999) == []
+
+  state.tesla_speed_button_template_nanos = 4_800_000_000
+  assert len(controller.update(fake_control(), state, 4_800_000_000)) == 1
+
+
+def test_controller_caps_retries_when_feedback_never_arrives():
+  controller = TeslaSpeedLimitController(SimpleNamespace(flags=TeslaFlagsSP.AUTO_SPEED_LIMIT))
+  state = fake_state(template_time=2_500_000_000)
+
+  assert controller.update(fake_control(), state, 1_050_000_000) == []
+  assert len(controller.update(fake_control(), state, 1_550_000_000)) == 1
+  assert controller.update(fake_control(), state, 2_800_000_000) == []
+
+  state.tesla_speed_button_template_nanos = 4_800_000_000
+  assert len(controller.update(fake_control(), state, 4_800_000_000)) == 1
+  assert controller.update(fake_control(), state, 6_000_000_000) == []
+
+  state.tesla_speed_button_template_nanos = 8_000_000_000
+  assert len(controller.update(fake_control(), state, 8_000_000_000)) == 1
+  assert controller.update(fake_control(), state, 9_200_000_000) == []
+
+  state.tesla_speed_button_template_nanos = 11_200_000_000
+  assert controller.update(fake_control(), state, 11_200_000_000) == []
+
+
 def test_manual_adjustment_pauses_until_up_down_resume_gesture():
   controller = TeslaSpeedLimitController(SimpleNamespace(flags=TeslaFlagsSP.AUTO_SPEED_LIMIT))
   state = fake_state(current_speed=25.0, target_speed=25.0, template_time=2_000_000_000)
@@ -158,6 +191,22 @@ def test_manual_adjustment_pauses_until_up_down_resume_gesture():
   state.tesla_speed_auto_resume_gesture_counter = 1
   state.tesla_speed_button_template_nanos = 1_650_000_000
   assert len(controller.update(fake_control(), state, 1_650_000_000)) == 1
+  assert not controller.manual_override_active
+
+
+def test_resume_gesture_is_not_lost_while_speed_limit_target_is_temporarily_invalid():
+  controller = TeslaSpeedLimitController(SimpleNamespace(flags=TeslaFlagsSP.AUTO_SPEED_LIMIT))
+  state = fake_state(current_speed=25.0, target_speed=25.0, template_time=2_000_000_000)
+  assert controller.update(fake_control(), state, 1_050_000_000) == []
+
+  state.tesla_manual_speed_adjustment_counter = 1
+  assert controller.update(fake_control(), state, 1_100_000_000) == []
+  assert controller.manual_override_active
+
+  state.tesla_speed_limit_target_valid = False
+  state.tesla_manual_speed_adjustment_counter = 2
+  state.tesla_speed_auto_resume_gesture_counter = 1
+  assert controller.update(fake_control(), state, 1_200_000_000) == []
   assert not controller.manual_override_active
 
 
