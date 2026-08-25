@@ -34,6 +34,8 @@ class CarState(CarStateBase):
   MEB_TOLERANCE_MAX = 100
   # TSK 6/7 at READY often lasts longer than EPB Init. 1s was not enough.
   MEB_ACC_FAULT_RECOVERY_FRAMES = 300
+  MEB_CREEP_HOLD_V = 0.75
+  MEB_BRAKE_OVERLAY_FRAMES = 300  # ~3s at 100Hz
 
   def __init__(self, CP, CP_IQ):
     super().__init__(CP, CP_IQ)
@@ -66,6 +68,8 @@ class CarState(CarStateBase):
     self.cruise_fault_clear_frames = 0
     self.cruise_fault_lateral_active = False
     self.cruise_faulted = False
+    self._meb_long_was_enabled = False
+    self._meb_brake_overlay_frames = 0
     self.grade = 0.0
     self.rolling_backward = False
     self.rolling_forward = False
@@ -381,22 +385,32 @@ class CarState(CarStateBase):
     self.acc_type = ext_cp.vl["ACC_18"]["ACC_Typ"]
     self.travel_assist_available = bool(pt_cp.vl.get("TA_01", {}).get("Travel_Assist_Available", 0))
 
-    ret.cruiseState.available = pt_cp.vl["Motor_51"]["TSK_Status"] in (2, 3, 4, 5)
-    ret.cruiseState.enabled = pt_cp.vl["Motor_51"]["TSK_Status"] in (3, 4, 5)
-    # TSK winds its braking down through brake_only after a driver brake. Requesting drive-off in this
-    # state can fault TSK, and stock refuses to engage here as well, so block entry until it clears.
-    ret.carNotReady = pt_cp.vl["Motor_51"]["TSK_Status"] == 5  # brake_only
-    acc_values = ext_cp.vl.get("MEB_ACC_01", ext_cp.vl.get("ACC_19", {}))
-    ret.cruiseState.nonAdaptive = bool(acc_values.get("ACC_Limiter_Mode", 0)) if self.CP.pcmCruise else bool(pt_cp.vl["Motor_51"]["TSK_Limiter_ausgewaehlt"])
-
-    acc_faulted = pt_cp.vl["Motor_51"]["TSK_Status"] in (6, 7)
-    ret.accFaulted = self.update_acc_fault(acc_faulted, parking_brake=ret.parkingBrake, drive_mode=drive_mode,
-                                          recovery_frames_max=self.MEB_ACC_FAULT_RECOVERY_FRAMES)
-
     if self.CP.flags & VolkswagenFlags.MQB_EVO:
       self.esp_hold_confirmation = bool(pt_cp.vl["ESP_21"]["ESP_Haltebestaetigung"])
     else:
       self.esp_hold_confirmation = pt_cp.vl["ESC_50"]["Motion_State"] == 3
+
+    tsk_status = pt_cp.vl["Motor_51"]["TSK_Status"]
+    if tsk_status == self.MEB_TEMP_CRUISE_FAULT and ret.brakePressed:
+      self._meb_brake_overlay_frames = self.MEB_BRAKE_OVERLAY_FRAMES
+    elif self._meb_brake_overlay_frames > 0:
+      self._meb_brake_overlay_frames -= 1
+    acc_faulted, available, enabled, self._meb_long_was_enabled = self.meb_tsk_cruise_flags(
+      tsk_status, ret.standstill, self.esp_hold_confirmation, self._meb_long_was_enabled,
+      near_standstill=ret.vEgo < self.MEB_CREEP_HOLD_V,
+      driver_braking=ret.brakePressed or self._meb_brake_overlay_frames > 0,
+    )
+    ret.cruiseState.available = available
+    ret.cruiseState.enabled = enabled
+    # TSK winds its braking down through brake_only after a driver brake. Requesting drive-off in this
+    # state can fault TSK, and stock refuses to engage here as well, so block entry until it clears.
+    ret.carNotReady = tsk_status == 5  # brake_only
+    acc_values = ext_cp.vl.get("MEB_ACC_01", ext_cp.vl.get("ACC_19", {}))
+    ret.cruiseState.nonAdaptive = bool(acc_values.get("ACC_Limiter_Mode", 0)) if self.CP.pcmCruise else bool(pt_cp.vl["Motor_51"]["TSK_Limiter_ausgewaehlt"])
+
+    ret.accFaulted = self.update_acc_fault(acc_faulted, parking_brake=ret.parkingBrake, drive_mode=drive_mode,
+                                          recovery_frames_max=self.MEB_ACC_FAULT_RECOVERY_FRAMES)
+
     ret.cruiseState.standstill = self.CP.pcmCruise and self.esp_hold_confirmation
 
     if self.CP.pcmCruise:
@@ -781,6 +795,31 @@ class CarState(CarStateBase):
     perm_fault = drive_mode and hca_status == "DISABLED" or (self.eps_init_complete and hca_status == "FAULT")
     temp_fault = drive_mode and hca_status in ("REJECTED", "PREEMPTED") or not self.eps_init_complete
     return temp_fault, perm_fault
+
+  @classmethod
+  def meb_tsk_cruise_flags(cls, tsk_status, standstill, esp_hold, was_enabled, *,
+                          near_standstill: bool = False, driver_braking: bool = False):
+    """Keep OP long through TSK 6/7 at standstill/creep after a prior engage.
+
+    Layered under update_acc_fault: P / not-D still cannot latch Cruise Fault.
+    """
+    temp_fault = tsk_status == cls.MEB_TEMP_CRUISE_FAULT
+    hard_fault = tsk_status == 7
+    hold = standstill or esp_hold or (near_standstill and was_enabled)
+    temp_at_hold = temp_fault and hold
+    temp_brake_overlay = temp_fault and driver_braking
+    hard_at_hold = hard_fault and hold and was_enabled
+    standstill_temp = temp_at_hold or hard_at_hold
+    if tsk_status in (3, 4, 5):
+      was_enabled = True
+    elif tsk_status in (0, 1) or (hard_fault and not hard_at_hold):
+      was_enabled = False
+    available = tsk_status in (2, 3, 4, 5) or standstill_temp or temp_brake_overlay
+    enabled = tsk_status in (3, 4, 5) or (standstill_temp and was_enabled)
+    acc_faulted = (hard_fault and not hard_at_hold) or (
+      temp_fault and not temp_at_hold and not temp_brake_overlay
+    )
+    return acc_faulted, available, enabled, was_enabled
 
   def update_acc_fault(self, acc_fault, parking_brake=False, drive_mode=True, recovery_frames_max=100):
     # Ignore TSK 6/7 while not in D. evo required parkingBrake, but MEB EPB is

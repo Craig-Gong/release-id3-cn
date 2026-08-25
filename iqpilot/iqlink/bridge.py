@@ -98,6 +98,40 @@ def _enum_command(name: str):
   return getattr(NavState.Command, name, NavState.Command.none)
 
 
+_GPS_SERVICES = ("gpsLocationExternal", "gpsLocation")
+_RENDER_ZOOM_HINT = 16.0
+
+
+def _valid_render_coord(lat: float, lon: float) -> bool:
+  return abs(lat) > 0.01 and abs(lon) > 0.01
+
+
+def _ego_from_vp(raw: dict[str, Any] | None) -> tuple[float, float, bool]:
+  if not raw:
+    return 0.0, 0.0, False
+  lat = float(raw.get("vpPosPointLat") or 0.0)
+  lon = float(raw.get("vpPosPointLon") or 0.0)
+  if abs(lat) > 90 and abs(lat) < 90000000:
+    lat /= 1e6
+  if abs(lon) > 180 and abs(lon) < 180000000:
+    lon /= 1e6
+  if _valid_render_coord(lat, lon):
+    return lat, lon, True
+  return 0.0, 0.0, False
+
+
+def _position_from_gps_msg(msg) -> tuple[float, float, float, bool]:
+  try:
+    lat = float(getattr(msg, "latitude", 0.0))
+    lon = float(getattr(msg, "longitude", 0.0))
+    bearing = float(getattr(msg, "bearingDeg", 0.0))
+    if _valid_render_coord(lat, lon):
+      return lat, lon, bearing, True
+  except Exception:
+    pass
+  return 0.0, 0.0, 0.0, False
+
+
 def clear_stale_nav_params(params: Params, *, clear_exclusive: bool = False) -> None:
   """Drop leftover dest/active Params when iqlink is disabled (or keepalive with no snapshot).
 
@@ -121,8 +155,8 @@ cancel_navigation = clear_stale_nav_params
 class IqlinkBridge:
   def __init__(self):
     self.params = Params()
-    self.pm = messaging.PubMaster(["iqNavState"])
-    self.sm = messaging.SubMaster(["modelV2"])
+    self.pm = messaging.PubMaster(["iqNavState", "iqNavRenderState"])
+    self.sm = messaging.SubMaster(["modelV2", *_GPS_SERVICES])
     self._lock = threading.Lock()
     self._latest: dict[str, Any] | None = None
     self._raw_payload: dict[str, Any] | None = None
@@ -158,6 +192,19 @@ class IqlinkBridge:
     except Exception:
       return False
     return False
+
+  def _ego_gps(self) -> tuple[float, float, float, bool]:
+    try:
+      self.sm.update(0)
+      for svc in _GPS_SERVICES:
+        if not self.sm.alive.get(svc, False):
+          continue
+        lat, lon, bearing, valid = _position_from_gps_msg(self.sm[svc])
+        if valid:
+          return lat, lon, bearing, True
+    except Exception:
+      pass
+    return 0.0, 0.0, 0.0, False
 
   def ingest(self, payload: dict[str, Any]) -> None:
     if not isinstance(payload, dict):
@@ -244,6 +291,58 @@ class IqlinkBridge:
     msg.iqNavState.valid = False
     msg.iqNavState.longitudinalEngaged = False
     self.pm.send("iqNavState", msg)
+    render = messaging.new_message("iqNavRenderState")
+    render.iqNavRenderState.active = False
+    self.pm.send("iqNavRenderState", render)
+
+  def _fill_render_msg(
+    self,
+    fields: dict[str, Any],
+    ego_lat: float,
+    ego_lon: float,
+    bearing: float,
+    raw: dict[str, Any] | None = None,
+  ):
+    msg = messaging.new_message("iqNavRenderState")
+    r = msg.iqNavRenderState
+    r.active = bool(
+      fields.get("active")
+      or fields.get("destinationValid")
+      or fields.get("nextManeuverValid")
+    )
+    ego_valid = _valid_render_coord(ego_lat, ego_lon)
+    if not ego_valid:
+      ego_lat, ego_lon, ego_valid = _ego_from_vp(raw)
+      if ego_valid:
+        bearing = 0.0
+    r.currentLatitude = float(ego_lat) if ego_valid else 0.0
+    r.currentLongitude = float(ego_lon) if ego_valid else 0.0
+    r.bearingDeg = float(bearing) if ego_valid else 0.0
+
+    dest_lat = float(fields.get("destinationLatitude") or 0.0)
+    dest_lon = float(fields.get("destinationLongitude") or 0.0)
+    r.destinationLatitude = dest_lat
+    r.destinationLongitude = dest_lon
+    dest_valid = _valid_render_coord(dest_lat, dest_lon)
+
+    if ego_valid and dest_valid:
+      r.init("routePolyline", 2)
+      r.init("routePolylineSimplified", 2)
+      for idx, (lat, lon) in enumerate(((ego_lat, ego_lon), (dest_lat, dest_lon))):
+        r.routePolyline[idx].latitude = lat
+        r.routePolyline[idx].longitude = lon
+        r.routePolylineSimplified[idx].latitude = lat
+        r.routePolylineSimplified[idx].longitude = lon
+    else:
+      r.init("routePolyline", 0)
+      r.init("routePolylineSimplified", 0)
+
+    r.nextManeuverType = _enum_maneuver(str(fields.get("nextManeuverType") or "none"))
+    nav_d, _ = _enum_dir(str(fields.get("nextManeuverDirection") or "none"))
+    r.nextManeuverDirection = nav_d
+    r.nextManeuverDistance = float(fields.get("nextManeuverDistance") or 0.0)
+    r.zoomHint = _RENDER_ZOOM_HINT
+    return msg
 
   def _fill_msg(self, fields: dict[str, Any]):
     msg = messaging.new_message("iqNavState")
@@ -353,7 +452,12 @@ class IqlinkBridge:
       if fields is None:
         self._publish_inactive()
       else:
+        ego_lat, ego_lon, bearing, _ = self._ego_gps()
         self.pm.send("iqNavState", self._fill_msg(fields))
+        self.pm.send(
+          "iqNavRenderState",
+          self._fill_render_msg(fields, ego_lat, ego_lon, bearing, raw),
+        )
       rk.keep_time()
 
 

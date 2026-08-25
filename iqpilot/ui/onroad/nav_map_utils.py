@@ -187,3 +187,10 @@ def solar_elevation_deg(latitude: float, longitude: float, unix_time: float) -> 
     + math.cos(lat_rad) * math.cos(declination) * math.cos(hour_angle)
   )
   return math.degrees(elevation)
+
+
+def iqnav_dest_coords(nav) -> tuple[float, float, bool]:
+  """Destination pin from iqNavState when navrenderd is off (IQ-link)."""
+  lat = float(getattr(nav, "destinationLatitude", 0.0) or 0.0)
+  lon = float(getattr(nav, "destinationLongitude", 0.0) or 0.0)
+  return lat, lon, abs(lat) > 0.01 and abs(lon) > 0.01

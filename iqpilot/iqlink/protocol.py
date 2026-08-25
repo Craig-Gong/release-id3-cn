@@ -23,6 +23,10 @@ _RED_LIGHT_DECEL_MS2 = 2.0
 # Roadtest: nav red stop landed ~2 m early of the stop line.
 _STOP_LINE_EARLY_COMP_M = 2.0
 _YELLOW_STOP_DIST_M = 30.0
+# China RTOR / left-arrow: only treat the TBT turn as "at this light" inside this window.
+LIGHT_TURN_WINDOW_M = 150.0
+# Arrive: stop lateral desire only; keep limit / lights / snapshot (R1).
+NEAR_DEST_REMAIN_M = 150.0
 
 
 def _f(data: dict[str, Any], key: str, default: float = 0.0) -> float:
@@ -63,11 +67,38 @@ def _turn_bucket(turn_type: int) -> str:
 def _maneuver_type(bucket: str) -> str:
   if bucket.startswith("turn"):
     return "turn"
-  if bucket.startswith("lc") or bucket == "exit":
+  if bucket.startswith("lc"):
+    return "fork"
+  if bucket == "exit":
     return "exit"
   if bucket == "roundabout":
     return "roundabout"
+  if bucket == "arrive":
+    return "arrive"
   return "none"
+
+
+def nav_turn_pending(nav, *, side: str, window_m: float = LIGHT_TURN_WINDOW_M) -> bool:
+  """True when APK TBT is a same-side turn at this light (not a distant later turn)."""
+  if nav is None or side not in ("left", "right"):
+    return False
+  if isinstance(nav, dict):
+    if str(nav.get("nextManeuverType") or "") != "turn":
+      return False
+    if str(nav.get("nextManeuverDirection") or "") != side:
+      return False
+    dist = float(nav.get("nextManeuverDistance") or 0.0)
+    return 0.0 < dist <= float(window_m)
+  mtype = getattr(nav, "nextManeuverType", None)
+  mtype_name = str(getattr(mtype, "name", None) or mtype or "").lower()
+  if mtype_name != "turn":
+    return False
+  direction = getattr(nav, "nextManeuverDirection", None)
+  dir_name = str(getattr(direction, "name", None) or direction or "").lower()
+  if side not in dir_name:
+    return False
+  dist = float(getattr(nav, "nextManeuverDistance", 0.0) or 0.0)
+  return 0.0 < dist <= float(window_m)
 
 
 def _dir_from_bucket(bucket: str) -> str:
@@ -143,7 +174,7 @@ def map_carrot_to_nav_fields(
   cam_valid = False
 
   lc_window = AGGRESSIVE_LC_DISTANCE_M if aggressive_lc else 500.0
-  is_lc = bucket.startswith("lc") or (mtype == "exit" and direction != "none")
+  is_lc = bucket.startswith("lc")
   send_lc = bool(is_lc and 0.0 < turn_dist <= lc_window)
   send_turn = bool(bucket.startswith("turn") and 0.0 < turn_dist <= 120.0)
   # B1: amapauto 13012 laneRecommend=straight → suppress auto LC (TBT HUD still valid).
@@ -165,10 +196,11 @@ def map_carrot_to_nav_fields(
   # remainS is never a go gate (remainS==1 must not release). Green is the go signal.
   remain_s = int(_f(data, "trafficLightRemainS"))
   vision_stop = bool(vision_stop) or bool(data.get("visionStop"))
-  # China: right-turn-on-red — do not issue nav red stop; leave to E2E/follow.
-  right_turn_pending = bucket == "turn_right" and turn_dist > 0
+  # China RTOR: only skip nav red/yellow when the right turn is at this light.
+  right_turn_pending = bucket == "turn_right" and 0.0 < turn_dist <= LIGHT_TURN_WINDOW_M
+  left_turn_pending = bucket == "turn_left" and 0.0 < turn_dist <= LIGHT_TURN_WINDOW_M
   # Stay in red-stop through the whole APK countdown. Early RELEASE caused pre-green
-  # creep then a model brake slam. Never fake green.
+  # creep then a model brake slam. remainS is never a go gate. Never fake green.
   stop_for_light = False
   if not right_turn_pending:
     if light == "red":
@@ -186,6 +218,12 @@ def map_carrot_to_nav_fields(
     long_provider = "route"
 
   engaged = bool(stop_for_light or long_speed > 0.0)
+
+  # Arrive: keep limit / lights; only drop lateral LC/turn desire.
+  if 0.0 < go_dist <= NEAR_DEST_REMAIN_M:
+    send_lc = False
+    send_turn = False
+    mtype = "arrive"
 
   return {
     "active": True,
@@ -240,4 +278,6 @@ def map_carrot_to_nav_fields(
     "trafficLightDistM": float(light_dist or 0.0),
     "trafficLightRemainS": float(max(remain_s, 0)),
     "visionStop": vision_stop,
+    "rightTurnPending": right_turn_pending,
+    "leftTurnPending": left_turn_pending,
   }

@@ -478,12 +478,14 @@ class CarController(CarControllerBase):
     if self.frame % self.CCP.ACC_CONTROL_STEP == 0 and self.CP.openpilotLongitudinalControl and not CS.out.radarDisableFailed:
       stopping = actuators.longControlState == LongCtrlState.stopping
       if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
-        # Prefer explicit starting state (evo parity); keep low-speed pid as RELEASE fallback.
-        starting = (
-          actuators.longControlState == LongCtrlState.starting
-          or (actuators.longControlState == LongCtrlState.pid and (CS.esp_hold_confirmation or CS.out.vEgo < 0.25))
-        )
         accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, self.CCP.ACCEL_MAX) if CC.enabled else 0)
+        # Prefer explicit starting state (evo parity). pid+ESP-hold is RELEASE only
+        # when launching (gas or +accel) — pid flicker while still braking must not creep.
+        starting = actuators.longControlState == LongCtrlState.starting
+        if not starting and actuators.longControlState == LongCtrlState.pid:
+          starting = mebcan.meb_pid_hold_should_start(
+            CS.esp_hold_confirmation, CS.out.vEgo, accel, CS.out.gasPressed,
+          )
 
         long_override = CC.cruiseControl.override or CS.out.gasPressed
         self.long_override_counter = min(self.long_override_counter + 1, 5) if long_override else 0

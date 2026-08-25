@@ -31,6 +31,7 @@ from openpilot.iqpilot.ui.onroad.offline_tiles import (
 from openpilot.iqpilot.ui.onroad.nav_map_utils import (
   build_mapbox_tile_url,
   choose_nav_camera,
+  iqnav_dest_coords,
   mercator_world_px_at_zoom,
   project_nav_point,
   project_nav_polyline,
@@ -861,6 +862,14 @@ class OsmOfflineProvider:
     self._drop_pending()
 
 
+class _NavLatLon:
+  __slots__ = ("latitude", "longitude")
+
+  def __init__(self, latitude: float, longitude: float):
+    self.latitude = latitude
+    self.longitude = longitude
+
+
 class NavMapPanel(Widget):
   def __init__(self, force_visible: bool = False):
     super().__init__()
@@ -1256,6 +1265,24 @@ class NavMapPanel(Widget):
       self.distance_remaining = float(nav.distanceRemaining)
       self.next_direction = self._enum_value(nav.nextManeuverDirection) if nav.nextManeuverValid else self.next_direction
       self.next_type = self._enum_value(nav.nextManeuverType) if nav.nextManeuverValid else self.next_type
+      dest_lat, dest_lon, dest_ok = iqnav_dest_coords(nav)
+      if dest_ok:
+        self.destination_latitude = dest_lat
+        self.destination_longitude = dest_lon
+      if nav.nextManeuverValid:
+        self.next_distance = float(nav.nextManeuverDistance)
+
+    if not self._has_render_fix:
+      self._refresh_position_from_fallback()
+    dest_ok = abs(self.destination_latitude) > 0.01 and abs(self.destination_longitude) > 0.01
+    if dest_ok and self._has_render_fix and not self.route_points:
+      self.route_points = [
+        _NavLatLon(self.current_latitude, self.current_longitude),
+        _NavLatLon(self.destination_latitude, self.destination_longitude),
+      ]
+      self._projected_route_key = None
+    if dest_ok or self.nav_active:
+      self.active = bool(self.active or self._has_render_fix or dest_ok)
 
     if sm.updated["iqLiveData"]:
       self.road_name = sm["iqLiveData"].roadName

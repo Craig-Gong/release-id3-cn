@@ -18,6 +18,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.imahelper import IQCons
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.e2e_alerts import EndToEndAlertEngine
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.junction_hud import junction_hud_active, light_token
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
+from openpilot.iqpilot.iqlink.protocol import nav_turn_pending
 from openpilot.iqpilot.selfdrive.controls.lib.slc_vcruise import SLCVCruise
 from openpilot.iqpilot.selfdrive.controls.lib.speed_limit_controller import LIMIT_ADAPT_ACC
 from openpilot.iqpilot.selfdrive.selfdrived.events import IQEvents
@@ -327,6 +328,15 @@ class LongitudinalPlannerIQ:
       accel_pressed = False
     gas = bool(getattr(cs, "gasPressed", False) or accel_pressed)
     nav_hold = bool(self.nav_stop_request)
+    try:
+      # Left-arrow red: keep hold even if the approach curve still has speedTarget > 0.
+      # remainS is never a go gate; APK green still releases below.
+      left_red = nav_turn_pending(sm['iqNavState'], side="left") and light_token(
+        getattr(sm['iqNavState'], "trafficLight", None)
+      ) == "red"
+      nav_hold = nav_hold or left_red
+    except Exception:
+      pass
     force = bool(self.forcing_stop)
     model_hold = bool(
       getattr(self.iq_dynamic, "stop_light_detected", False)

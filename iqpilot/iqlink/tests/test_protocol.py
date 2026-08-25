@@ -39,7 +39,7 @@ def test_aggressive_lane_change_window():
   assert f is not None
   assert f["shouldSendLaneChangeDesire"] is True
   assert f["command"] == "laneChange"
-  assert f["nextManeuverType"] == "exit"
+  assert f["nextManeuverType"] == "fork"
 
   f2 = map_carrot_to_nav_fields(raw, aggressive_lc=False)
   assert f2 is not None
@@ -223,6 +223,72 @@ def test_red_light_right_turn_no_nav_stop():
   assert f["accelTarget"] != -2.0
   # No TBT speed cap either — bare road limit.
   assert abs(f["speedTarget"] - 60 / 3.6) < 1e-3
+  assert f["rightTurnPending"] is True
+  assert f["leftTurnPending"] is False
+
+
+def test_red_light_right_turn_far_still_stops():
+  # Distant later right turn must not skip a red at this intersection.
+  raw = {
+    "nRoadLimitSpeed": 60,
+    "trafficLight": "red",
+    "trafficLightDistM": 30,
+    "nTBTTurnType": 2,
+    "nTBTDist": 400,
+  }
+  f = map_carrot_to_nav_fields(raw)
+  assert f is not None
+  assert f["rightTurnPending"] is False
+  assert f["accelTarget"] == -2.0
+  assert f["speedTarget"] < 60 / 3.6
+
+
+def test_left_turn_red_stays_nav_stop():
+  raw = {
+    "nRoadLimitSpeed": 60,
+    "trafficLight": "red",
+    "trafficLightDistM": 25,
+    "trafficLightRemainS": 8,
+    "nTBTTurnType": 1,
+    "nTBTDist": 40,
+  }
+  f = map_carrot_to_nav_fields(raw)
+  assert f is not None
+  assert f["leftTurnPending"] is True
+  assert f["accelTarget"] == -2.0
+  assert f["trafficLight"] == "red"
+  assert f["trafficLightRemainS"] == 8.0
+
+
+def test_true_exit_is_not_fork_lane_change():
+  raw = {
+    "nRoadLimitSpeed": 100,
+    "nTBTTurnType": 6,
+    "nTBTDist": 300,
+  }
+  f = map_carrot_to_nav_fields(raw)
+  assert f is not None
+  assert f["nextManeuverType"] == "exit"
+  assert f["shouldSendLaneChangeDesire"] is False
+  assert f["nextManeuverDirection"] == "none"
+
+
+def test_near_dest_stops_lateral_desire_keeps_limit():
+  raw = {
+    "nRoadLimitSpeed": 40,
+    "nGoPosDist": 80,
+    "nTBTTurnType": 1,
+    "nTBTDist": 50,
+    "trafficLight": "red",
+    "trafficLightDistM": 20,
+  }
+  f = map_carrot_to_nav_fields(raw)
+  assert f is not None
+  assert f["nextManeuverType"] == "arrive"
+  assert f["shouldSendTurnDesire"] is False
+  assert f["shouldSendLaneChangeDesire"] is False
+  assert f["accelTarget"] == -2.0
+  assert abs(f["roadSpeedLimit"] - 40 / 3.6) < 1e-3
 
 
 def test_yellow_far_does_not_stop():

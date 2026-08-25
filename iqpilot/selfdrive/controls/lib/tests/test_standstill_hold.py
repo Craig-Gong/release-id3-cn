@@ -66,6 +66,24 @@ def test_nav_red_keeps_hold_even_if_model_wants_go():
   assert planner._standstill_hold
 
 
+def test_left_arrow_red_holds_without_nav_stop_request():
+  # Approach curve can leave speedTarget > 0; left-arrow red must still hold.
+  planner = _build_planner(nav_stop=False)
+  sm = _sm(light="red")
+  sm["iqNavState"] = SimpleNamespace(
+    trafficLight="red",
+    nextManeuverType=SimpleNamespace(name="turn"),
+    nextManeuverDirection=SimpleNamespace(name="turnLeft"),
+    nextManeuverDistance=40.0,
+  )
+  planner.apply_standstill_hold(True, -0.4, 0.0, sm)
+  for _ in range(int(2.0 / DT_MDL)):
+    should_stop, a_target = planner.apply_standstill_hold(False, 0.8, 0.0, sm)
+  assert should_stop
+  assert a_target <= 0.0
+  assert planner._standstill_hold
+
+
 def test_gas_releases_hold():
   planner = _build_planner(nav_stop=True)
   sm_stop = _sm(light="red")

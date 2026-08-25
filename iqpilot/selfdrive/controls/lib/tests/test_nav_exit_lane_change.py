@@ -89,6 +89,13 @@ def test_only_exit_maneuvers_trigger():
   assert _run(dh, cs, nav) == log.Desire.none
 
 
+def test_fork_does_not_trigger_nav_exit():
+  dh = _make_dh(enabled=True, enable_bsm=True)
+  cs = DummyCarState(rightBlindspot=False)
+  nav = DummyNavState(nextManeuverType=int(ManeuverType.fork), nextManeuverDistance=300.0)
+  assert _run(dh, cs, nav) == log.Desire.none
+
+
 def test_too_far_does_not_trigger():
   dh = _make_dh(enabled=True, enable_bsm=True)
   cs = DummyCarState(rightBlindspot=False)
