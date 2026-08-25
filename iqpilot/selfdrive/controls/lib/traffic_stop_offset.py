@@ -1,6 +1,6 @@
 """Vision red / model-stop offset that does not change lead follow gap.
 
-IQTrafficStopOffset (meters, 0..6, default 3): when IQ.Dynamic has a filtered
+IQTrafficStopOffset (meters, 0..6 in 0.5 steps, default 3): when IQ.Dynamic has a filtered
 model stop, no lead, and the plan is holding, brake toward a point this far
 short of model.position.x[-1] and hold there.
 
@@ -20,13 +20,22 @@ from openpilot.iqpilot.selfdrive.controls.lib.custom_stop_distance import (
   E2E_STOP_HOLD_MAX_V,
   E2E_STOP_MIN_DIST,
   E2E_STOP_PLAN_VEL_THRESHOLD,
-  get_sanitize_int_param,
 )
 
 TRAFFIC_STOP_OFFSET_PARAM = "IQTrafficStopOffset"
-MIN_OFFSET_M = 0
-MAX_OFFSET_M = 6
-DEFAULT_OFFSET_M = 3
+MIN_OFFSET_M = 0.0
+MAX_OFFSET_M = 6.0
+DEFAULT_OFFSET_M = 3.0
+OFFSET_STEP_M = 0.5
+
+
+def _sanitize_offset_m(raw) -> float:
+  try:
+    value = float(raw)
+  except (TypeError, ValueError):
+    return DEFAULT_OFFSET_M
+  bounded = min(max(value, MIN_OFFSET_M), MAX_OFFSET_M)
+  return round(bounded / OFFSET_STEP_M) * OFFSET_STEP_M
 
 
 class TrafficStopOffset:
@@ -38,9 +47,11 @@ class TrafficStopOffset:
 
   def read_params(self) -> None:
     try:
-      stored = get_sanitize_int_param(
-        TRAFFIC_STOP_OFFSET_PARAM, MIN_OFFSET_M, MAX_OFFSET_M, self.params)
-      self.distance = float(stored)
+      stored = self.params.get(TRAFFIC_STOP_OFFSET_PARAM, return_default=True)
+      snapped = _sanitize_offset_m(stored if stored is not None else DEFAULT_OFFSET_M)
+      if stored is not None and snapped != float(stored):
+        self.params.put(TRAFFIC_STOP_OFFSET_PARAM, snapped)
+      self.distance = snapped
     except (TypeError, ValueError, UnknownKeyName):
       self.distance = float(DEFAULT_OFFSET_M)
 

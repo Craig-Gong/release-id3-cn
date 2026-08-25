@@ -2,7 +2,10 @@ from types import SimpleNamespace
 
 from iqdbc.car.interfaces import ACCEL_MIN
 from openpilot.selfdrive.modeld.constants import ModelConstants
-from openpilot.iqpilot.selfdrive.controls.lib.traffic_stop_offset import TrafficStopOffset
+from openpilot.iqpilot.selfdrive.controls.lib.traffic_stop_offset import (
+  TrafficStopOffset,
+  _sanitize_offset_m,
+)
 
 
 def _build(distance):
@@ -65,3 +68,13 @@ def test_holds_when_already_short_of_offset():
 def test_does_not_hold_when_model_stop_is_still_far():
   a_target, should_stop = _adjust(_build(3), a_target=0.0, v_ego=0.2, stop_distance=12.0)
   assert should_stop is False
+
+
+def test_sanitize_keeps_half_meter_steps():
+  assert _sanitize_offset_m(3) == 3.0
+  assert _sanitize_offset_m("3.5") == 3.5
+  assert _sanitize_offset_m(3.2) == 3.0
+  assert _sanitize_offset_m(3.3) == 3.5
+  assert _sanitize_offset_m(-1) == 0.0
+  assert _sanitize_offset_m(9) == 6.0
+  assert _sanitize_offset_m("nope") == 3.0

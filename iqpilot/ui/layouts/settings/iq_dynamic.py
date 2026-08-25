@@ -107,10 +107,10 @@ class IQDynamicLayout(Widget):
 
     def traffic_stop_label(value: float | int) -> str:
       try:
-        meters = int(value)
+        meters = float(value)
       except (TypeError, ValueError):
         return "-- m"
-      return "Off" if meters == 0 else f"{meters} m"
+      return "Off" if meters <= 0 else f"{meters:.1f} m"
 
     self._blend_radar_toggle = _toggle_item(
       "Blend IQ.Pilot + Stock ACC Radar",
@@ -174,8 +174,9 @@ class IQDynamicLayout(Widget):
         "Does not change follow gap or Custom Stop Distance. IQ-link nav red is left to the map distance. 0 is off.",
         "IQTrafficStopOffset",
         0,
-        6,
-        step=1,
+        600,
+        step=50,
+        use_float_scaling=True,
         label_callback=traffic_stop_label,
       ),
       _option_item(

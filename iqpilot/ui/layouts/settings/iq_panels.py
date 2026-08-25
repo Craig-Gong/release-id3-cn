@@ -1049,8 +1049,11 @@ class CruiseLayout(Widget):
       return "Stock" if value == 0 else f"{value:+d} m"
 
     def traffic_stop_label(value: float | int) -> str:
-      value = int(value)
-      return "Off" if value == 0 else f"{value} m"
+      try:
+        meters = float(value)
+      except (TypeError, ValueError):
+        return "-- m"
+      return "Off" if meters <= 0 else f"{meters:.1f} m"
 
     items = [
       IQListItem(title=lambda: tr("Speed Limit Control"), description="", action_item=None, inline=True,
@@ -1212,8 +1215,9 @@ class CruiseLayout(Widget):
         "Does not change follow gap or Custom Stop Distance. IQ-link nav red is left to the map distance. 0 is off.",
         "IQTrafficStopOffset",
         0,
-        6,
-        step=1,
+        600,
+        step=50,
+        use_float_scaling=True,
         label_callback=traffic_stop_label,
       ),
     ]

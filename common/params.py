@@ -31,6 +31,7 @@ IQLINK_INT_KEYS = {"IqlinkBleLinkState"}
 
 # Keys not in the prebuilt params_pyx.so. Default ON: hold gas raises MAX.
 # IQTrafficStopOffset: meters short of a vision red/model stop (not follow gap).
+# Stored as a float so the UI can step 0.5 m. Old integer files ("3") still read as 3.0.
 EXTRA_PARAM_DEFAULTS = {
   "AutoGasSyncSpeed": "1",
   "IQTrafficStopOffset": "3",
@@ -38,7 +39,7 @@ EXTRA_PARAM_DEFAULTS = {
 EXTRA_BOOL_KEYS = {
   "AutoGasSyncSpeed",
 }
-EXTRA_INT_KEYS = {
+EXTRA_FLOAT_KEYS = {
   "IQTrafficStopOffset",
 }
 
@@ -64,8 +65,10 @@ def _iqlink_decode(key, dat, encoding=None):
     default = _extra_default(name)
     if name in IQLINK_BOOL_KEYS or name in EXTRA_BOOL_KEYS:
       return default == "1"
-    if name in IQLINK_INT_KEYS or name in EXTRA_INT_KEYS:
+    if name in IQLINK_INT_KEYS:
       return int(default or 0)
+    if name in EXTRA_FLOAT_KEYS:
+      return float(default or 0)
     return default
   if encoding is not None:
     text = dat.decode(encoding) if isinstance(dat, (bytes, bytearray)) else str(dat)
@@ -76,11 +79,16 @@ def _iqlink_decode(key, dat, encoding=None):
       return dat
   if name in IQLINK_BOOL_KEYS or name in EXTRA_BOOL_KEYS:
     return text == "1"
-  if name in IQLINK_INT_KEYS or name in EXTRA_INT_KEYS:
+  if name in IQLINK_INT_KEYS:
     try:
       return int(text)
     except (TypeError, ValueError):
       return 0
+  if name in EXTRA_FLOAT_KEYS:
+    try:
+      return float(text)
+    except (TypeError, ValueError):
+      return 0.0
   return text
 
 
