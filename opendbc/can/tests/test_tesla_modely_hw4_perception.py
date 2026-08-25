@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 
 from opendbc.can import CANDefine, CANPacker, CANParser
@@ -199,3 +200,55 @@ def test_hw4_perception_dbc_labels_vehicle_validated_pedestrian_coordinate_units
   pedestrian_lines = [line for line in dbc_path.read_text().splitlines() if "APP_closestPedestrian" in line and line.lstrip().startswith("SG_")]
   assert len(pedestrian_lines) == 6
   assert all('[0|0] "m"' in line for line in pedestrian_lines)
+
+
+def test_hw4_perception_dbc_decodes_vehicle_energy_tpms_and_temperature_pages():
+  packer = CANPacker(DBC)
+  parser = CANParser(DBC, [
+    ("BMS_hvBusStatus", float("nan")),
+    ("VCSEC_TPMSData", float("nan")),
+    ("DIR_temperature", float("nan")),
+    ("BMS_kwhCounter", float("nan")),
+    ("DI_estimatedBrakeTemp", float("nan")),
+  ], 1)
+  frames = [
+    packer.make_can_msg("BMS_hvBusStatus", 1, {"BMS_dcLinkVoltage": 400.0, "BMS_packCurrent": -50.0}),
+    packer.make_can_msg("VCSEC_TPMSData", 1, {
+      "VCSEC_TPMSDataIndex": 0,
+      "VCSEC_TPMSPressure0": 2.5,
+      "VCSEC_TPMSTemperature0": 30,
+      "VCSEC_TPMSLocation0": 0,
+    }),
+    packer.make_can_msg("VCSEC_TPMSData", 1, {
+      "VCSEC_TPMSDataIndex": 4,
+      "VCSEC_TPMSRecommendedColdPressureFront": 2.9,
+      "VCSEC_TPMSRecommendedColdPressureRear": 3.0,
+    }),
+    packer.make_can_msg("DIR_temperature", 1, {
+      "DIR_tempIndex": 0,
+      "DIR_inverterTQF": 2,
+      "DIR_inverterT": 50,
+      "DIR_statorT": 55,
+    }),
+    packer.make_can_msg("BMS_kwhCounter", 1, {
+      "BMS_kwhDischargeTotal": 120.5,
+      "BMS_kwhChargeTotal": 100.25,
+    }),
+    packer.make_can_msg("DI_estimatedBrakeTemp", 1, {
+      "DI_brakeFLTemp": 80,
+      "DI_brakeFRTemp": 81,
+      "DI_brakeRLTemp": 60,
+      "DI_brakeRRTemp": 61,
+    }),
+  ]
+  parser.update([(1_000_000_000, frames)])
+
+  assert parser.vl["BMS_hvBusStatus"]["BMS_dcLinkVoltage"] == 400.0
+  assert parser.vl["BMS_hvBusStatus"]["BMS_packCurrent"] == -50.0
+  assert parser.vl_all["VCSEC_TPMSData"]["VCSEC_TPMSDataIndex"] == [0.0, 4.0]
+  assert parser.vl_all["VCSEC_TPMSData"]["VCSEC_TPMSPressure0"][0] == 2.5
+  assert math.isclose(parser.vl_all["VCSEC_TPMSData"]["VCSEC_TPMSRecommendedColdPressureFront"][1], 2.9)
+  assert parser.vl["DIR_temperature"]["DIR_inverterT"] == 50.0
+  assert parser.vl["DIR_temperature"]["DIR_statorT"] == 55.0
+  assert parser.vl["BMS_kwhCounter"]["BMS_kwhDischargeTotal"] == 120.5
+  assert parser.vl["DI_estimatedBrakeTemp"]["DI_brakeRRTemp"] == 61.0

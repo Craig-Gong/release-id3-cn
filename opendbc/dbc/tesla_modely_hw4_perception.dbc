@@ -34,7 +34,7 @@ BS_:
 
 BU_: UI DAS APP
 
-CM_ "Read-only Model Y HW4 visualization subset. Source: https://tcan.latency.is/?plat=ModelY, retrieved 2026-08-13. Counter and checksum fields are intentionally omitted.";
+CM_ "Read-only Model Y HW4 visualization subset. Source: https://tcan.latency.is/?plat=ModelY, updated 2026-08-25. Counter and checksum fields are intentionally omitted.";
 
 
 BO_ 568 UI_driverAssistMapData: 8 UI
@@ -352,6 +352,224 @@ BO_ 1024 APP_pedestrianDetection: 8 APP
  SG_ APP_closestPedestrian2dY : 31|6@1- (0.4,0) [0|0] "m" DAS
  SG_ APP_closestPedestrian3dX : 37|6@1- (0.4,0) [0|0] "m" DAS
  SG_ APP_closestPedestrian3dY : 43|6@1- (0.4,0) [0|0] "m" DAS
+
+CM_ "VEH diagnostic additions below are read-only T-CAN Model Y definitions. Physical units absent from T-CAN are labelled from signal semantics and require live validation.";
+
+BO_ 306 BMS_hvBusStatus: 8 APP
+ SG_ BMS_dcLinkVoltage : 0|16@1+ (0.01,0) [0|0] "V" UI
+ SG_ BMS_packCurrent : 16|16@1- (0.1,0) [0|0] "A" UI
+ SG_ BMS_currentUnfiltered : 32|16@1- (0.05,-822) [0|0] "A" UI
+
+BO_ 508 APP_roadDisturbance: 8 APP
+ SG_ APP_roadDisturbanceIndex : 0|2@1+ (1,0) [0|0] "" UI
+ SG_ APP_roadDisturbanceHeight : 2|6@1+ (0.02,-0.64) [0|0] "m" UI
+ SG_ APP_roadDisturbanceX0 : 8|8@1+ (0.5,0) [0|0] "m" UI
+ SG_ APP_roadDisturbanceX1 : 16|8@1+ (0.5,0) [0|0] "m" UI
+ SG_ APP_roadDisturbanceY0 : 24|8@1+ (0.1,-12.8) [0|0] "m" UI
+ SG_ APP_roadDisturbanceY1 : 32|8@1+ (0.1,-12.8) [0|0] "m" UI
+ SG_ APP_suspensionLevelRequest : 40|4@1+ (1,0) [0|0] "" UI
+
+BO_ 530 BMS_status: 8 APP
+ SG_ BMS_hvacPowerRequest : 0|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_notEnoughPowerForDrive : 1|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_notEnoughPowerForSupport : 2|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_preconditionAllowed : 3|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_updateAllowed : 4|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_cpMiaOnHvs : 5|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_pcsPwmEnabled : 6|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_contactorState : 8|3@1+ (1,0) [0|0] "" UI
+ SG_ BMS_userChargeStatus : 11|3@1+ (1,0) [0|0] "" UI
+ SG_ BMS_batteryInputPower : 14|16@1+ (0.05,0) [0|0] "kW" UI
+ SG_ BMS_chargeRequest : 30|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_state : 32|4@1+ (1,0) [0|0] "" UI
+ SG_ BMS_diLimpRequest : 36|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_okToShipByAir : 37|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_okToShipByLand : 38|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_chgPowerAvailable : 39|12@1+ (0.125,0) [0|0] "kW" UI
+ SG_ BMS_chargeRetryCount : 52|3@1+ (1,0) [0|0] "" UI
+ SG_ BMS_conditioningRequest : 55|1@1+ (1,0) [0|0] "" UI
+ SG_ BMS_smStateRequest : 56|4@1+ (1,0) [0|0] "" UI
+ SG_ BMS_hvState : 60|3@1+ (1,0) [0|0] "" UI
+
+BO_ 537 VCSEC_TPMSData: 8 APP
+ SG_ VCSEC_TPMSDataIndex M : 0|3@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSAutonomyStatus m5 : 3|2@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSCapabilityPressureInAdv0 m0 : 3|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSCapabilityPressureInAdv1 m1 : 3|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSCapabilityPressureInAdv2 m2 : 3|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSCapabilityPressureInAdv3 m3 : 3|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSCapabilityConfigurablePressure0 m0 : 4|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSCapabilityConfigurablePressure1 m1 : 4|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSCapabilityConfigurablePressure2 m2 : 4|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSCapabilityConfigurablePressure3 m3 : 4|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSAutonomyStatusMIATimeS m5 : 5|9@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSPressureRateOfChange0 m0 : 5|10@1- (0.02,0) [0|0] "" UI
+ SG_ VCSEC_TPMSPressureRateOfChange1 m1 : 5|10@1- (0.02,0) [0|0] "" UI
+ SG_ VCSEC_TPMSPressureRateOfChange2 m2 : 5|10@1- (0.02,0) [0|0] "" UI
+ SG_ VCSEC_TPMSPressureRateOfChange3 m3 : 5|10@1- (0.02,0) [0|0] "" UI
+ SG_ VCSEC_TPMSRecommendedColdPressureFront m4 : 8|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSPressure0 m0 : 15|9@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSPressure1 m1 : 15|9@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSPressure2 m2 : 15|9@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSPressure3 m3 : 15|9@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSLastKnownPressureFL m5 : 16|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSRecommendedColdPressureRear m4 : 16|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSFeature0 m4 : 24|3@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSLastKnownPressureFR m5 : 24|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSTemperature0 m0 : 24|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ VCSEC_TPMSTemperature1 m1 : 24|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ VCSEC_TPMSTemperature2 m2 : 24|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ VCSEC_TPMSTemperature3 m3 : 24|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ VCSEC_TPMSFeature1 m4 : 27|3@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSBatVoltage0 m0 : 32|8@1+ (0.01,1.5) [0|0] "V" UI
+ SG_ VCSEC_TPMSBatVoltage1 m1 : 32|8@1+ (0.01,1.5) [0|0] "V" UI
+ SG_ VCSEC_TPMSBatVoltage2 m2 : 32|8@1+ (0.01,1.5) [0|0] "V" UI
+ SG_ VCSEC_TPMSBatVoltage3 m3 : 32|8@1+ (0.01,1.5) [0|0] "V" UI
+ SG_ VCSEC_TPMSFeature0Count m4 : 32|4@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSLastKnownPressureRL m5 : 32|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSFeature0TimeS m4 : 36|11@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSLastKnownPressureRR m5 : 40|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSLocation0 m0 : 40|3@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSLocation1 m1 : 40|3@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSLocation2 m2 : 40|3@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSLocation3 m3 : 40|3@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSTemperatureCompensatedPressure0 m0 : 43|9@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSTemperatureCompensatedPressure1 m1 : 43|9@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSTemperatureCompensatedPressure2 m2 : 43|9@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSTemperatureCompensatedPressure3 m3 : 43|9@1+ (0.025,0) [0|0] "bar" UI
+
+BO_ 602 VCSEC_TPMSDisplay: 8 APP
+ SG_ VCSEC_TPMSDisplayPressureFL : 0|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSDisplayPressureFR : 8|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSDisplayPressureRL : 16|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSDisplayPressureRR : 24|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ VCSEC_TPMSTellTale : 32|2@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSDisplaySoftWarningIndicationFL : 34|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSDisplaySoftWarningIndicationFR : 35|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSDisplaySoftWarningIndicationRL : 36|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSDisplaySoftWarningIndicationRR : 37|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSDisplayHardWarningIndicationFL : 38|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSDisplayHardWarningIndicationFR : 39|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSDisplayHardWarningIndicationRL : 40|1@1+ (1,0) [0|0] "" UI
+ SG_ VCSEC_TPMSDisplayHardWarningIndicationRR : 41|1@1+ (1,0) [0|0] "" UI
+
+BO_ 614 DIR_power: 8 APP
+ SG_ DIR_elecPower : 0|11@1- (0.5,0) [0|0] "kW" UI
+ SG_ DIR_heatPowerOptimal : 16|8@1+ (0.08,0) [0|0] "kW" UI
+ SG_ DIR_heatPowerMax : 24|8@1+ (0.08,0) [0|0] "kW" UI
+ SG_ DIR_heatPowerActual : 32|8@1+ (0.08,0) [0|0] "kW" UI
+ SG_ DIR_excessHeatCommand : 40|8@1+ (0.08,0) [0|0] "kW" UI
+ SG_ DIR_drivePowerMax : 48|9@1+ (1,0) [0|0] "kW" UI
+
+BO_ 741 DIF_power: 8 APP
+ SG_ DIF_elecPower : 0|11@1- (0.5,0) [0|0] "kW" UI
+ SG_ DIF_heatPowerOptimal : 16|8@1+ (0.08,0) [0|0] "kW" UI
+ SG_ DIF_heatPowerMax : 24|8@1+ (0.08,0) [0|0] "kW" UI
+ SG_ DIF_heatPowerActual : 32|8@1+ (0.08,0) [0|0] "kW" UI
+ SG_ DIF_excessHeatCommand : 40|8@1+ (0.08,0) [0|0] "kW" UI
+ SG_ DIF_drivePowerMax : 48|9@1+ (1,0) [0|0] "kW" UI
+
+BO_ 789 DIR_temperature: 8 APP
+ SG_ DIR_tempIndex M : 0|3@1+ (1,0) [0|0] "" UI
+ SG_ DIR_currentWeibullMiles m3 : 3|16@1+ (8,0) [0|0] "" UI
+ SG_ DIR_inverterTQF m0 : 3|2@1+ (1,0) [0|0] "" UI
+ SG_ DIR_fluidInTemp m2 : 8|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_heatsink1Temp m1 : 8|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_initialBurnInVehicleOdometer m4 : 8|32@1+ (0.001,0) [0|0] "" UI
+ SG_ DIR_pcbT m0 : 8|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_heatsink2Temp m1 : 16|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_inverterT m0 : 16|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_normalFetBurnIn m2 : 16|16@1+ (0.00763,0) [0|0] "" UI
+ SG_ DIR_endOfServiceWeibullMiles m3 : 19|16@1+ (8,0) [0|0] "" UI
+ SG_ DIR_heatsink3Temp m1 : 24|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_statorT m0 : 24|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_additionalFetBurnIn m2 : 32|16@1+ (0.00763,0) [0|0] "" UI
+ SG_ DIR_dcCapT m0 : 32|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_pcbTemp2 m1 : 32|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_burnInDamageRatio m3 : 35|9@1+ (0.01,0) [0|0] "" UI
+ SG_ DIR_heatsinkT m0 : 40|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_inverterHS2Est m4 : 40|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_junctionTemp m1 : 40|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_inverterSensorEst m3 : 44|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_inverterInletEst m4 : 48|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_inverterTpct m0 : 48|8@1+ (0.4,0) [0|0] "" UI
+ SG_ DIR_TPak1Temp m1 : 48|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_inverterHS1Est m3 : 52|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_statorHousingTemp m4 : 56|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIR_statorTpct m0 : 56|8@1+ (0.4,0) [0|0] "" UI
+ SG_ DIR_TPak2Temp m1 : 56|8@1+ (1,-40) [0|0] "degC" UI
+
+BO_ 799 TPMS_data: 8 APP
+ SG_ TPMS_pressureFL : 0|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ TPMS_temperatureFL : 8|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ TPMS_pressureFR : 16|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ TPMS_temperatureFR : 24|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ TPMS_pressureRL : 32|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ TPMS_temperatureRL : 40|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ TPMS_pressureRR : 48|8@1+ (0.025,0) [0|0] "bar" UI
+ SG_ TPMS_temperatureRR : 56|8@1+ (1,-40) [0|0] "degC" UI
+
+BO_ 886 DIF_temperature: 8 APP
+ SG_ DIF_tempIndex M : 0|3@1+ (1,0) [0|0] "" UI
+ SG_ DIF_currentWeibullMiles m3 : 3|16@1+ (8,0) [0|0] "" UI
+ SG_ DIF_inverterTQF m0 : 3|2@1+ (1,0) [0|0] "" UI
+ SG_ DIF_fluidInTemp m2 : 8|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_heatsink1Temp m1 : 8|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_initialBurnInVehicleOdometer m4 : 8|32@1+ (0.001,0) [0|0] "" UI
+ SG_ DIF_pcbT m0 : 8|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_heatsink2Temp m1 : 16|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_inverterT m0 : 16|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_normalFetBurnIn m2 : 16|16@1+ (0.00763,0) [0|0] "" UI
+ SG_ DIF_endOfServiceWeibullMiles m3 : 19|16@1+ (8,0) [0|0] "" UI
+ SG_ DIF_heatsink3Temp m1 : 24|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_statorT m0 : 24|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_additionalFetBurnIn m2 : 32|16@1+ (0.00763,0) [0|0] "" UI
+ SG_ DIF_dcCapT m0 : 32|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_pcbTemp2 m1 : 32|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_burnInDamageRatio m3 : 35|9@1+ (0.01,0) [0|0] "" UI
+ SG_ DIF_heatsinkT m0 : 40|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_inverterHS2Est m4 : 40|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_junctionTemp m1 : 40|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_inverterSensorEst m3 : 44|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_inverterInletEst m4 : 48|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_inverterTpct m0 : 48|8@1+ (0.4,0) [0|0] "" UI
+ SG_ DIF_TPak1Temp m1 : 48|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_inverterHS1Est m3 : 52|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_statorHousingTemp m4 : 56|8@1+ (1,-40) [0|0] "degC" UI
+ SG_ DIF_statorTpct m0 : 56|8@1+ (0.4,0) [0|0] "" UI
+ SG_ DIF_TPak2Temp m1 : 56|8@1+ (1,-40) [0|0] "degC" UI
+
+BO_ 950 DI_odometerStatus: 8 APP
+ SG_ DI_odometer : 0|32@1+ (0.001,0) [0|0] "km" UI
+ SG_ DI_obdDriveCycleStatus : 32|1@1+ (1,0) [0|0] "" UI
+
+BO_ 978 BMS_kwhCounter: 8 APP
+ SG_ BMS_kwhDischargeTotal : 0|32@1+ (0.001,0) [0|0] "kWh" UI
+ SG_ BMS_kwhChargeTotal : 32|32@1+ (0.001,0) [0|0] "kWh" UI
+
+BO_ 1022 DI_estimatedBrakeTemp: 8 APP
+ SG_ DI_brakeFLTemp : 12|10@1+ (1,-40) [0|0] "degC" UI
+ SG_ DI_brakeFRTemp : 22|10@1+ (1,-40) [0|0] "degC" UI
+ SG_ DI_brakeRLTemp : 32|10@1+ (1,-40) [0|0] "degC" UI
+ SG_ DI_brakeRRTemp : 42|10@1+ (1,-40) [0|0] "degC" UI
+ SG_ DI_mcpIndex : 52|5@1- (0.05,0.75) [0|0] "" UI
+ SG_ DI_mcpIndexPrimeFilt : 57|7@1- (0.015,0.9) [0|0] "" UI
+
+BO_ 1657 UI_ambientLightingCtrls: 8 APP
+ SG_ UI_ambientLightPowerOverride : 0|1@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbEnableState : 1|2@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbEffectType : 3|5@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbLightingColorHexRed : 8|8@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbLightingColorHexGreen : 16|8@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbLightingColorHexBlue : 24|8@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbBrightnessLevel : 32|7@1+ (1,0) [0|0] "" UI
+ SG_ UI_audioVisualizerState : 40|1@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbTargetDOORFL : 43|1@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbTargetDOORFR : 44|1@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbTargetDOORRL : 45|1@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbTargetDOORRR : 46|1@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbTargetIPFL : 47|1@1+ (1,0) [0|0] "" UI
+ SG_ UI_rgbTargetIPFR : 48|1@1+ (1,0) [0|0] "" UI
 
 CM_ SG_ 1024 APP_closestPedestrian1dX "Unit inferred as metres from vehicle-position validation; per-slot validity remains undocumented.";
 CM_ SG_ 1024 APP_closestPedestrian1dY "Unit inferred as metres from vehicle-position validation; per-slot validity remains undocumented.";
