@@ -518,7 +518,8 @@ def test_assist_applies_limit_without_set_res_confirmation():
   assert assist.state in (AssistState.active, AssistState.adapting)
   assert assist.target == limit
   assert EventNameIQ.speedLimitPreActive not in assist.pending_events
-  assert EventNameIQ.speedLimitChanged in assist.pending_events
+  assert EventNameIQ.speedLimitChanged not in assist.pending_events
+  assert EventNameIQ.speedLimitActive not in assist.pending_events
 
 
 def test_assist_clears_stuck_preactive_without_buttons():

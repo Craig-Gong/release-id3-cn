@@ -222,7 +222,8 @@ class IQSpeedLimitAssist:
         if self._needs_confirmation(resolved_limit, slc_params):
           self._enter_pre_active(resolved_limit, resolved_source)
         else:
-          self._apply_limit(resolved_limit, resolved_source, v_ego, fire_changed_event=True)
+          # No toast on engage: Control still applies the limit quietly.
+          self._apply_limit(resolved_limit, resolved_source, v_ego, fire_changed_event=False)
 
     elif self._state == SpeedLimitAssistState.preActive:
       # Leave preActive without SET/RES: MEB RES does not complete confirm, and
@@ -342,9 +343,7 @@ class IQSpeedLimitAssist:
       return
     if prev == curr:
       return
-    if curr in (SpeedLimitAssistState.adapting, SpeedLimitAssistState.active):
-      if prev not in (SpeedLimitAssistState.adapting, SpeedLimitAssistState.active):
-        self.pending_events.append(EventNameIQ.speedLimitActive)
+    # Skip speedLimitActive ("Active at / Adjusting to"): noisy on every engage.
 
   def _reset_confirmed(self):
     self.target = 0.0
