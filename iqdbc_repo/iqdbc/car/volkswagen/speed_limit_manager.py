@@ -10,7 +10,8 @@ SPEED_SUGGESTED_MAX_HIGHWAY_GER_KPH = 130 # 130 kph in germany
 STREET_TYPE_URBAN = 1
 STREET_TYPE_NONURBAN = 2
 STREET_TYPE_HIGHWAY = 3
-SANITY_CHECK_DIFF_PERCENT_LOWER = 30
+# Instant flash 120→40 (~33%) is rejected; real ramp-down still accepted after VZE_HOLD_S.
+SANITY_CHECK_DIFF_PERCENT_LOWER = 50
 SPEED_LIMIT_UNLIMITED_VZE_KPH = int(round(144 * CV.MS_TO_KPH))
 DECELERATION_PREDICATIVE = 1.0
 SEGMENT_DECAY = 10
@@ -19,6 +20,13 @@ PSD_TYPE_CURV_SPEED = 2
 PSD_CURV_SPEED_DECAY = 4
 PSD_UNIT_KPH = 0
 PSD_UNIT_MPH = 1
+# Camera TSR glitch filter: big jumps / ego-context nonsense need a short stable hold.
+VZE_HOLD_S = 1.5
+VZE_JUMP_KPH = 40
+VZE_HIGHWAY_EGO_KPH = 90
+VZE_HIGHWAY_FALSE_LOW_KPH = 50
+VZE_CITY_EGO_KPH = 55
+VZE_CITY_FALSE_HIGH_KPH = 100
 
 
 class SpeedLimitManager:
@@ -42,7 +50,9 @@ class SpeedLimitManager:
     self.v_limit_psd_next_last = NOT_SET
     self.v_limit_psd_next_decay_time = NOT_SET
     self.v_limit_changed = False
-    
+    self._vze_pending_kph = NOT_SET
+    self._vze_pending_since = 0.0
+
   def _reset_predicative(self):
     self.v_limit_psd_next = NOT_SET
     self.v_limit_psd_next_type = NOT_SET
@@ -70,7 +80,7 @@ class SpeedLimitManager:
   def update(self, current_speed_ms, psd_04, psd_05, psd_06, vze, raining, time_car):
     # try reading speed form traffic sign recognition
     if vze and self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
-      self._receive_speed_limit_vze_meb(vze)
+      self._receive_speed_limit_vze_meb(vze, current_speed_ms)
 
     # read speed unit from PSD_06 and also use it for traffic sign recognition if present (for now always seen on bus 0)
     # the vze location/unit flag is not stable and no corresponding flag has been found yet
@@ -107,6 +117,10 @@ class SpeedLimitManager:
       if v != NOT_SET:
         v_limit_output = v
         break
+
+    # While a suspicious VZE is held back, keep the last accepted limit instead of blanking.
+    if v_limit_output == NOT_SET and self.v_limit_vze_sanity_error and self.v_limit_output_last != NOT_SET:
+      v_limit_output = self.v_limit_output_last
   
     if v_limit_output > self.v_limit_max:
       v_limit_output = self.v_limit_max
@@ -116,14 +130,46 @@ class SpeedLimitManager:
   
     return v_limit_output * CV.KPH_TO_MS
 
-  def _speed_limit_vze_sanitiy_check(self, speed_limit_vze_new):
-    if self.v_limit_output_last == NOT_SET:
-      self.v_limit_vze_sanity_error = False
+  def _vze_needs_hold(self, new_kph, v_ego_kph):
+    """True when the camera reading looks like a glitch or a large transition."""
+    last = self.v_limit_output_last
+    if last != NOT_SET:
+      if abs(new_kph - last) >= VZE_JUMP_KPH:
+        return True
+      if last > 0 and (100.0 * new_kph / last) < SANITY_CHECK_DIFF_PERCENT_LOWER:
+        return True
+    # Highway false urban / city false highway — even with no prior accepted limit.
+    if v_ego_kph >= VZE_HIGHWAY_EGO_KPH and new_kph <= VZE_HIGHWAY_FALSE_LOW_KPH:
+      return True
+    if v_ego_kph <= VZE_CITY_EGO_KPH and new_kph >= VZE_CITY_FALSE_HIGH_KPH:
+      return True
+    return False
+
+  def _speed_limit_vze_sanitiy_check(self, speed_limit_vze_new, v_ego_ms=0.0):
+    # Unlimited sign: fall back to PSD / legal max.
+    if speed_limit_vze_new > SPEED_LIMIT_UNLIMITED_VZE_KPH:
+      self.v_limit_vze_sanity_error = True
+      self._vze_pending_kph = NOT_SET
       return
 
-    diff_p = 100 * speed_limit_vze_new / self.v_limit_output_last
-    self.v_limit_vze_sanity_error = True if diff_p < SANITY_CHECK_DIFF_PERCENT_LOWER else False
-    if speed_limit_vze_new > SPEED_LIMIT_UNLIMITED_VZE_KPH: # unlimited sign detected: use psd logic for setting maximum speed
+    v_ego_kph = float(v_ego_ms) * CV.MS_TO_KPH
+    if not self._vze_needs_hold(speed_limit_vze_new, v_ego_kph):
+      self.v_limit_vze_sanity_error = False
+      self._vze_pending_kph = NOT_SET
+      return
+
+    now = time.monotonic()
+    if self._vze_pending_kph != speed_limit_vze_new:
+      self._vze_pending_kph = speed_limit_vze_new
+      self._vze_pending_since = now
+      self.v_limit_vze_sanity_error = True
+      return
+
+    if now - self._vze_pending_since >= VZE_HOLD_S:
+      # Stable long enough — accept real ramp / highway entry.
+      self.v_limit_vze_sanity_error = False
+      self._vze_pending_kph = NOT_SET
+    else:
       self.v_limit_vze_sanity_error = True
 
   def _receive_speed_unit_psd(self, psd_06):
@@ -154,14 +200,14 @@ class SpeedLimitManager:
 
     return speed
 
-  def _receive_speed_limit_vze_meb(self, vze):
+  def _receive_speed_limit_vze_meb(self, vze, current_speed_ms=0.0):
     v_limit_vze = vze.get("VZE_Verkehrszeichen_1")  # main traffic sign
     if v_limit_vze is None:
       return
     # 0=EU km/h, 1=USA mph, 2=Canada, 3=China km/h
     display_mode = vze.get("VZE_Anzeigemodus", 0)
     v_limit_vze = v_limit_vze * CV.MPH_TO_KPH if display_mode == 1 or self.v_limit_speed_unit_psd == PSD_UNIT_MPH else v_limit_vze
-    self._speed_limit_vze_sanitiy_check(v_limit_vze)
+    self._speed_limit_vze_sanitiy_check(v_limit_vze, current_speed_ms)
     self.v_limit_vze = v_limit_vze
 
   def _receive_current_segment_psd(self, psd_05):
