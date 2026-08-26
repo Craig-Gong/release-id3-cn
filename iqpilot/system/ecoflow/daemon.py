@@ -2,7 +2,8 @@
 """ecoflowd: MEB KL15 edges → EcoFlow Delta 3 12V DC (cloud MQTT).
 
 Watch Klemmen_Status_01 (0x3C0) ZAS_Kl_15 — same bit as hardwared MebIgnitionWatch.
-Rising edge → DC on; falling edge → DC off.
+Rising edge → DC on immediately; falling edge → DC off after a short delay (road-test
+60 s) so brief stops can keep the eGPU warm. Delay is cancelled if KL15 returns.
 
 MQTT is pre-connected as soon as EcoflowEnabled and the network is up, so a KL15
 edge ideally only sends SET (not login). Gated by Params EcoflowEnabled (default
@@ -29,6 +30,8 @@ _SET_RETRY_SLEEP_S = 2.0
 _MQTT_RECONNECT_S = 30.0
 # Background preconnect / reconnect backoff while waiting for WiFi.
 _MQTT_RETRY_S = 5.0
+# After KL15 falls, keep 12V on this long (cancelled if KL15 rises again).
+_DC_OFF_DELAY_S = 60.0
 
 
 def meb_ignition_from_can(packets, now: float, last_on_ts: float | None) -> tuple[bool, float | None]:
@@ -71,6 +74,7 @@ class EcoflowDaemon:
     self._last_connect_attempt = 0.0
     self._last_error_log = 0.0
     self._mqtt_ready_logged = False
+    self._off_deadline: float | None = None
 
   def mqtt_ready(self) -> bool:
     return self.session is not None and self.session._client is not None
@@ -105,7 +109,6 @@ class EcoflowDaemon:
     if self.mqtt_ready():
       return
     if self._mqtt_ready_logged:
-      # Was up before — note drop once, then retry with backoff.
       cloudlog.warning("ecoflowd: MQTT session lost — reconnecting")
       self._mqtt_ready_logged = False
     self._ensure_session(force=False)
@@ -124,8 +127,12 @@ class EcoflowDaemon:
       cloudlog.error(msg)
       self._last_error_log = now
 
+  def _cancel_off_delay(self, reason: str) -> None:
+    if self._off_deadline is not None:
+      cloudlog.info(f"ecoflowd: cancel delayed DC off ({reason})")
+      self._off_deadline = None
+
   def _apply_dc(self, on: bool) -> bool:
-    # Prefer already-warm session; force one attempt if still cold (late WiFi).
     session = self._ensure_session(force=not self.mqtt_ready())
     if session is None:
       cloudlog.warning(
@@ -141,6 +148,8 @@ class EcoflowDaemon:
           cloudlog.info(f"ecoflowd: DC {'on' if on else 'off'} ack={ack}")
           self._applied_dc = on
           self._last_mqtt_ok = time.monotonic()
+          if on:
+            self._off_deadline = None
           return True
       except Exception as e:
         cloudlog.warning(f"ecoflowd: DC set failed attempt={attempt}: {e}")
@@ -152,10 +161,27 @@ class EcoflowDaemon:
       time.sleep(_SET_RETRY_SLEEP_S)
     return False
 
+  def tick_pending_off(self) -> None:
+    """Fire delayed DC off when deadline passes (needs network for MQTT SET)."""
+    if self._off_deadline is None:
+      return
+    now = time.monotonic()
+    if now < self._off_deadline:
+      return
+    self._off_deadline = None
+    cloudlog.info(
+      f"ecoflowd: delayed DC off after {_DC_OFF_DELAY_S:.0f}s"
+      f" (mqtt_ready={self.mqtt_ready()})"
+    )
+    if not self._apply_dc(False):
+      # Keep wanting off; retry via re-assert path once MQTT is back.
+      self._want_dc = False
+
   def tick_ignition(self, ignition: bool) -> None:
     if self._want_dc is None:
-      # First sample: sync desired state without treating as an edge flood.
+      # First sample: sync now (no off-delay on cold start / manager restart).
       self._want_dc = ignition
+      self._off_deadline = None
       cloudlog.info(
         f"ecoflowd: initial KL15={'on' if ignition else 'off'} → DC {'on' if ignition else 'off'}"
         f" (mqtt_ready={self.mqtt_ready()})"
@@ -164,27 +190,40 @@ class EcoflowDaemon:
       return
 
     if ignition == self._want_dc:
-      # Re-assert if we never got a successful apply (network lag after READY).
-      if self._applied_dc != self._want_dc:
-        if time.monotonic() - self._last_mqtt_ok > _MQTT_RECONNECT_S or not self.mqtt_ready():
-          self._apply_dc(self._want_dc)
+      if ignition:
+        # Still on — nothing to do unless we never got DC on.
+        if self._applied_dc is not True:
+          if time.monotonic() - self._last_mqtt_ok > _MQTT_RECONNECT_S or not self.mqtt_ready():
+            self._apply_dc(True)
+      else:
+        # Want off: either waiting on delay, or need to retry failed off.
+        if self._off_deadline is None and self._applied_dc is not False:
+          if time.monotonic() - self._last_mqtt_ok > _MQTT_RECONNECT_S or not self.mqtt_ready():
+            self._apply_dc(False)
       return
 
     self._want_dc = ignition
-    edge = "rising" if ignition else "falling"
-    cloudlog.info(
-      f"ecoflowd: KL15 {edge} → DC {'on' if ignition else 'off'}"
-      f" (mqtt_ready={self.mqtt_ready()})"
-    )
-    self._apply_dc(ignition)
+    if ignition:
+      self._cancel_off_delay("KL15 rising")
+      cloudlog.info(f"ecoflowd: KL15 rising → DC on (mqtt_ready={self.mqtt_ready()})")
+      self._apply_dc(True)
+    else:
+      self._off_deadline = time.monotonic() + _DC_OFF_DELAY_S
+      cloudlog.info(
+        f"ecoflowd: KL15 falling → DC off in {_DC_OFF_DELAY_S:.0f}s"
+        f" (mqtt_ready={self.mqtt_ready()})"
+      )
 
   def close(self) -> None:
     self._teardown_session()
     self._mqtt_ready_logged = False
+    self._off_deadline = None
 
 
 def main() -> None:
-  cloudlog.info("ecoflowd: starting (MQTT preconnect enabled)")
+  cloudlog.info(
+    f"ecoflowd: starting (MQTT preconnect, DC off delay {_DC_OFF_DELAY_S:.0f}s)"
+  )
   daemon = EcoflowDaemon()
   sock = messaging.sub_sock("can", timeout=100)
   last_on_ts: float | None = None
@@ -194,14 +233,12 @@ def main() -> None:
   try:
     while True:
       if not _ecoflow_enabled(daemon.params):
-        # Manager will stop us shortly; drop MQTT and idle.
         if daemon.session is not None:
           cloudlog.info("ecoflowd: EcoflowEnabled off — disconnect")
           daemon.close()
         time.sleep(1.0)
         continue
 
-      # Warm MQTT as soon as WiFi/network is up — before / between KL15 edges.
       daemon.maintain_mqtt()
 
       try:
@@ -211,6 +248,7 @@ def main() -> None:
       now = time.monotonic()
       ignition, last_on_ts = meb_ignition_from_can(packets, now, last_on_ts)
       daemon.tick_ignition(ignition)
+      daemon.tick_pending_off()
       rk.keep_time()
   finally:
     daemon.close()
