@@ -35,6 +35,38 @@ _FLOW_DC_ON = 14
 _FLOW_DC_OFF = 4
 
 
+def _load_local_env_files() -> None:
+  """Load gitignored ecoflow.env into os.environ if keys are missing. Never commit these files."""
+  candidates = [
+    Path(__file__).resolve().parent / "ecoflow.env",
+    Path(__file__).resolve().parent / ".env",
+    Path("/data/ecoflow.env"),
+    Path("/data/params/ecoflow.env"),
+  ]
+  # Monorepo: iq-pilot-id3/demos/ecoflow/ecoflow.env when developing on Mac
+  try:
+    repo_demos = Path(__file__).resolve().parents[4] / "demos" / "ecoflow" / "ecoflow.env"
+    candidates.append(repo_demos)
+  except IndexError:
+    pass
+  for path in candidates:
+    if not path.is_file():
+      continue
+    try:
+      for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+          continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip("'").strip('"')
+        if key and key not in os.environ:
+          os.environ[key] = val
+    except OSError:
+      continue
+    break
+
+
 class EcoflowError(RuntimeError):
   pass
 
@@ -122,6 +154,7 @@ class EcoflowSession:
 
   @classmethod
   def from_env(cls) -> "EcoflowSession":
+    _load_local_env_files()
     phone = os.environ.get("ECOFLOW_PHONE", "").strip()
     email = os.environ.get("ECOFLOW_EMAIL", "").strip()
     password = os.environ.get("ECOFLOW_PASSWORD", "").strip()

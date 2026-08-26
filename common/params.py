@@ -138,7 +138,12 @@ try:
 
   class Params(_NativeParams):
     def _extra_path(self, key) -> str:
-      return os.path.join(self.get_param_path(""), _iqlink_key_name(key))
+      name = _iqlink_key_name(key)
+      # /data/params/d is rebuilt on boot; only native PERSISTENT keys return.
+      # Keep Ecoflow* outside that overlay so credentials survive reboot.
+      if name.startswith("Ecoflow"):
+        return os.path.join("/data/ecoflow_params", name)
+      return os.path.join(self.get_param_path(""), name)
 
     def check_key(self, key):
       if _iqlink_is_extra(key):
