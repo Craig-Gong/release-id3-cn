@@ -4,8 +4,10 @@
 Watch Klemmen_Status_01 (0x3C0) ZAS_Kl_15 — same bit as hardwared MebIgnitionWatch.
 Rising edge → DC on; falling edge → DC off.
 
-Gated by Params EcoflowEnabled (default off). Credentials: EcoflowPhone /
-EcoflowPassword / EcoflowSn (or ECOFLOW_* env). Do not commit secrets.
+MQTT is pre-connected as soon as EcoflowEnabled and the network is up, so a KL15
+edge ideally only sends SET (not login). Gated by Params EcoflowEnabled (default
+off). Credentials: EcoflowPhone / EcoflowPassword / EcoflowSn (or ECOFLOW_* env).
+Do not commit secrets.
 """
 from __future__ import annotations
 
@@ -25,6 +27,8 @@ MEB_IGNITION_HOLD_S = 2.0
 _SET_RETRIES = 3
 _SET_RETRY_SLEEP_S = 2.0
 _MQTT_RECONNECT_S = 30.0
+# Background preconnect / reconnect backoff while waiting for WiFi.
+_MQTT_RETRY_S = 5.0
 
 
 def meb_ignition_from_can(packets, now: float, last_on_ts: float | None) -> tuple[bool, float | None]:
@@ -64,15 +68,20 @@ class EcoflowDaemon:
     self._want_dc: bool | None = None
     self._applied_dc: bool | None = None
     self._last_mqtt_ok = 0.0
+    self._last_connect_attempt = 0.0
     self._last_error_log = 0.0
+    self._mqtt_ready_logged = False
 
-  def _ensure_session(self) -> EcoflowSession | None:
+  def mqtt_ready(self) -> bool:
+    return self.session is not None and self.session._client is not None
+
+  def _ensure_session(self, force: bool = False) -> EcoflowSession | None:
     now = time.monotonic()
-    if self.session is not None and self.session._client is not None:
+    if self.mqtt_ready():
       return self.session
-    if now - self._last_mqtt_ok < 1.0 and self.session is not None:
-      # Still connecting / recently failed — backoff handled by caller.
-      pass
+    if not force and (now - self._last_connect_attempt) < _MQTT_RETRY_S:
+      return None
+    self._last_connect_attempt = now
     try:
       session = EcoflowSession.from_params(self.params)
       session.login()
@@ -80,15 +89,26 @@ class EcoflowDaemon:
       self.session = session
       self._last_mqtt_ok = now
       cloudlog.info(f"ecoflowd: MQTT connected sn={session.sn} host={session.mqtt_url}")
+      self._mqtt_ready_logged = True
       return session
     except EcoflowError as e:
-      self._log_err_throttled(f"ecoflowd: connect failed: {e}")
+      self._log_err_throttled(f"ecoflowd: connect failed (wait for WiFi/network): {e}")
       self._teardown_session()
       return None
     except Exception as e:
       self._log_err_throttled(f"ecoflowd: connect exception: {e}")
       self._teardown_session()
       return None
+
+  def maintain_mqtt(self) -> None:
+    """Keep a warm MQTT session; call every loop, independent of KL15."""
+    if self.mqtt_ready():
+      return
+    if self._mqtt_ready_logged:
+      # Was up before — note drop once, then retry with backoff.
+      cloudlog.warning("ecoflowd: MQTT session lost — reconnecting")
+      self._mqtt_ready_logged = False
+    self._ensure_session(force=False)
 
   def _teardown_session(self) -> None:
     if self.session is not None:
@@ -105,8 +125,12 @@ class EcoflowDaemon:
       self._last_error_log = now
 
   def _apply_dc(self, on: bool) -> bool:
-    session = self._ensure_session()
+    # Prefer already-warm session; force one attempt if still cold (late WiFi).
+    session = self._ensure_session(force=not self.mqtt_ready())
     if session is None:
+      cloudlog.warning(
+        f"ecoflowd: DC {'on' if on else 'off'} deferred — MQTT not ready yet"
+      )
       return False
     for attempt in range(1, _SET_RETRIES + 1):
       try:
@@ -121,7 +145,8 @@ class EcoflowDaemon:
       except Exception as e:
         cloudlog.warning(f"ecoflowd: DC set failed attempt={attempt}: {e}")
         self._teardown_session()
-        session = self._ensure_session()
+        self._mqtt_ready_logged = False
+        session = self._ensure_session(force=True)
         if session is None:
           break
       time.sleep(_SET_RETRY_SLEEP_S)
@@ -131,28 +156,35 @@ class EcoflowDaemon:
     if self._want_dc is None:
       # First sample: sync desired state without treating as an edge flood.
       self._want_dc = ignition
-      cloudlog.info(f"ecoflowd: initial KL15={'on' if ignition else 'off'} → DC {'on' if ignition else 'off'}")
+      cloudlog.info(
+        f"ecoflowd: initial KL15={'on' if ignition else 'off'} → DC {'on' if ignition else 'off'}"
+        f" (mqtt_ready={self.mqtt_ready()})"
+      )
       self._apply_dc(ignition)
       return
 
     if ignition == self._want_dc:
       # Re-assert if we never got a successful apply (network lag after READY).
       if self._applied_dc != self._want_dc:
-        if time.monotonic() - self._last_mqtt_ok > _MQTT_RECONNECT_S or self.session is None:
+        if time.monotonic() - self._last_mqtt_ok > _MQTT_RECONNECT_S or not self.mqtt_ready():
           self._apply_dc(self._want_dc)
       return
 
     self._want_dc = ignition
     edge = "rising" if ignition else "falling"
-    cloudlog.info(f"ecoflowd: KL15 {edge} → DC {'on' if ignition else 'off'}")
+    cloudlog.info(
+      f"ecoflowd: KL15 {edge} → DC {'on' if ignition else 'off'}"
+      f" (mqtt_ready={self.mqtt_ready()})"
+    )
     self._apply_dc(ignition)
 
   def close(self) -> None:
     self._teardown_session()
+    self._mqtt_ready_logged = False
 
 
 def main() -> None:
-  cloudlog.info("ecoflowd: starting")
+  cloudlog.info("ecoflowd: starting (MQTT preconnect enabled)")
   daemon = EcoflowDaemon()
   sock = messaging.sub_sock("can", timeout=100)
   last_on_ts: float | None = None
@@ -168,6 +200,9 @@ def main() -> None:
           daemon.close()
         time.sleep(1.0)
         continue
+
+      # Warm MQTT as soon as WiFi/network is up — before / between KL15 edges.
+      daemon.maintain_mqtt()
 
       try:
         packets = messaging.drain_sock(sock, wait_for_one=False)
