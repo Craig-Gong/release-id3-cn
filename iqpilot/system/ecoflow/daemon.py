@@ -7,9 +7,12 @@ glitches / quick re-READY can cancel. Delay must stay short: after lock the MIB
 hotspot drops and a long deferred MQTT off never sends (60 s road-test failed).
 
 MQTT is pre-connected as soon as EcoflowEnabled and the network is up, so a KL15
-edge ideally only sends SET (not login). Gated by Params EcoflowEnabled (default
-off). Credentials: EcoflowPhone / EcoflowPassword / EcoflowSn (or ECOFLOW_* env).
-Do not commit secrets.
+edge ideally only sends SET (not login). If SET fails while MQTT is down, retry as
+soon as MQTT is ready — do not wait on a stale reconnect timer (that made first
+READY miss DC-on / feel slower).
+
+Gated by Params EcoflowEnabled (default off). Credentials: EcoflowPhone /
+EcoflowPassword / EcoflowSn (or ECOFLOW_* env). Do not commit secrets.
 """
 from __future__ import annotations
 
@@ -27,10 +30,13 @@ MEB_IGNITION_HOLD_S = 2.0
 
 # Retry SET a few times on flaky LTE/hotspot.
 _SET_RETRIES = 3
-_SET_RETRY_SLEEP_S = 2.0
-_MQTT_RECONNECT_S = 30.0
-# Background preconnect / reconnect backoff while waiting for WiFi.
+_SET_RETRY_SLEEP_S = 1.5
+# Background preconnect while waiting for WiFi.
 _MQTT_RETRY_S = 5.0
+# Faster MQTT retry when KL15 wants DC but SET has not landed.
+_MQTT_RETRY_URGENT_S = 1.0
+# While want != applied, re-attempt SET at this cadence (mqtt must be up).
+_APPLY_RETRY_S = 2.0
 # After KL15 falls, keep 12V this long (cancelled if KL15 rises). Keep short:
 # lock kills MIB WiFi; 60 s never got MQTT off. ~5 s + 2 s hold ≈ window while
 # hotspot often still up. Longer short-stop keep-alive → hardware relay.
@@ -73,20 +79,29 @@ class EcoflowDaemon:
     self.session: EcoflowSession | None = None
     self._want_dc: bool | None = None
     self._applied_dc: bool | None = None
-    self._last_mqtt_ok = 0.0
     self._last_connect_attempt = 0.0
+    self._last_apply_attempt = 0.0
     self._last_error_log = 0.0
     self._mqtt_ready_logged = False
+    self._was_mqtt_ready = False
     self._off_deadline: float | None = None
 
   def mqtt_ready(self) -> bool:
     return self.session is not None and self.session._client is not None
 
+  def _needs_apply(self) -> bool:
+    return self._want_dc is not None and self._applied_dc is not self._want_dc
+
+  def _mqtt_retry_interval(self) -> float:
+    if self._needs_apply() and self._want_dc is True:
+      return _MQTT_RETRY_URGENT_S
+    return _MQTT_RETRY_S
+
   def _ensure_session(self, force: bool = False) -> EcoflowSession | None:
     now = time.monotonic()
     if self.mqtt_ready():
       return self.session
-    if not force and (now - self._last_connect_attempt) < _MQTT_RETRY_S:
+    if not force and (now - self._last_connect_attempt) < self._mqtt_retry_interval():
       return None
     self._last_connect_attempt = now
     try:
@@ -94,7 +109,6 @@ class EcoflowDaemon:
       session.login()
       session.connect_mqtt()
       self.session = session
-      self._last_mqtt_ok = now
       cloudlog.info(f"ecoflowd: MQTT connected sn={session.sn} host={session.mqtt_url}")
       self._mqtt_ready_logged = True
       return session
@@ -136,6 +150,7 @@ class EcoflowDaemon:
       self._off_deadline = None
 
   def _apply_dc(self, on: bool) -> bool:
+    self._last_apply_attempt = time.monotonic()
     session = self._ensure_session(force=not self.mqtt_ready())
     if session is None:
       cloudlog.warning(
@@ -144,13 +159,12 @@ class EcoflowDaemon:
       return False
     for attempt in range(1, _SET_RETRIES + 1):
       try:
-        ack = session.set_dc12v(on, wait_s=12.0)
+        ack = session.set_dc12v(on, wait_s=8.0)
         if ack is None:
           cloudlog.warning(f"ecoflowd: DC {'on' if on else 'off'} TIMEOUT attempt={attempt}")
         else:
           cloudlog.info(f"ecoflowd: DC {'on' if on else 'off'} ack={ack}")
           self._applied_dc = on
-          self._last_mqtt_ok = time.monotonic()
           if on:
             self._off_deadline = None
           return True
@@ -176,8 +190,38 @@ class EcoflowDaemon:
       f"ecoflowd: delayed DC off after {_DC_OFF_DELAY_S:.0f}s"
       f" (mqtt_ready={self.mqtt_ready()})"
     )
-    if not self._apply_dc(False):
-      self._want_dc = False
+    # Keep _want_dc False; retry path lands SET when MQTT is up.
+    self._want_dc = False
+    self._apply_dc(False)
+
+  def tick_mqtt_ready(self) -> None:
+    """When MQTT just came up, immediately land any pending SET (first READY fix)."""
+    ready = self.mqtt_ready()
+    became_ready = ready and not self._was_mqtt_ready
+    self._was_mqtt_ready = ready
+    if not became_ready:
+      return
+    if not self._needs_apply():
+      return
+    cloudlog.info(
+      f"ecoflowd: MQTT ready → apply pending DC {'on' if self._want_dc else 'off'}"
+    )
+    self._apply_dc(bool(self._want_dc))
+
+  def tick_retry_apply(self) -> None:
+    """Periodic retry while want != applied (no 30s MQTT-ok gate)."""
+    if not self._needs_apply():
+      return
+    if not self.mqtt_ready():
+      return
+    now = time.monotonic()
+    if (now - self._last_apply_attempt) < _APPLY_RETRY_S:
+      return
+    cloudlog.info(
+      f"ecoflowd: retry DC {'on' if self._want_dc else 'off'}"
+      f" (want={self._want_dc} applied={self._applied_dc})"
+    )
+    self._apply_dc(bool(self._want_dc))
 
   def tick_ignition(self, ignition: bool) -> None:
     if self._want_dc is None:
@@ -192,14 +236,7 @@ class EcoflowDaemon:
       return
 
     if ignition == self._want_dc:
-      if ignition:
-        if self._applied_dc is not True:
-          if time.monotonic() - self._last_mqtt_ok > _MQTT_RECONNECT_S or not self.mqtt_ready():
-            self._apply_dc(True)
-      else:
-        if self._off_deadline is None and self._applied_dc is not False:
-          if time.monotonic() - self._last_mqtt_ok > _MQTT_RECONNECT_S or not self.mqtt_ready():
-            self._apply_dc(False)
+      # Pending SET / retries handled by tick_mqtt_ready + tick_retry_apply.
       return
 
     self._want_dc = ignition
@@ -217,12 +254,14 @@ class EcoflowDaemon:
   def close(self) -> None:
     self._teardown_session()
     self._mqtt_ready_logged = False
+    self._was_mqtt_ready = False
     self._off_deadline = None
 
 
 def main() -> None:
   cloudlog.info(
-    f"ecoflowd: starting (MQTT preconnect, DC off delay {_DC_OFF_DELAY_S:.0f}s)"
+    f"ecoflowd: starting (MQTT preconnect, DC off delay {_DC_OFF_DELAY_S:.0f}s, "
+    f"urgent MQTT retry {_MQTT_RETRY_URGENT_S:.0f}s)"
   )
   daemon = EcoflowDaemon()
   sock = messaging.sub_sock("can", timeout=100)
@@ -240,6 +279,7 @@ def main() -> None:
         continue
 
       daemon.maintain_mqtt()
+      daemon.tick_mqtt_ready()
 
       try:
         packets = messaging.drain_sock(sock, wait_for_one=False)
@@ -249,6 +289,7 @@ def main() -> None:
       ignition, last_on_ts = meb_ignition_from_can(packets, now, last_on_ts)
       daemon.tick_ignition(ignition)
       daemon.tick_pending_off()
+      daemon.tick_retry_apply()
       rk.keep_time()
   finally:
     daemon.close()
