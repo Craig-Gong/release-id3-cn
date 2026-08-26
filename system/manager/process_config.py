@@ -83,6 +83,20 @@ def iqlink_enabled(params: Params) -> bool:
 def iqlink_needed(started: bool, params: Params, CP: car.CarParams) -> bool:
   return iqlink_enabled(params)
 
+def ecoflow_enabled(params: Params) -> bool:
+  # Default OFF (missing file / fresh params) — must set credentials first.
+  try:
+    raw = params.get("EcoflowEnabled")
+  except Exception:
+    return False
+  if raw is None:
+    return False
+  return params.get_bool("EcoflowEnabled")
+
+def ecoflow_needed(started: bool, params: Params, CP: car.CarParams) -> bool:
+  # Always run while enabled so we see KL15 off→on edges (including offroad).
+  return ecoflow_enabled(params)
+
 def navd_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   # When IQ-link BLE is on, iqlinkd owns iqNavState — do not run Mapbox navd.
   if iqlink_enabled(params):
@@ -219,6 +233,9 @@ procs += [
   BundleProcess("navrenderd", "iqpilot_navd_private", "iqpilot_private.navd.navrenderd", navrenderd_onroad, restart_if_crash=True),
   BundleProcess("iqmapd", "iqpilot_navd_private", "iqpilot_private.navd.iqmapd", iqmapd_onroad, restart_if_crash=True),
   PythonProcess("iqlinkd", "iqpilot.iqlink.bridge", iqlink_needed, restart_if_crash=True),
+
+  # EcoFlow Delta 3: KL15 → cloud MQTT toggle of 12V DC (chestnut / dock power path).
+  PythonProcess("ecoflowd", "iqpilot.system.ecoflow.daemon", ecoflow_needed, restart_if_crash=True),
 
   # work-zone detector for Speed Limit Assist
   PythonProcess("constructiond", "iqpilot.selfdrive.constructiond", constructiond_onroad, restart_if_crash=True),
