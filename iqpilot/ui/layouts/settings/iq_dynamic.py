@@ -112,6 +112,13 @@ class IQDynamicLayout(Widget):
         return "-- m"
       return "Off" if meters <= 0 else f"{meters:.1f} m"
 
+    def lead_stop_label(value: float | int) -> str:
+      try:
+        meters = float(value)
+      except (TypeError, ValueError):
+        return "-- m"
+      return f"{meters:.1f} m"
+
     self._blend_radar_toggle = _toggle_item(
       "Blend IQ.Pilot + Stock ACC Radar",
       "VW PQ only. Keep the factory ACC radar engaged and use its acceleration as IQ.Dynamic's ACC "
@@ -167,6 +174,17 @@ class IQDynamicLayout(Widget):
         "every stop so it settles gently instead of rocking on its suspension. Yields full braking authority when a lead "
         "is close. Override with the accelerator.",
         "IQForceStops",
+      ),
+      _option_item(
+        "Lead Stop Distance",
+        "How far behind a stopped lead to settle (Lead MPC). Default 4.0 m. Does not change cruise following time gap. "
+        "Custom Stop Distance is an extra nudge on top of this.",
+        "IQLeadStopDistance",
+        200,
+        600,
+        step=50,
+        use_float_scaling=True,
+        label_callback=lead_stop_label,
       ),
       _option_item(
         "IQ Traffic Stop Offset",

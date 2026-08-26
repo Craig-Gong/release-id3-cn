@@ -1055,6 +1055,13 @@ class CruiseLayout(Widget):
         return "-- m"
       return "Off" if meters <= 0 else f"{meters:.1f} m"
 
+    def lead_stop_label(value: float | int) -> str:
+      try:
+        meters = float(value)
+      except (TypeError, ValueError):
+        return "-- m"
+      return f"{meters:.1f} m"
+
     items = [
       IQListItem(title=lambda: tr("Speed Limit Control"), description="", action_item=None, inline=True,
                  title_color=rl.Color(16, 185, 169, 255)),
@@ -1200,9 +1207,20 @@ class CruiseLayout(Widget):
         "IQForceStops",
       ),
       self._option_item(
+        "Lead Stop Distance",
+        "How far behind a stopped lead to settle (Lead MPC). Default 4.0 m. Does not change cruise following time gap. "
+        "Custom Stop Distance is an extra nudge on top of this.",
+        "IQLeadStopDistance",
+        200,
+        600,
+        step=50,
+        use_float_scaling=True,
+        label_callback=lead_stop_label,
+      ),
+      self._option_item(
         "IQ Custom Stop Distance",
-        "Nudge how far back IQ.Pilot stops behind a stopped lead vehicle or a model-held stop (red light). Positive "
-        "stops further back, negative settles in closer. Works whether IQ Force Stops is on or off.",
+        "Extra nudge on top of Lead Stop Distance for a stopped lead or model-held stop. Positive stops further back, "
+        "negative settles in closer. 0 is no extra offset.",
         "IQCustomStopDistance",
         -2,
         2,

@@ -32,15 +32,18 @@ IQLINK_INT_KEYS = {"IqlinkBleLinkState"}
 # Keys not in the prebuilt params_pyx.so. Default ON: hold gas raises MAX.
 # IQTrafficStopOffset: meters short of a vision red/model stop (not follow gap).
 # Stored as a float so the UI can step 0.5 m. Old integer files ("3") still read as 3.0.
+# IQLeadStopDistance: parked follow gap behind a stopped lead (Lead MPC STOP_DISTANCE).
 EXTRA_PARAM_DEFAULTS = {
   "AutoGasSyncSpeed": "1",
   "IQTrafficStopOffset": "3",
+  "IQLeadStopDistance": "4",
 }
 EXTRA_BOOL_KEYS = {
   "AutoGasSyncSpeed",
 }
 EXTRA_FLOAT_KEYS = {
   "IQTrafficStopOffset",
+  "IQLeadStopDistance",
 }
 
 

@@ -57,14 +57,27 @@ T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
-# Parked follow gap. evo uses 6.0 (US). 3.0 matched codegen but stopped ~2 m;
-# 4.0 is a runtime-only bump (stop_delta=+1.0 vs GENERATED 3.0).
+# Parked follow gap. evo uses 6.0 (US). Codegen Acados still has 3.0 baked in;
+# runtime STOP_DISTANCE (default 4.0, UI: IQLeadStopDistance) is applied via stop_delta.
 # Personality t_follow vanishes at standstill, so Aggressive cannot close that gap.
 STOP_DISTANCE = 4.0
 GENERATED_STOP_DISTANCE = 3.0
+LEAD_STOP_DISTANCE_PARAM = "IQLeadStopDistance"
+MIN_LEAD_STOP_DISTANCE = 2.0
+MAX_LEAD_STOP_DISTANCE = 6.0
+LEAD_STOP_DISTANCE_STEP = 0.5
 MIN_X_LEAD_FACTOR = 0.5
 LEAD_PULLAWAY_VREL = 0.5
 LEAD_PULLAWAY_ABRAKE = -0.5
+
+
+def sanitize_lead_stop_distance_m(raw) -> float:
+  try:
+    value = float(raw)
+  except (TypeError, ValueError):
+    return float(STOP_DISTANCE)
+  bounded = min(max(value, MIN_LEAD_STOP_DISTANCE), MAX_LEAD_STOP_DISTANCE)
+  return round(bounded / LEAD_STOP_DISTANCE_STEP) * LEAD_STOP_DISTANCE_STEP
 
 def get_jerk_factor(personality=log.LongitudinalPersonality.standard):
   if personality==log.LongitudinalPersonality.relaxed:
@@ -222,6 +235,8 @@ class LongitudinalMpc:
     self.dt = dt
     self._params = Params()
     self.new_lead_mpc = self._read_new_lead_mpc()
+    self.stop_distance = float(STOP_DISTANCE)
+    self._param_frame = 0
     self.solver = AcadosOcpSolverCython(MODEL_NAME, ACADOS_SOLVER_TYPE, N)
     self.reset()
     self.source = LongitudinalPlanSource.cruise
@@ -231,6 +246,16 @@ class LongitudinalMpc:
       return self._params.get_bool("newLeadMpc")
     except UnknownKeyName:
       return True
+
+  def _read_stop_distance(self) -> float:
+    try:
+      stored = self._params.get(LEAD_STOP_DISTANCE_PARAM, return_default=True)
+      snapped = sanitize_lead_stop_distance_m(stored if stored is not None else STOP_DISTANCE)
+      if stored is not None and snapped != float(stored):
+        self._params.put(LEAD_STOP_DISTANCE_PARAM, snapped)
+      return snapped
+    except (TypeError, ValueError, UnknownKeyName):
+      return float(STOP_DISTANCE)
 
   def reset(self):
     self.solver.reset()
@@ -359,6 +384,9 @@ class LongitudinalMpc:
 
   def update(self, modelV2, radarstate, personality=log.LongitudinalPersonality.standard):
     self.new_lead_mpc = self._read_new_lead_mpc()
+    if self._param_frame % int(3 / self.dt) == 0:
+      self.stop_distance = self._read_stop_distance()
+    self._param_frame += 1
     t_follow = get_T_FOLLOW(personality)
     model_leads = modelV2.leadsV3
 
@@ -381,7 +409,7 @@ class LongitudinalMpc:
     # distance that lead needs as a minimum. We can add that to the current distance
     # and then treat that as a stopped car/obstacle at this new distance.
     # Shift obstacle closer by the STOP_DISTANCE delta vs codegen (no Acados regen).
-    stop_delta = STOP_DISTANCE - GENERATED_STOP_DISTANCE
+    stop_delta = self.stop_distance - GENERATED_STOP_DISTANCE
     lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1]) - stop_delta
     lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1]) - stop_delta
 
