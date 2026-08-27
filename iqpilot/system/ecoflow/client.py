@@ -530,3 +530,21 @@ class EcoflowSession:
       "pow_in_sum_w",
     )
     return {k: self._telemetry[k] for k in keys if k in self._telemetry}
+
+  def dc12v_is_on(self) -> bool | None:
+    """Reported 12V DC state from MQTT telemetry. None = no reading yet."""
+    cfg = self._telemetry.get("cfg_dc12v_out_open")
+    if cfg is not None:
+      return int(cfg) == 1
+    flow = self._telemetry.get("flow_info_12v")
+    if flow == _FLOW_DC_ON:
+      return True
+    if flow == _FLOW_DC_OFF:
+      return False
+    return None
+
+  def dc12v_is_off(self) -> bool | None:
+    state = self.dc12v_is_on()
+    if state is None:
+      return None
+    return not state
