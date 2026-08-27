@@ -34,7 +34,7 @@ def get_sanitize_int_param(key, min_val, max_val, params):
   return bounded
 
 
-from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_change import NAV_EXIT_COMMIT_DISTANCE
+from openpilot.iqpilot.selfdrive.selfdrived.nav_exit_alert import nav_exit_alert_allowed
 from openpilot.iqpilot.vehicle.vehicle import VehicleEvents
 from openpilot.iqpilot.selfdrive.car.gap_button_actions import GapButtonActions
 from openpilot.iqpilot.selfdrive.selfdrived.events import IQEvents
@@ -127,7 +127,8 @@ class SelfdriveD(GapButtonActions):
     self.is_metric = self.params.get_bool("IsMetric")
     self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
     self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
-    self.nav_exit_lane_change = self._read_nav_exit_lane_change()
+    self._nav_exit_alert_t = -1e9
+    self._nav_exit_alert_dir = 0
     self.model_download_pending = self.params.get("ModelManager_DownloadIndex") is not None
 
     car_recognized = self.CP.brand != 'mock'
@@ -223,12 +224,6 @@ class SelfdriveD(GapButtonActions):
     else:
       self._cached_model_event_names = ()
 
-  def _read_nav_exit_lane_change(self) -> bool:
-    try:
-      return self.params.get_bool("NavExitLaneChange")
-    except Exception:
-      return False
-
   def _refresh_cached_nav_events(self) -> None:
     if not self.sm.updated['iqNavState']:
       return
@@ -240,14 +235,21 @@ class SelfdriveD(GapButtonActions):
         nav_events.append(custom.IQOnroadEvent.EventName.navTurnLeft)
       elif getattr(nav_state, 'navTurnDesireDirection', 0) == 2:
         nav_events.append(custom.IQOnroadEvent.EventName.navTurnRight)
-      elif self.nav_exit_lane_change and \
-          getattr(nav_state, 'nextManeuverValid', False) and \
-          getattr(nav_state, 'nextManeuverType', custom.IQNavState.ManeuverType.none) == custom.IQNavState.ManeuverType.exit and \
-          0.0 < float(getattr(nav_state, 'nextManeuverDistance', 0.0)) <= NAV_EXIT_COMMIT_DISTANCE:
-        if getattr(nav_state, 'nextManeuverDirection', 0) == 1:
-          nav_events.append(custom.IQOnroadEvent.EventName.navExitLeft)
-        elif getattr(nav_state, 'nextManeuverDirection', 0) == 2:
-          nav_events.append(custom.IQOnroadEvent.EventName.navExitRight)
+      else:
+        try:
+          cs = self.sm['carState']
+        except Exception:
+          cs = None
+        ok, dir_raw = nav_exit_alert_allowed(
+          nav_state, cs, time.monotonic(), self._nav_exit_alert_t, self._nav_exit_alert_dir,
+        )
+        if ok:
+          if dir_raw == 1:
+            nav_events.append(custom.IQOnroadEvent.EventName.navExitLeft)
+          elif dir_raw == 2:
+            nav_events.append(custom.IQOnroadEvent.EventName.navExitRight)
+          self._nav_exit_alert_t = time.monotonic()
+          self._nav_exit_alert_dir = dir_raw
 
     if getattr(nav_state, 'cameraValid', False):
       nav_events.append(custom.IQOnroadEvent.EventName.speedCameraAhead)
@@ -757,7 +759,6 @@ class SelfdriveD(GapButtonActions):
         max(log.LongitudinalPersonality.schema.enumerants.values()),
         self.params,
       )
-      self.nav_exit_lane_change = self._read_nav_exit_lane_change()
       self.model_download_pending = self.params.get("ModelManager_DownloadIndex") is not None
 
       self.aol.read_params()

@@ -23,11 +23,11 @@ def _build_planner(*, nav_stop=False, forcing_stop=False, model_stop=False):
   return planner
 
 
-def _sm(*, standstill=True, gas=False, accel=False, v_ego=0.0, light="none"):
+def _sm(*, standstill=True, gas=False, accel=False, v_ego=0.0, light="none", remain_s=0.0):
   return {
     "carState": SimpleNamespace(standstill=standstill, gasPressed=gas, vEgo=v_ego),
     "iqCarState": SimpleNamespace(accelPressed=accel),
-    "iqNavState": SimpleNamespace(trafficLight=light),
+    "iqNavState": SimpleNamespace(trafficLight=light, trafficLightRemainS=remain_s),
   }
 
 
@@ -121,3 +121,30 @@ def test_nav_green_releases_despite_vision_stop():
   should_stop, a_target = planner.apply_standstill_hold(True, -0.4, 0.0, sm_green)
   assert should_stop is False
   assert planner._standstill_hold is False
+
+
+def test_remain_s_1_releases_immediately():
+  planner = _build_planner(nav_stop=True, model_stop=True)
+  planner.apply_standstill_hold(True, -2.0, 0.0, _sm(light="red", remain_s=8.0))
+  planner.nav_stop_request = False
+  should_stop, a_target = planner.apply_standstill_hold(True, -0.4, 0.0, _sm(light="red", remain_s=1.0))
+  assert should_stop is False
+  assert a_target == -0.4
+  assert planner._standstill_hold is False
+  assert planner._green_launch is True
+
+
+def test_left_arrow_red_remain_1_releases_immediately():
+  planner = _build_planner(nav_stop=False)
+  sm = _sm(light="red", remain_s=1.0)
+  sm["iqNavState"] = SimpleNamespace(
+    trafficLight="red",
+    trafficLightRemainS=1.0,
+    nextManeuverType=SimpleNamespace(name="turn"),
+    nextManeuverDirection=SimpleNamespace(name="turnLeft"),
+    nextManeuverDistance=40.0,
+  )
+  should_stop, a_target = planner.apply_standstill_hold(True, -0.4, 0.0, sm)
+  assert should_stop is False
+  assert planner._standstill_hold is False
+  assert planner._green_launch is True

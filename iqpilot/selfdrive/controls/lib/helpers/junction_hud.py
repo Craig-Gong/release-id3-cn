@@ -3,7 +3,7 @@
 C3XL and the MEB cluster share this: show a stop-ahead cue when we are
 stopping for a nav light or a vision model stop, and there is no lead.
 IQ-link off has no color; IQ-link on may add red/yellow on the C3XL bar.
-remainS is never a go gate.
+remainS==1 is a launch gate in protocol/hold; HUD still uses lamp color.
 """
 
 _LIGHTS = ("red", "yellow", "green")

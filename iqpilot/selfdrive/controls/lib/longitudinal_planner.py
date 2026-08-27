@@ -39,6 +39,25 @@ _NAV_RED_DECEL = -1.9
 _STANDSTILL_HOLD_RELEASE_S = 1.0
 _STANDSTILL_HOLD_SPEED = 1.0  # m/s: below this, a red-decel approach becomes a hard hold
 
+
+def nav_long_blocked_by_gear(gear) -> bool:
+  """Park/reverse must not inherit leftover IQlink speedTarget."""
+  token = str(getattr(gear, "name", None) or "").split(".")[-1].lower()
+  if token in ("park", "reverse"):
+    return True
+  if token:
+    return False
+  try:
+    return int(gear) in (1, 4)  # cereal GearShifter.park / reverse
+  except (TypeError, ValueError):
+    return False
+
+
+def nav_long_blocked(gear, *, link_warn: bool = False) -> bool:
+  """Drop nav long while BLE is stale (snapshot kept, speed no longer live) or in P/R."""
+  return nav_long_blocked_by_gear(gear) or bool(link_warn)
+
+
 class LongitudinalPlannerIQ:
   def __init__(self, CP: structs.CarParams, CP_IQ: structs.IQCarParams, mpc):
     self.events_iq = IQEvents()
@@ -126,6 +145,17 @@ class LongitudinalPlannerIQ:
     if self.nav_valid and self.nav_accel_target <= _NAV_RED_DECEL and v_ego <= _STANDSTILL_HOLD_SPEED:
       self.nav_stop_request = True
 
+    link_warn = False
+    if self._params is not None:
+      try:
+        link_warn = bool(self._params.get_bool("IqlinkLinkWarn"))
+      except Exception:
+        link_warn = False
+    block_nav = nav_long_blocked(CS.gearShifter, link_warn=link_warn)
+    if block_nav:
+      # Keep HUD snapshot; do not execute leftover nav speed / red-stop.
+      self.nav_stop_request = False
+
     has_follow_lead = False
     try:
       lead = sm['radarState'].leadOne
@@ -174,7 +204,7 @@ class LongitudinalPlannerIQ:
       LongitudinalPlanSource.speedLimitAssist: (slc_v_cruise, a_ego),
     }
     # Follow-lead owns cruise pressure; a nav red-stop still publishes so the car stays held.
-    if self.nav_valid and (self.nav_stop_request or not has_follow_lead):
+    if self.nav_valid and (self.nav_stop_request or not has_follow_lead) and not block_nav:
       if iqlink_on:
         if self.nav_stop_request:
           nav_v = 0.0
@@ -186,7 +216,7 @@ class LongitudinalPlannerIQ:
       else:
         targets[LongitudinalPlanSource.nav] = (self.nav_speed_target, self.nav_accel_target)
 
-    if iqlink_on and self.nav_valid and (not has_follow_lead or self.nav_stop_request):
+    if iqlink_on and self.nav_valid and (not has_follow_lead or self.nav_stop_request) and not block_nav:
       targets.pop(LongitudinalPlanSource.cruise, None)
       if LongitudinalPlanSource.speedLimitAssist in targets and LongitudinalPlanSource.nav in targets:
         nav_exec = targets[LongitudinalPlanSource.nav][0]
@@ -207,7 +237,7 @@ class LongitudinalPlannerIQ:
     self.source = min(targets, key=lambda k: targets[k][0])
     self.output_v_target, self.output_a_target = targets[self.source]
     after_force = self._apply_force_stop(self.output_v_target, v_ego, sm, slc_apply_enabled)
-    if iqlink_on and self.nav_stop_request:
+    if iqlink_on and self.nav_stop_request and not block_nav:
       self.output_v_target = min(after_force, 0.0)
       if self.nav_accel_target < self.output_a_target:
         self.output_a_target = self.nav_accel_target
@@ -316,8 +346,8 @@ class LongitudinalPlannerIQ:
 
     Arm on nav red-stop, Force Stop, planner shouldStop, or vision model-stop.
     Release does not wait for sticky vision-stop at the line (short E2E path).
-    IQ-link green is the go signal: ignore shouldStop/vision for release, and do not
-    re-arm from them while still stopped. Gas always wins.
+    Explicit remainS==1 launches immediately (no 1 s dwell). APK green still waits
+    ~1 s of stable go. Gas always wins.
     """
     cs = sm['carState']
     standstill = bool(getattr(cs, "standstill", False) or v_ego <= 0.3)
@@ -327,13 +357,20 @@ class LongitudinalPlannerIQ:
     except Exception:
       accel_pressed = False
     gas = bool(getattr(cs, "gasPressed", False) or accel_pressed)
+    remain_go = False
+    try:
+      remain_go = abs(float(getattr(sm['iqNavState'], "trafficLightRemainS", 0.0) or 0.0) - 1.0) < 1e-6
+    except Exception:
+      remain_go = False
     nav_hold = bool(self.nav_stop_request)
     try:
       # Left-arrow red: keep hold even if the approach curve still has speedTarget > 0.
-      # remainS is never a go gate; APK green still releases below.
-      left_red = nav_turn_pending(sm['iqNavState'], side="left") and light_token(
-        getattr(sm['iqNavState'], "trafficLight", None)
-      ) == "red"
+      # remainS==1 / APK green still releases below.
+      left_red = (
+        (not remain_go)
+        and nav_turn_pending(sm['iqNavState'], side="left")
+        and light_token(getattr(sm['iqNavState'], "trafficLight", None)) == "red"
+      )
       nav_hold = nav_hold or left_red
     except Exception:
       pass
@@ -347,6 +384,7 @@ class LongitudinalPlannerIQ:
       nav_green = light_token(getattr(sm['iqNavState'], "trafficLight", None)) == "green"
     except Exception:
       nav_green = False
+    nav_go = bool(nav_green or remain_go)
 
     if not hasattr(self, "_green_launch"):
       self._green_launch = False
@@ -360,8 +398,16 @@ class LongitudinalPlannerIQ:
       self._hold_released = False
       return should_stop, a_target
 
+    # IQ-link: remainS==1 is an immediate go (skip the green dwell timer).
+    if remain_go and not force:
+      self._standstill_hold = False
+      self._standstill_hold_s = 0.0
+      self._hold_released = True
+      self._green_launch = True
+      return False, a_target
+
     if standstill:
-      if nav_green:
+      if nav_go:
         arm = force
       elif self._hold_released or self._green_launch:
         arm = should_stop or nav_hold or force
@@ -372,14 +418,14 @@ class LongitudinalPlannerIQ:
         self._green_launch = False
         self._hold_released = False
 
-    if self._green_launch and nav_green and not nav_hold and not force:
+    if self._green_launch and nav_go and not nav_hold and not force:
       return False, a_target
 
     if not self._standstill_hold:
       self._standstill_hold_s = 0.0
       return should_stop, a_target
 
-    if nav_green and not force:
+    if nav_go and not force:
       can_go = True
     else:
       can_go = (not should_stop) and (not nav_hold) and (not force)
@@ -395,7 +441,7 @@ class LongitudinalPlannerIQ:
     self._standstill_hold = False
     self._standstill_hold_s = 0.0
     self._hold_released = True
-    if nav_green:
+    if nav_go:
       self._green_launch = True
       return False, a_target
     return should_stop, a_target

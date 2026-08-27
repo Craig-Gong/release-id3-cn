@@ -1,4 +1,4 @@
-﻿"""Unit tests for iqlink protocol mapping.
+"""Unit tests for iqlink protocol mapping.
 
 Run: pytest iqpilot/iqlink/tests/test_protocol.py
 """
@@ -172,8 +172,8 @@ def test_red_remain_3_still_stops():
   assert f["trafficLight"] == "red"
 
 
-def test_red_remain_1_still_stops():
-  # Countdown==1 is still red: do not release nav stop / HMS before green.
+def test_red_remain_1_is_go():
+  # Explicit remainS==1 lifts nav red-stop (IQ-link launch). Do not fake green.
   raw = {
     "nRoadLimitSpeed": 60,
     "trafficLight": "red",
@@ -182,9 +182,10 @@ def test_red_remain_1_still_stops():
   }
   f = map_carrot_to_nav_fields(raw)
   assert f is not None
-  assert f["accelTarget"] == -2.0
-  assert f["speedTarget"] < 60 / 3.6
+  assert f["accelTarget"] != -2.0
+  assert abs(f["speedTarget"] - 60 / 3.6) < 1e-3
   assert f["trafficLight"] == "red"
+  assert f["trafficLightRemainS"] == 1.0
   assert f["longitudinalEngaged"] is True
 
 
@@ -241,6 +242,22 @@ def test_red_light_right_turn_far_still_stops():
   assert f["rightTurnPending"] is False
   assert f["accelTarget"] == -2.0
   assert f["speedTarget"] < 60 / 3.6
+
+
+def test_left_turn_red_remain_1_is_go():
+  raw = {
+    "nRoadLimitSpeed": 60,
+    "trafficLight": "red",
+    "trafficLightDistM": 25,
+    "trafficLightRemainS": 1,
+    "nTBTTurnType": 1,
+    "nTBTDist": 40,
+  }
+  f = map_carrot_to_nav_fields(raw)
+  assert f is not None
+  assert f["leftTurnPending"] is True
+  assert f["accelTarget"] != -2.0
+  assert f["trafficLight"] == "red"
 
 
 def test_left_turn_red_stays_nav_stop():

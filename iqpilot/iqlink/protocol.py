@@ -1,4 +1,4 @@
-﻿"""Map CP搭子 / Carrot flat nav JSON → iqNavState field dict.
+"""Map CP搭子 / Carrot flat nav JSON → iqNavState field dict.
 
 Called by: iqpilot/iqlink/bridge.py, iqpilot/iqlink/tests/test_protocol.py
 """
@@ -192,19 +192,20 @@ def map_carrot_to_nav_fields(
 
   light = _s(data, "trafficLight", "none").strip().lower()
   light_dist = _f(data, "trafficLightDistM")
-  # APK red countdown (Gaode redLightCountDownSeconds). HUD only —
-  # remainS is never a go gate (remainS==1 must not release). Green is the go signal.
+  # APK red countdown (Gaode redLightCountDownSeconds). HUD always shows remainS.
+  # Explicit remainS==1 is the IQ-link go signal; omitted/0 stays red (BleCrypto omits zero).
   remain_s = int(_f(data, "trafficLightRemainS"))
+  remain_go = "trafficLightRemainS" in data and remain_s == 1
   vision_stop = bool(vision_stop) or bool(data.get("visionStop"))
   # China RTOR: only skip nav red/yellow when the right turn is at this light.
   right_turn_pending = bucket == "turn_right" and 0.0 < turn_dist <= LIGHT_TURN_WINDOW_M
   left_turn_pending = bucket == "turn_left" and 0.0 < turn_dist <= LIGHT_TURN_WINDOW_M
-  # Stay in red-stop through the whole APK countdown. Early RELEASE caused pre-green
-  # creep then a model brake slam. remainS is never a go gate. Never fake green.
+  # remainS==1 lifts nav red-stop so standstill hold can launch like green.
+  # Never fake trafficLight="green". Omitted remainS keeps the red hold.
   stop_for_light = False
   if not right_turn_pending:
     if light == "red":
-      stop_for_light = True
+      stop_for_light = not remain_go
     elif light == "yellow" and light_dist > 0 and light_dist <= _YELLOW_STOP_DIST_M:
       stop_for_light = True
 

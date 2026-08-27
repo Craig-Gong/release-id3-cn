@@ -107,3 +107,21 @@ def test_ingest_ignores_unchanged_payload():
   assert b._last_rx > t0  # heartbeat refreshed
   b.ingest({"nRoadLimitSpeed": 80})
   assert abs(b._latest["speedTarget"] - 80 / 3.6) < 1e-3
+
+
+def test_ingest_disables_nav_exit_alc():
+  p = FakeParams({"NavExitLaneChange": True, "AutoLaneChangeTimer": 1})
+  b = IqlinkBridge.__new__(IqlinkBridge)
+  b.params = p
+  b._lock = threading.Lock()
+  b._latest = None
+  b._raw_payload = None
+  b._raw_fp = None
+  b._last_rx = 0.0
+  b._command_index = 0
+  b._last_lc_cmd = False
+  b._warn_logged = False
+  b.sm = type("SM", (), {"update": lambda *a, **k: None, "alive": {}})()
+  b.ingest({"nRoadLimitSpeed": 60})
+  assert p.get_bool("NavExitLaneChange") is False
+  assert p.values.get("AutoLaneChangeTimer") == 1  # not forced to DIRECT

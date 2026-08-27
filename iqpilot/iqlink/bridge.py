@@ -260,9 +260,9 @@ class IqlinkBridge:
     self.params.put_bool("IqlinkExclusive", True)
     self.params.put_bool("NavigationActive", True)
     self.params.put_bool("IqlinkLinkWarn", False)
-    self.params.put_bool("NavExitLaneChange", True)
+    # IQ-link on: no nav-exit auto LC / nudgeless ALC (product: driver or blinker ALC only).
     try:
-      self.params.put("AutoLaneChangeTimer", 1)  # DIRECT / nudgeless
+      self.params.put_bool("NavExitLaneChange", False)
     except Exception:
       pass
     self._warn_logged = False
