@@ -3,8 +3,8 @@
 
 Watch Klemmen_Status_01 (0x3C0) ZAS_Kl_15 — same bit as hardwared MebIgnitionWatch.
 Rising edge → DC on immediately; falling edge → DC off after a short delay so brief
-glitches / quick re-READY can cancel. Delay must stay short: after lock the MIB
-hotspot drops and a long deferred MQTT off never sends (60 s road-test failed).
+glitches / quick re-READY can cancel. Default delay 60 s (Delta 3 USB Wi‑Fi 24 h);
+was 5 s when the car MIB hotspot died on lock.
 
 While KL15 is on (READY), closed-loop verify: read MQTT telemetry and resend DC on
 until cfg_dc12v_out_open / flow_info_12v confirms the output is on. This covers
@@ -36,7 +36,9 @@ _MQTT_RETRY_URGENT_S = 0.5
 # READY closed-loop: re-check telemetry / resend ON at this cadence.
 _VERIFY_ON_S = 2.0
 _APPLY_OFF_RETRY_S = 1.0
-_DC_OFF_DELAY_S = 5.0
+# After KL15 falls, keep 12V this long (cancelled if KL15 rises).
+# Delta 3 USB Wi‑Fi is up 24 h (not the MIB hotspot that died on lock).
+_DC_OFF_DELAY_S = 60.0
 _PENDING_ON_WARN_S = 15.0
 
 
