@@ -200,7 +200,7 @@ _GUIDANCE_EVENTS: EVENTS_IQ_TYPE = {
 
   EventNameIQ.modelTurnLeft: {
     ET.WARNING: Alert(
-      "Lane Turn Left",
+      "打灯左转",
       "",
       AlertStatus.normal, AlertSize.small,
       Priority.LOW, VisualAlert.none, AudibleAlert.none, 1.),
@@ -208,7 +208,7 @@ _GUIDANCE_EVENTS: EVENTS_IQ_TYPE = {
 
   EventNameIQ.modelTurnRight: {
     ET.WARNING: Alert(
-      "Lane Turn Right",
+      "打灯右转",
       "",
       AlertStatus.normal, AlertSize.small,
       Priority.LOW, VisualAlert.none, AudibleAlert.none, 1.),

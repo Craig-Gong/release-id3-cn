@@ -888,17 +888,15 @@ class SteeringLayout(Widget):
       description=""
     )
     self._lane_turn_desire_toggle = toggle_item(
-      tr("Low-Speed Turn Planning"),
-      tr("With the blinker on below 45 km/h (28 mph), plan a turn onto the nearest "
-         "drivable path instead of holding the lane or starting a lane change. Helps at "
-         "urban intersections when you signal early. Same-side blind-spot (BSM) holds the "
-         "turn while side traffic is flagged. Default on."),
+      tr("低速打灯转弯"),
+      tr("45 公里/时以下打转向灯时，规划路口转弯而非保持车道或进入变道。"
+         "城区提前打灯时有助于入弯。同侧盲区有车时暂缓。默认开。"),
       param="IQLaneTurnDesire"
     )
     self._lane_turn_value_control = option_item(
-      tr("Adjust Lane Turn Desire Speed"), "IQLaneTurnValue", 500, 2800,
-      tr("Approach and turn-in speed gate for blinker prep (default about 40 km/h). "
-         "Turn desire itself is always below 45 km/h. Hard cap is 45 km/h."),
+      tr("打灯预备速度"), "IQLaneTurnValue", 500, 2800,
+      tr("打灯预备与入弯的速度门限（默认约 40 公里/时）。"
+         "转弯 desire 固定低于 45 公里/时；硬顶 45 公里/时。"),
       int(round(100 / CV.MPH_TO_KPH)), None, True, "", style.BUTTON_ACTION_WIDTH, None, True,
       lambda v: f"{int(round(v * (CV.MPH_TO_KPH if ui_state.is_metric else 1)))}"
                 f" {'km/h' if ui_state.is_metric else 'mph'}"
@@ -1052,15 +1050,15 @@ class CruiseLayout(Widget):
       try:
         meters = float(value)
       except (TypeError, ValueError):
-        return "-- m"
-      return "Off" if meters <= 0 else f"{meters:.1f} m"
+        return "-- 米"
+      return "关" if meters <= 0 else f"{meters:.1f} 米"
 
     def lead_stop_label(value: float | int) -> str:
       try:
         meters = float(value)
       except (TypeError, ValueError):
-        return "-- m"
-      return f"{meters:.1f} m"
+        return "-- 米"
+      return f"{meters:.1f} 米"
 
     items = [
       IQListItem(title=lambda: tr("Speed Limit Control"), description="", action_item=None, inline=True,
@@ -1140,8 +1138,8 @@ class CruiseLayout(Widget):
                  title_color=rl.Color(16, 185, 169, 255)),
       IQLineSeparator(20),
       self._safe_toggle_item(
-        "Gas Sync Set Speed",
-        "While engaged, holding the accelerator raises MAX to the current speed. A short tap does not change it.",
+        "油门同步设定车速",
+        "已接管时长按油门，MAX 会跟到当前车速；轻点不改变。",
         "AutoGasSyncSpeed",
       ),
       self._toggle_item(
@@ -1207,9 +1205,8 @@ class CruiseLayout(Widget):
         "IQForceStops",
       ),
       self._option_item(
-        "Lead Stop Distance",
-        "How far behind a stopped lead to settle (Lead MPC). Default 4.0 m. Does not change cruise following time gap. "
-        "Custom Stop Distance is an extra nudge on top of this.",
+        "跟停距离",
+        "停在前车后方多远（Lead MPC）。默认 4.0 米。不改巡航时距；自定义停距在其上微调。",
         "IQLeadStopDistance",
         200,
         600,
@@ -1218,9 +1215,8 @@ class CruiseLayout(Widget):
         label_callback=lead_stop_label,
       ),
       self._option_item(
-        "IQ Custom Stop Distance",
-        "Extra nudge on top of Lead Stop Distance for a stopped lead or model-held stop. Positive stops further back, "
-        "negative settles in closer. 0 is no extra offset.",
+        "自定义停距微调",
+        "在跟停距离之上再微调：正数停更远，负数停更近。0 为不额外偏移。",
         "IQCustomStopDistance",
         -2,
         2,
@@ -1228,9 +1224,9 @@ class CruiseLayout(Widget):
         label_callback=distance_label,
       ),
       self._option_item(
-        "IQ Traffic Stop Offset",
-        "Stop this many meters short of a vision red / model-held stop. Only with no lead and no right blinker. "
-        "Does not change follow gap or Custom Stop Distance. IQ-link nav red is left to the map distance. 0 is off.",
+        "视觉红灯停点偏移",
+        "无前车、未打右灯时，在视觉红灯/模型停点前再提前若干米。不改跟停距或自定义停距。"
+        "IQ-link 导航红停仍走高德灯距。0 为关。",
         "IQTrafficStopOffset",
         0,
         600,

@@ -109,15 +109,15 @@ class IQDynamicLayout(Widget):
       try:
         meters = float(value)
       except (TypeError, ValueError):
-        return "-- m"
-      return "Off" if meters <= 0 else f"{meters:.1f} m"
+        return "-- 米"
+      return "关" if meters <= 0 else f"{meters:.1f} 米"
 
     def lead_stop_label(value: float | int) -> str:
       try:
         meters = float(value)
       except (TypeError, ValueError):
-        return "-- m"
-      return f"{meters:.1f} m"
+        return "-- 米"
+      return f"{meters:.1f} 米"
 
     self._blend_radar_toggle = _toggle_item(
       "Blend IQ.Pilot + Stock ACC Radar",
@@ -129,8 +129,8 @@ class IQDynamicLayout(Widget):
 
     return [
       _safe_toggle_item(
-        "Gas Sync Set Speed",
-        "While engaged, holding the accelerator raises MAX to the current speed. A short tap does not change it.",
+        "油门同步设定车速",
+        "已接管时长按油门，MAX 会跟到当前车速；轻点不改变。",
         "AutoGasSyncSpeed",
         default_on=True,
       ),
@@ -176,40 +176,35 @@ class IQDynamicLayout(Widget):
         "IQForceStops",
       ),
       _toggle_item(
-        "IQ-link Nav Auto Blinker",
-        "When IQ-link navigation is turning, auto-request the matching blinker at a speed-based distance "
-        "(about 50–120 m on highway; urban adds red-light / RTOR / BSM gates). One switch for both. "
-        "Default off — complete a low-speed EA_02 check before enabling.",
+        "IQ-link 导航自动打灯",
+        "IQ-link 导航转弯时按车速提前请求同向转向灯（高速约 50–120 米；城区叠加红灯/右转待转/盲区门控）。"
+        "默认关——启用前请先做低速 EA_02 打灯验证。",
         "IQNavAutoBlinker",
       ),
       _toggle_item(
-        "IQ-link Nav Soft Curve Cap",
-        "On fast or highway IQ-link turns, gently cap cruise speed from TBT distance (sqrt decel). "
-        "Urban turns still use Low-Speed Turn Planning.",
+        "IQ-link 高速弯缓收",
+        "IQ-link 快速路/高速转弯时，按 TBT 距离平缓收巡航速度；城区仍走低速打灯转弯预备。",
         "IQNavSoftCurveCap",
       ),
       _toggle_item(
-        "IQ-link Nav Lane Guide",
-        "Debounced lane-recommend and second-TBT hints on the C3XL bar; optional gentle highway prep "
-        "speed cap. Does not auto lane-change.",
+        "IQ-link 车道引导",
+        "C3XL 路口条显示车道推荐与下一动作预见；可选弱纵向预备。不自动变道。",
         "IQNavLaneGuide",
       ),
       _toggle_item(
-        "IQ-link Highway Fork ALC",
-        "When IQ-link is navigating a highway fork (lc* / highwayCommit), arm the lane-change FSM "
-        "between 150 m and the aggressive LC window. Default off — log nudge first, then enable Direct.",
+        "IQ-link 高速分叉变道",
+        "IQ-link 高速分叉（lc* / highwayCommit）在 150 米外至 aggressive LC 窗内进入变道 FSM。"
+        "默认关——建议先路试 nudge，再开自动起变。",
         "IQNavHighwayAlc",
       ),
       _toggle_item(
-        "IQ-link Highway Fork ALC Direct",
-        "With Highway Fork ALC on: skip the steering nudge and auto-start the lane change when BSM is clear. "
-        "Default off (nudge / light steering torque required).",
+        "IQ-link 高速分叉自动变道",
+        "已开「高速分叉变道」时：跳过轻拨方向盘，盲区无车时自动起变。默认关。",
         "IQNavHighwayAlcDirect",
       ),
       _option_item(
-        "Lead Stop Distance",
-        "How far behind a stopped lead to settle (Lead MPC). Default 4.0 m. Does not change cruise following time gap. "
-        "Custom Stop Distance is an extra nudge on top of this.",
+        "跟停距离",
+        "停在前车后方多远（Lead MPC）。默认 4.0 米。不改巡航时距；自定义停距在其上微调。",
         "IQLeadStopDistance",
         200,
         600,
@@ -218,9 +213,9 @@ class IQDynamicLayout(Widget):
         label_callback=lead_stop_label,
       ),
       _option_item(
-        "IQ Traffic Stop Offset",
-        "Stop this many meters short of a vision red / model-held stop. Only with no lead and no right blinker. "
-        "Does not change follow gap or Custom Stop Distance. IQ-link nav red is left to the map distance. 0 is off.",
+        "视觉红灯停点偏移",
+        "无前车、未打右灯时，在视觉红灯/模型停点前再提前若干米。不改跟停距或自定义停距。"
+        "IQ-link 导航红停仍走高德灯距。0 为关。",
         "IQTrafficStopOffset",
         0,
         600,
