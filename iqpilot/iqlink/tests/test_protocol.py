@@ -400,3 +400,62 @@ def test_remain_distance_marks_destination_without_poi_name():
   assert f["destinationValid"] is True
   assert f["distanceRemaining"] == 17000
   assert f["destinationName"] == ""
+
+
+def test_near_lc_promotes_to_turn_desire():
+  raw = {
+    "nRoadLimitSpeed": 50,
+    "nTBTTurnType": 4,
+    "nTBTDist": 60,
+    "nGoPosDist": 2000,
+  }
+  f = map_carrot_to_nav_fields(raw, aggressive_lc=True)
+  assert f is not None
+  assert f["nextManeuverType"] == "fork"
+  assert f["shouldSendTurnDesire"] is True
+  assert f["shouldSendLaneChangeDesire"] is False
+  assert f["maneuverPhase"] == "turnActive"
+  assert f["navTurnDesireDirection"] == "right"
+
+
+def test_far_lc_stays_fork_lane_change():
+  raw = {
+    "nRoadLimitSpeed": 100,
+    "nTBTTurnType": 4,
+    "nTBTDist": 400,
+    "nGoPosDist": 5000,
+  }
+  f = map_carrot_to_nav_fields(raw, aggressive_lc=True)
+  assert f is not None
+  assert f["shouldSendTurnDesire"] is False
+  assert f["shouldSendLaneChangeDesire"] is True
+  assert f["maneuverPhase"] == "highwayCommit"
+
+
+def test_near_lc_straight_lane_rec_does_not_promote():
+  raw = {
+    "nRoadLimitSpeed": 50,
+    "nTBTTurnType": 4,
+    "nTBTDist": 60,
+    "laneRecommend": "straight",
+  }
+  f = map_carrot_to_nav_fields(raw, aggressive_lc=True)
+  assert f is not None
+  assert f["shouldSendTurnDesire"] is False
+  assert f["shouldSendLaneChangeDesire"] is False
+
+
+def test_turn_desire_window_150m():
+  raw = {
+    "nRoadLimitSpeed": 60,
+    "nTBTTurnType": 1,
+    "nTBTDist": 130,
+  }
+  f = map_carrot_to_nav_fields(raw)
+  assert f is not None
+  assert f["shouldSendTurnDesire"] is True
+
+  raw_far = {**raw, "nTBTDist": 160}
+  f2 = map_carrot_to_nav_fields(raw_far)
+  assert f2 is not None
+  assert f2["shouldSendTurnDesire"] is False

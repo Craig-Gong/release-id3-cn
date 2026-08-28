@@ -25,6 +25,8 @@ _STOP_LINE_EARLY_COMP_M = 2.0
 _YELLOW_STOP_DIST_M = 30.0
 # China RTOR / left-arrow: only treat the TBT turn as "at this light" inside this window.
 LIGHT_TURN_WINDOW_M = 150.0
+# Nav turn desire + "Navigation: Turning Left/Right" (aligned with LIGHT_TURN_WINDOW_M).
+TURN_DESIRE_WINDOW_M = 150.0
 # Arrive: stop lateral desire only; keep limit / lights / snapshot (R1).
 NEAR_DEST_REMAIN_M = 150.0
 
@@ -175,11 +177,20 @@ def map_carrot_to_nav_fields(
 
   lc_window = AGGRESSIVE_LC_DISTANCE_M if aggressive_lc else 500.0
   is_lc = bucket.startswith("lc")
-  send_lc = bool(is_lc and 0.0 < turn_dist <= lc_window)
-  send_turn = bool(bucket.startswith("turn") and 0.0 < turn_dist <= 120.0)
+  is_turn = bucket.startswith("turn")
+  near_turn = 0.0 < turn_dist <= TURN_DESIRE_WINDOW_M
   # B1: amapauto 13012 laneRecommend=straight → suppress auto LC (TBT HUD still valid).
   lane_rec = _s(data, "laneRecommend", "none").strip().lower()
-  if send_lc and lane_rec == "straight":
+  lane_rec_straight = lane_rec == "straight"
+
+  send_lc = bool(is_lc and 0.0 < turn_dist <= lc_window)
+  if send_lc and lane_rec_straight:
+    send_lc = False
+
+  send_turn = bool(is_turn and near_turn)
+  # Urban: Gaode often labels intersection maneuvers as lc*; promote when near (not highway fork).
+  if is_lc and near_turn and not lane_rec_straight:
+    send_turn = True
     send_lc = False
 
   # TBT distance speed cap removed: turns/LC/exit leave speedTarget at road limit.
