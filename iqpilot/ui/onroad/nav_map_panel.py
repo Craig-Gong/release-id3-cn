@@ -28,11 +28,6 @@ from openpilot.iqpilot.ui.onroad.offline_tiles import (
   open_mbtiles,
   xyz_zoom_bounds,
 )
-from openpilot.iqpilot.ui.onroad.junction_hud_shared import (
-  JunctionHudSnapshot,
-  junction_accent_rgb,
-  read_junction_snapshot,
-)
 from openpilot.iqpilot.ui.onroad.nav_map_utils import (
   build_mapbox_tile_url,
   choose_nav_camera,
@@ -55,7 +50,6 @@ PANEL_MARGIN_TOP = 92
 CARD_RADIUS = 0.055
 MAP_HEIGHT = 392
 SPLIT_HEADER_HEIGHT = 160
-SPLIT_JUNCTION_BAND_HEIGHT = 54
 SPLIT_FOOTER_HEIGHT = 112
 # parents[4] pointed one level above the repo (stock selfdrive/assets has no nav icons),
 # so the maneuver arrow never loaded anywhere — anchor to BASEDIR instead
@@ -906,7 +900,6 @@ class NavMapPanel(Widget):
     self.time_remaining = 0.0
     self.distance_remaining = 0.0
     self.road_name = ""
-    self._junction_snap = JunctionHudSnapshot(False, "none", 0.0, 0.0)
     self._has_render_fix = False
     self._route_ahead_index = 0
     self._projected_route_points: list[tuple[float, float]] = []
@@ -1293,8 +1286,6 @@ class NavMapPanel(Widget):
 
     if sm.updated["iqLiveData"]:
       self.road_name = sm["iqLiveData"].roadName
-
-    self._junction_snap = read_junction_snapshot(sm, engaged=ui_state.engaged)
 
     if self.active:
       self.display_center_latitude = self._lerp(self.display_center_latitude, self.render_center_latitude, CAMERA_SMOOTHING)
@@ -1734,45 +1725,6 @@ class NavMapPanel(Widget):
     font = font_fallback(font, text)
     rl.draw_text_ex(font, text, pos, size, 0, color)
 
-  def _draw_junction_chip(self, rect: rl.Rectangle) -> None:
-    snap = self._junction_snap
-    if not snap.active:
-      return
-
-    band_y = rect.y + SPLIT_HEADER_HEIGHT - 4
-    band = rl.Rectangle(rect.x + 14, band_y, rect.width - 28, SPLIT_JUNCTION_BAND_HEIGHT)
-    self._draw_glass_band(band, 236)
-    accent = junction_accent_rgb(snap.light)
-    rl.draw_rectangle_rounded(
-      rl.Rectangle(band.x + 10, band.y + 10, 5, band.height - 20),
-      1.0, 4, rl.Color(*accent, 240),
-    )
-    rl.draw_circle_v(rl.Vector2(band.x + 28, band.y + band.height * 0.5), 7.0, rl.Color(*accent, 235))
-
-    headline = snap.headline
-    detail = snap.detail
-    title_size = self._fit_text_size(self._title_font, headline, band.width - 120, 30, 22)
-    self._draw_text_cjk(
-      self._title_font, headline,
-      rl.Vector2(band.x + 44, band.y + 10),
-      title_size, rl.WHITE,
-    )
-    if detail:
-      detail_size = self._fit_text_size(self._body_font, detail, band.width - 120, 24, 18)
-      detail_width = measure_text_cached(font_fallback(self._body_font, detail), detail, detail_size).x
-      self._draw_text_cjk(
-        self._body_font, detail,
-        rl.Vector2(band.x + band.width - detail_width - 16, band.y + 14),
-        detail_size, rl.Color(196, 206, 218, 235),
-      )
-    else:
-      sub_size = self._fit_text_size(self._micro_font, "注意前方", band.width - 120, 18, 14)
-      self._draw_text_cjk(
-        self._micro_font, "注意前方",
-        rl.Vector2(band.x + band.width - 72, band.y + 18),
-        sub_size, rl.Color(150, 163, 176, 220),
-      )
-
   def _draw_panel_contents(self, panel_rect: rl.Rectangle) -> None:
     """Draw the full onroad panel into the given rect. Rect origin is (0,0) when rendering into
     the cache texture, or the real screen position on the direct-draw fallback."""
@@ -1873,7 +1825,6 @@ class NavMapPanel(Widget):
     self._draw_map_surface(map_rect, draw_fade=False)
     self._draw_provider_badge(map_rect)
     self._draw_split_header(local_rect)
-    self._draw_junction_chip(local_rect)
     self._draw_split_footer(local_rect)
 
   def render_split(self, rect: rl.Rectangle) -> None:

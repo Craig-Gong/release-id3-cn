@@ -1,4 +1,4 @@
-"""Shared junction / traffic-light HUD state for nav map chip."""
+"""Shared junction / traffic-light HUD state for camera overlay."""
 
 from __future__ import annotations
 

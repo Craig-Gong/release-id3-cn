@@ -23,6 +23,11 @@ from openpilot.system.ui.lib.application import gui_app, FontWeight
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.iqwidgets.lib import canvas
+from openpilot.iqpilot.ui.onroad.junction_hud_shared import (
+  JunctionHudSnapshot,
+  junction_accent_rgb,
+  read_junction_snapshot,
+)
 from iqdbc.car.volkswagen.values import VolkswagenFlags
 
 
@@ -283,11 +288,90 @@ ellipsize = clip_to_width
 
 
 # ============================================================================
-#  Nav lane-recommend / second-TBT guide (top-center, below speed area)
+#  Junction / traffic-stop bar (camera view, top-center above speed)
 # ============================================================================
-_GUIDE_H = 40
-_GUIDE_Y = 8
-_GUIDE_FONT = 28
+_JUNC_H = 40
+_JUNC_Y = 6
+_JUNC_MIN_W = 200
+_JUNC_MAX_W = 340
+_JUNC_PAD_X = 12
+_JUNC_STRIPE_W = 4
+_JUNC_DOT_R = 6
+_JUNC_HEAD_MAX = 26
+_JUNC_HEAD_MIN = 20
+_JUNC_DETAIL_MAX = 22
+_JUNC_DETAIL_MIN = 16
+
+
+def _fit_text_size(face, text: str, max_w: float, max_sz: int, min_sz: int) -> int:
+  size = max_sz
+  while size > min_sz and canvas.span(face, text, size).x > max_w:
+    size -= 1
+  return size
+
+
+class IQJunctionHud:
+  def __init__(self):
+    self._snap = JunctionHudSnapshot(False, "none", 0.0, 0.0)
+    self._face = gui_app.font(FontWeight.SEMI_BOLD)
+    self._detail_face = gui_app.font(FontWeight.MEDIUM)
+
+  def update(self) -> None:
+    self._snap = read_junction_snapshot(_feed(), engaged=ui_state.engaged)
+
+  def render(self, rect) -> None:
+    if not self._snap.active:
+      return
+    headline = self._snap.headline
+    detail = self._snap.detail
+    if not detail and self._snap.light == "none":
+      detail = "注意前方"
+
+    bar_w = min(rect.width - 40, _JUNC_MAX_W)
+    bar_w = max(_JUNC_MIN_W, bar_w)
+    bar = canvas.Box(rect.x + (rect.width - bar_w) / 2, rect.y + _JUNC_Y, bar_w, _JUNC_H)
+    canvas.panel(bar, 0.22, 8, canvas.shade(0, 0, 0, 158))
+
+    fill = junction_accent_rgb(self._snap.light)
+    if self._snap.light == "none":
+      fill = (190, 198, 210)
+    stripe = canvas.Box(bar.x + 8, bar.y + 8, _JUNC_STRIPE_W, bar.height - 16)
+    canvas.panel(stripe, 1.0, 4, canvas.shade(*fill, 220))
+    dot_x = bar.x + 8 + _JUNC_STRIPE_W + 10 + _JUNC_DOT_R
+    canvas.disc(dot_x, bar.y + bar.height / 2, _JUNC_DOT_R, canvas.shade(*fill, 235))
+
+    text_left = dot_x + _JUNC_DOT_R + 8
+    text_right = bar.x + bar.width - _JUNC_PAD_X
+    inner_w = max(40.0, text_right - text_left)
+    mid_y = bar.y + bar.height / 2
+
+    if detail:
+      head_w = inner_w * 0.44
+      det_w = inner_w * 0.54
+      head_size = _fit_text_size(self._face, headline, head_w, _JUNC_HEAD_MAX, _JUNC_HEAD_MIN)
+      det_size = _fit_text_size(self._detail_face, detail, det_w, _JUNC_DETAIL_MAX, _JUNC_DETAIL_MIN)
+      head_ext = canvas.span(self._face, headline, head_size)
+      det_ext = canvas.span(self._detail_face, detail, det_size)
+      canvas.glyphs(self._face, headline,
+                    canvas.Pt(text_left, mid_y - head_ext.y / 2),
+                    head_size, canvas.shade(255, 255, 255, 235))
+      canvas.glyphs(self._detail_face, detail,
+                    canvas.Pt(text_right - det_ext.x, mid_y - det_ext.y / 2),
+                    det_size, canvas.shade(196, 206, 218, 220))
+    else:
+      head_size = _fit_text_size(self._face, headline, inner_w, _JUNC_HEAD_MAX, _JUNC_HEAD_MIN)
+      head_ext = canvas.span(self._face, headline, head_size)
+      canvas.glyphs(self._face, headline,
+                    canvas.Pt(text_left, mid_y - head_ext.y / 2),
+                    head_size, canvas.shade(255, 255, 255, 235))
+
+
+# ============================================================================
+#  Nav lane-recommend / second-TBT guide (top-center, below junction bar)
+# ============================================================================
+_GUIDE_H = 36
+_GUIDE_Y = 6  # same top band as junction; hidden while junctionStop
+_GUIDE_FONT = 24
 _GUIDE_PAD = 28
 _GUIDE_MIN_W = 200
 _GUIDE_PLAIN = (200, 220, 255)
