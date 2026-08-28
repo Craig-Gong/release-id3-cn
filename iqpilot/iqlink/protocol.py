@@ -5,8 +5,9 @@ Called by: iqpilot/iqlink/bridge.py, iqpilot/iqlink/tests/test_protocol.py
 
 from __future__ import annotations
 
-import math
 from typing import Any
+
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_decel import approach_speed_ms
 
 from . import AGGRESSIVE_LC_DISTANCE_M
 
@@ -114,12 +115,8 @@ def _dir_from_bucket(bucket: str) -> str:
 def _red_light_approach_ms(light_dist_m: float, road_limit_ms: float) -> float:
   """Distance-based red stop cap; +2 m compensates measured early stop."""
   d = max(0.0, float(light_dist_m) + _STOP_LINE_EARLY_COMP_M)
-  if d <= 0.05:
-    return 0.0
-  v = math.sqrt(2.0 * _RED_LIGHT_DECEL_MS2 * d)
-  if road_limit_ms > 0:
-    v = min(v, road_limit_ms)
-  return v
+  cap = approach_speed_ms(d, _RED_LIGHT_DECEL_MS2, cap_ms=road_limit_ms if road_limit_ms > 0 else 0.0)
+  return 0.0 if cap <= 0.05 else cap
 
 
 def flatten_payload(payload: dict[str, Any]) -> dict[str, Any]:

@@ -25,6 +25,7 @@ from openpilot.iqpilot.iqlink import (
   DEFAULT_WARN_TIMEOUT_S,
 )
 from openpilot.iqpilot.iqlink import protocol as proto
+from openpilot.iqpilot.iqlink.road_limit_hold import IqlinkRoadLimitHold
 
 NavState = custom.IQNavState
 NavDir = custom.NavDirection
@@ -165,6 +166,7 @@ class IqlinkBridge:
     self._command_index = 0
     self._last_lc_cmd = False
     self._warn_logged = False
+    self._road_limit_hold = IqlinkRoadLimitHold()
 
   def _timeouts(self) -> tuple[float, float]:
     try:
@@ -225,6 +227,14 @@ class IqlinkBridge:
     )
     if fields is None:
       return
+    flat = proto.flatten_payload(payload)
+    raw_kph = float(flat.get("nRoadLimitSpeed") or 0.0)
+    if raw_kph > 0.0:
+      held_kph = self._road_limit_hold.filter_kph(raw_kph, time.monotonic())
+      if held_kph > 0.0:
+        held_ms = held_kph / 3.6
+        fields["roadSpeedLimit"] = held_ms
+        fields["roadSpeedLimitValid"] = True
     # Phone BLE keepalive (nRoadLimitSpeed=0, no dest/maneuver): HMAC link only.
     # Do not arm nav params / NavigationActive from an empty envelope.
     if (
@@ -251,7 +261,7 @@ class IqlinkBridge:
       self._raw_fp = fp
       self._latest = fields
       self._last_rx = time.monotonic()
-    # HUD resolver: raw Gaode nRoadLimitSpeed (m/s). Avoid Params keys.h rebuild.
+    # HUD resolver: debounced Gaode nRoadLimitSpeed (m/s). Avoid Params keys.h rebuild.
     try:
       with open("/dev/shm/iqlink_road_speed_ms", "w", encoding="utf-8") as f:
         f.write(f"{float(fields.get('roadSpeedLimit') or 0.0):.4f}")

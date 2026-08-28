@@ -37,6 +37,8 @@ EXTRA_PARAM_DEFAULTS = {
   "AutoGasSyncSpeed": "1",
   "IQTrafficStopOffset": "3",
   "IQLeadStopDistance": "4",
+  "IQNavAutoBlinker": "0",
+  "IQNavSoftCurveCap": "1",
   # EcoFlow Delta 3 12V DC (ecoflowd). Default OFF — enable after setting credentials.
   "EcoflowEnabled": "0",
   "EcoflowPhone": None,
@@ -48,6 +50,8 @@ EXTRA_PARAM_DEFAULTS = {
 EXTRA_BOOL_KEYS = {
   "AutoGasSyncSpeed",
   "EcoflowEnabled",
+  "IQNavAutoBlinker",
+  "IQNavSoftCurveCap",
 }
 EXTRA_FLOAT_KEYS = {
   "IQTrafficStopOffset",

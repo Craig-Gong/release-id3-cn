@@ -20,6 +20,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.helpers.e2e_alerts import EndToEnd
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.green_follow_lead import GreenFollowLeadGate
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.junction_hud import junction_hud_active, light_token
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_soft_curve import NavSoftCurveCap
 from openpilot.iqpilot.iqlink.protocol import nav_turn_pending
 from openpilot.iqpilot.selfdrive.controls.lib.slc_vcruise import SLCVCruise
 from openpilot.iqpilot.selfdrive.controls.lib.speed_limit_controller import LIMIT_ADAPT_ACC
@@ -98,6 +99,7 @@ class LongitudinalPlannerIQ:
     self._green_follow_gate = GreenFollowLeadGate()
     self.junction_hud = False
     self.turn_prep = UrbanTurnPrep(params=self._params)
+    self.nav_soft_curve = NavSoftCurveCap(params=self._params)
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
     experimental_mode = sm['selfdriveState'].experimentalMode
@@ -249,6 +251,22 @@ class LongitudinalPlannerIQ:
     prep_v = self._turn_prep_speed(sm, float(getattr(CS, "vEgo", v_ego)), slc_apply_enabled)
     if prep_v is not None:
       self.output_v_target = min(float(self.output_v_target), float(prep_v))
+    try:
+      nav = sm['iqNavState']
+      soft_v = self.nav_soft_curve.update(
+        iqlink_on=iqlink_on,
+        enabled=slc_apply_enabled,
+        v_ego=float(getattr(CS, "vEgo", v_ego)),
+        posted_limit_ms=float(self.speed_limit_last or 0.0),
+        nav_send_turn=bool(getattr(nav, "shouldSendTurnDesire", False)),
+        nav_phase=getattr(nav, "maneuverPhase", 0),
+        turn_dist_m=float(getattr(nav, "nextManeuverDistance", 0.0) or 0.0),
+        nav_send_lc=bool(getattr(nav, "shouldSendLaneChangeDesire", False)),
+      )
+      if soft_v is not None:
+        self.output_v_target = min(float(self.output_v_target), float(soft_v))
+    except Exception:
+      pass
     # envelope shaping only in Assist mode: info/warn must never change the plan
     self._envelope_enabled = (slc_apply_enabled and bool(getattr(self.slimit, "controller_enabled", False))
                               and bool(getattr(self.slimit, "mode_assist", False)))

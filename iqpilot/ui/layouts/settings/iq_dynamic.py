@@ -175,6 +175,19 @@ class IQDynamicLayout(Widget):
         "is close. Override with the accelerator.",
         "IQForceStops",
       ),
+      _toggle_item(
+        "IQ-link Nav Auto Blinker",
+        "When IQ-link navigation is turning, auto-request the matching blinker at a speed-based distance "
+        "(about 50–120 m on highway; urban adds red-light / RTOR / BSM gates). One switch for both. "
+        "Default off — complete a low-speed EA_02 check before enabling.",
+        "IQNavAutoBlinker",
+      ),
+      _toggle_item(
+        "IQ-link Nav Soft Curve Cap",
+        "On fast or highway IQ-link turns, gently cap cruise speed from TBT distance (sqrt decel). "
+        "Urban turns still use Low-Speed Turn Planning.",
+        "IQNavSoftCurveCap",
+      ),
       _option_item(
         "Lead Stop Distance",
         "How far behind a stopped lead to settle (Lead MPC). Default 4.0 m. Does not change cruise following time gap. "
