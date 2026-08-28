@@ -925,6 +925,9 @@ class GuiApplication(IQAppHooks):
   def _load_fonts(self):
     with as_file(FONT_DIR) as fspath:
       for font_weight_file in FontWeight:
+        if font_weight_file == FontWeight.UNIFONT:
+          self._fonts[font_weight_file] = self._load_unifont_font(fspath)
+          continue
         fnt_path = fspath / font_weight_file
         if fnt_path.is_file():
           font = rl.load_font(fnt_path.as_posix())
@@ -938,6 +941,18 @@ class GuiApplication(IQAppHooks):
           rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
         self._fonts[font_weight_file] = font
     rl.gui_set_font(self._fonts[FontWeight.NORMAL])
+
+  def _load_unifont_font(self, fspath):
+    from openpilot.system.ui.lib.unifont_glyphs import try_load_expanded_unifont
+
+    try:
+      font = try_load_expanded_unifont()
+      if font is not None:
+        cloudlog.info("loaded expanded unifont atlas (po + ID.3 UI CJK)")
+        return font
+    except Exception as exc:
+      cloudlog.warning(f"expanded unifont load failed, using prebuilt atlas: {exc}")
+    return rl.load_font((fspath / FontWeight.UNIFONT).as_posix())
 
   def _set_styles(self):
     rl.gui_set_style(rl.GuiControl.DEFAULT, rl.GuiControlProperty.BORDER_WIDTH, 0)

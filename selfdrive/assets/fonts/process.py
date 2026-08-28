@@ -33,6 +33,7 @@ LANGUAGES_FILE = TRANSLATIONS_DIR / "languages.json"
 GLYPH_PADDING = 6
 EXTRA_CHARS = "–‑✓×°§•X⚙✕◀▶✔⌫⇧␣○●↳çêüñ–‑✓×°§•€£¥"
 UNIFONT_LANGUAGES = {"ar", "th", "zh-CHT", "zh-CHS", "ko", "ja"}
+ID3_UI_CJK_FILE = FONT_DIR / "id3_ui_cjk.txt"
 
 
 def _load_font_data_arity() -> int:
@@ -61,6 +62,12 @@ def _char_sets():
     except FileNotFoundError:
       continue
     (unifont if code in UNIFONT_LANGUAGES else base).update(chars)
+
+  if ID3_UI_CJK_FILE.is_file():
+    for line in ID3_UI_CJK_FILE.read_text(encoding="utf-8").splitlines():
+      line = line.strip()
+      if line and not line.startswith("#"):
+        unifont.update(line)
 
   return tuple(sorted(ord(c) for c in base)), tuple(sorted(ord(c) for c in unifont))
 
