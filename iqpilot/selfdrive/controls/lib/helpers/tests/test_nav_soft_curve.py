@@ -28,6 +28,7 @@ def test_soft_curve_highway_only():
     nav_phase=2,
     turn_dist_m=120.0,
     nav_send_lc=False,
+    nav=None,
   )
   assert v is not None and v < 25.0
 
@@ -43,5 +44,27 @@ def test_soft_curve_skips_slow_urban():
     nav_phase=2,
     turn_dist_m=80.0,
     nav_send_lc=False,
+    nav=None,
   )
   assert v is None
+
+
+def test_soft_curve_highway_fork():
+  from types import SimpleNamespace
+  cap = NavSoftCurveCap(_Params())
+  nav = SimpleNamespace(
+    roadSpeedLimit=100.0 * CV.KPH_TO_MS,
+    nextManeuverType="fork",
+  )
+  v = cap.update(
+    iqlink_on=True,
+    enabled=True,
+    v_ego=28.0,
+    posted_limit_ms=100 * CV.KPH_TO_MS,
+    nav_send_turn=False,
+    nav_phase=4,
+    turn_dist_m=90.0,
+    nav_send_lc=True,
+    nav=nav,
+  )
+  assert v is not None and v < 28.0

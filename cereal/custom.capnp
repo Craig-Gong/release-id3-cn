@@ -246,6 +246,7 @@ struct IQPlan @0xda401323ae805f2b {
     pathOpen @0 :Bool;
     leadPullaway @1 :Bool;
     junctionStop @2 :Bool;  # nav red-stop or vision stop-ahead, no lead
+    navGuideHint @3 :Text;  # debounced lane-recommend / second-TBT HUD (empty = hidden)
   }
 }
 
@@ -586,6 +587,11 @@ struct IQNavState @0xaae9afb364368cd9 {
   trafficLight @49 :Text;                             # "none" / "red" / "yellow" / "green"
   trafficLightDistM @50 :Float32;                     # Distance to the light (m); 0 if unknown
   trafficLightRemainS @51 :Float32;                   # APK countdown seconds; display only
+  roadSpeedLimit @52 :Float32;                        # Debounced Gaode nRoadLimitSpeed (m/s)
+  roadSpeedLimitValid @53 :Bool;
+  leftTurnPending @54 :Bool;                          # TBT left turn within LIGHT_TURN window
+  rightTurnPending @55 :Bool;
+  laneRecommend @56 :Text;                            # amapauto 13012: none/straight/left/right
 
   enum CameraType {
     none @0;

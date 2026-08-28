@@ -364,6 +364,46 @@ class IQJunctionHud:
                   _JUNC_FONT, canvas.shade(255, 255, 255, 220))
 
 
+# ============================================================================
+#  Nav lane-recommend / second-TBT guide (below junction bar when both shown)
+# ============================================================================
+_GUIDE_H = 40
+_GUIDE_Y = _JUNC_Y + _JUNC_H + 6
+_GUIDE_FONT = 28
+_GUIDE_PAD = 28
+_GUIDE_MIN_W = 200
+_GUIDE_PLAIN = (200, 220, 255)
+
+
+class IQNavGuideHud:
+  def __init__(self):
+    self._hint = ""
+    self._face = gui_app.font(FontWeight.SEMI_BOLD)
+
+  def update(self) -> None:
+    self._hint = ""
+    if not ui_state.engaged:
+      return
+    try:
+      if bool(_feed()["iqPlan"].e2eAlerts.junctionStop):
+        return
+      self._hint = str(_feed()["iqPlan"].e2eAlerts.navGuideHint or "").strip()
+    except Exception:
+      return
+
+  def render(self, rect) -> None:
+    if not self._hint:
+      return
+    label = self._hint
+    extent = canvas.span(self._face, label, _GUIDE_FONT)
+    bar_w = max(_GUIDE_MIN_W, extent.x + _GUIDE_PAD)
+    bar_w = min(bar_w, rect.width - 40)
+    bar = canvas.Box(rect.x + (rect.width - bar_w) / 2, rect.y + _GUIDE_Y, bar_w, _GUIDE_H)
+    canvas.panel(bar, 0.18, 10, canvas.shade(0, 0, 0, 130))
+    canvas.glyphs(self._face, label,
+                  canvas.Pt(bar.x + (bar.width - extent.x) / 2, bar.y + (bar.height - extent.y) / 2),
+                  _GUIDE_FONT, canvas.shade(*_GUIDE_PLAIN, 215))
+
 
 # ============================================================================
 #  Turn indicators

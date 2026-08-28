@@ -18,6 +18,7 @@ from openpilot.iqpilot.ui.onroad.hud_overlays import (
   IQTurnSignalOverlay,
   IQSpeedOverlay,
   IQJunctionHud,
+  IQNavGuideHud,
 )
 from openpilot.iqpilot.ui.onroad.nav_map_panel import NavMapPanel
 from openpilot.iqpilot.ui.onroad.soft_warning import SoftWarningRenderer
@@ -38,6 +39,7 @@ class IQHudRenderer(HudRenderer):
     self.speed_renderer = IQSpeedOverlay()
     self.soft_warning_renderer = SoftWarningRenderer()
     self.junction_hud = IQJunctionHud()
+    self.nav_guide_hud = IQNavGuideHud()
     self._torque_bar = TorqueBar(scale=3.0, always=True)
 
   def _update_state(self) -> None:
@@ -58,6 +60,7 @@ class IQHudRenderer(HudRenderer):
     self.speed_renderer.update()
     self.soft_warning_renderer.update()
     self.junction_hud.update()
+    self.nav_guide_hud.update()
 
   def _draw_current_speed(self, rect: rl.Rectangle) -> None:
     self.speed_renderer.render(rect)
@@ -77,6 +80,7 @@ class IQHudRenderer(HudRenderer):
       self.nav_map_panel.render(rect)
     self.road_name_renderer.render(rect)
     self.junction_hud.render(rect)
+    self.nav_guide_hud.render(rect)
     self.turn_signal_controller.render(rect)
     self.soft_warning_renderer.render(rect)
     self.rocket_fuel.render(rect, ui_state.sm)

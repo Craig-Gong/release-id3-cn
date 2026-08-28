@@ -35,7 +35,7 @@ Deprecated (do not use as fallback): UDP 7705 / 7706, TCP 7713.
 - **Green wave / SDI:** not in scope (no phone uplink; device ignores).
 - **Road limit:** BLE reports raw `nRoadLimitSpeed` for HUD; execution = raw + device offset with a **usual floor of 60 km/h**. Invalid limit → do not invent; no snapshot → follow lead / model.
 - **Traffic lights:** red/yellow aggressive decel toward stop (`accelTarget≈-2`); yellow near-distance (≤30 m) treated like red; no fake green. Explicit `trafficLightRemainS==1` lifts nav red-stop and launches **immediately** (no 1 s dwell); omitted/0 remainS stays red. APK `green` still waits ~1 s at standstill before launch; a flickering lead does not release a red stop. China RTOR skips nav red only when a **right** TBT is within **150 m**. Left-arrow red keeps hold even if the approach curve still has `speedTarget>0`, unless remainS==1. Stale BLE (`IqlinkLinkWarn`) does not execute leftover nav speed. IQ-link on forces `NavExitLaneChange` off (no nav-exit auto LC / nudgeless ALC). HUD `navExit*` is gated (arrive / P / R / dedup). IQ-link off still shows a plain stop-ahead cue from the vision model.
-- **Lane B (gate only):** `KEY_TYPE=13012` → `laneRecommend`; `straight` suppresses auto lane-change desire. No lane-change HUD.
+- **Lane B (gate only):** `KEY_TYPE=13012` → `laneRecommend`; `straight` suppresses auto lane-change desire. `left`/`right` published on `iqNavState.laneRecommend` for HUD / weak prep (`IQNavLaneGuide`). No lane-change HUD.
 - **Cruise UI:** product max set speed `V_CRUISE_PRODUCT_MAX_KPH=120`.
 
 ## BLE GATT

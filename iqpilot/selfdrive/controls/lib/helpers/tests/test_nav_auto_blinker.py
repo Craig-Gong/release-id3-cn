@@ -26,6 +26,8 @@ def _nav(**kw):
     shouldSendLaneChangeDesire=False,
     maneuverPhase=2,
     turnDesireDirection="left",
+    laneChangeDesireDirection="none",
+    nextManeuverType="turn",
     nextManeuverDistance=60.0,
     roadSpeedLimit=50.0 * CV.KPH_TO_MS,
     trafficLight="none",
@@ -80,6 +82,37 @@ def test_debounce_before_blink():
     assert not left and not right
   left, right = b.update(nav, cs, engaged=True, params=_Params({"IqlinkExclusive": True}))
   assert left and not right
+
+
+def test_highway_fork_blinks():
+  b = NavAutoBlinker(_Params({"IQNavAutoBlinker": True}))
+  nav = _nav(
+    shouldSendTurnDesire=False,
+    shouldSendLaneChangeDesire=True,
+    maneuverPhase=4,
+    turnDesireDirection="none",
+    laneChangeDesireDirection="right",
+    nextManeuverType="fork",
+    nextManeuverDistance=80.0,
+    roadSpeedLimit=100.0 * CV.KPH_TO_MS,
+  )
+  left, right = _run(b, nav, _cs(v_kph=90.0))
+  assert not left and right
+
+
+def test_highway_fork_too_far_no_blink():
+  b = NavAutoBlinker(_Params({"IQNavAutoBlinker": True}))
+  nav = _nav(
+    shouldSendTurnDesire=False,
+    shouldSendLaneChangeDesire=True,
+    maneuverPhase=4,
+    laneChangeDesireDirection="right",
+    nextManeuverType="fork",
+    nextManeuverDistance=200.0,
+    roadSpeedLimit=100.0 * CV.KPH_TO_MS,
+  )
+  left, right = _run(b, nav, _cs(v_kph=90.0))
+  assert not left and not right
 
 
 def test_too_far_no_blink():

@@ -289,4 +289,5 @@ def map_carrot_to_nav_fields(
     "visionStop": vision_stop,
     "rightTurnPending": right_turn_pending,
     "leftTurnPending": left_turn_pending,
+    "laneRecommend": lane_rec,
   }

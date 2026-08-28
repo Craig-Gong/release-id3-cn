@@ -188,6 +188,12 @@ class IQDynamicLayout(Widget):
         "Urban turns still use Low-Speed Turn Planning.",
         "IQNavSoftCurveCap",
       ),
+      _toggle_item(
+        "IQ-link Nav Lane Guide",
+        "Debounced lane-recommend and second-TBT hints on the C3XL bar; optional gentle highway prep "
+        "speed cap. Does not auto lane-change.",
+        "IQNavLaneGuide",
+      ),
       _option_item(
         "Lead Stop Distance",
         "How far behind a stopped lead to settle (Lead MPC). Default 4.0 m. Does not change cruise following time gap. "

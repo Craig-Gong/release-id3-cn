@@ -71,9 +71,7 @@ def test_lane_recommend_left_keeps_lc():
   f = map_carrot_to_nav_fields(raw, aggressive_lc=True)
   assert f is not None
   assert f["shouldSendLaneChangeDesire"] is True
-
-
-def test_camera_ignored_this_phase():
+  assert f["laneRecommend"] == "left"
   # SDI / speed-camera pressure disabled; road limit owns speedTarget.
   raw = {
     "nRoadLimitSpeed": 120,

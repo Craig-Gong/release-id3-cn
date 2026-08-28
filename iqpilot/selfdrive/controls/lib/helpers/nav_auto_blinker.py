@@ -1,18 +1,18 @@
 """IQ-link navigation auto blinker (default off).
 
-Highway: arm at clamp(v×T_arm, D_min, D_max) inside send_turn (≤150 m).
-Urban (road limit <70 and v <65): same arm curve plus red-left hold, RTOR
-light-distance gate, and same-side BSM delay (aligned with lane_turn / A1).
+Highway turn: arm at clamp(v×T_arm, D_min, D_max) inside send_turn (≤150 m).
+Highway fork: same arm distance on send_lc / highwayCommit (no 150 m cap).
+Urban (road limit <70 and v <65): turn path adds red-left hold, RTOR, BSM delay.
 """
 
 from __future__ import annotations
 
-from openpilot.common.constants import CV
 from openpilot.common.params import Params
 from openpilot.iqpilot.iqlink.protocol import LIGHT_TURN_WINDOW_M, TURN_DESIRE_WINDOW_M
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import (
   HIGHWAY_LIMIT_MS,
   NAV_NEAR_TURN_M,
+  PHASE_HIGHWAY_COMMIT,
   URBAN_V_MAX_MS,
 )
 
@@ -25,6 +25,7 @@ DEBOUNCE_FRAMES = 3
 STANDSTILL_V_MS = 1.0
 
 PHASE_TURN_ACTIVE = 2
+MANEUVER_FORK = 4
 DIR_LEFT = 1
 DIR_RIGHT = 2
 
@@ -39,10 +40,8 @@ def _as_int(value) -> int:
     return 0
 
 
-def _dir_name(nav) -> str:
-  if nav is None:
-    return "none"
-  direction = getattr(nav, "turnDesireDirection", None)
+def _side_from_attr(nav, attr: str) -> str:
+  direction = getattr(nav, attr, None)
   name = str(getattr(direction, "name", None) or direction or "").lower()
   if "left" in name:
     return "left"
@@ -54,6 +53,22 @@ def _dir_name(nav) -> str:
   if raw == DIR_RIGHT:
     return "right"
   return "none"
+
+
+def _dir_name(nav) -> str:
+  return _side_from_attr(nav, "turnDesireDirection")
+
+
+def _lc_dir_name(nav) -> str:
+  return _side_from_attr(nav, "laneChangeDesireDirection")
+
+
+def _mtype_is_fork(nav) -> bool:
+  mtype = getattr(nav, "nextManeuverType", None)
+  name = str(getattr(mtype, "name", None) or mtype or "").lower()
+  if name == "fork":
+    return True
+  return _as_int(mtype) == MANEUVER_FORK
 
 
 def _light_token(nav) -> str:
@@ -85,6 +100,13 @@ def is_urban_context(road_limit_ms: float, v_ego_mps: float) -> bool:
   if limit <= 0.0:
     limit = HIGHWAY_LIMIT_MS
   return limit < HIGHWAY_LIMIT_MS and float(v_ego_mps) < URBAN_V_MAX_MS
+
+
+def is_highway_fast_context(road_limit_ms: float, v_ego_mps: float) -> bool:
+  limit = float(road_limit_ms or 0.0)
+  if limit <= 0.0:
+    limit = 0.0
+  return limit >= HIGHWAY_LIMIT_MS or float(v_ego_mps) >= URBAN_V_MAX_MS
 
 
 def same_side_bsm_blocked(side: str, cs) -> bool:
@@ -132,6 +154,20 @@ def urban_rtor_red_hold(nav, cs, *, side: str) -> bool:
   return light_dist > close_m
 
 
+def _blink_side_blocked(side: str, cs) -> bool:
+  left = bool(getattr(cs, "leftBlinker", False))
+  right = bool(getattr(cs, "rightBlinker", False))
+  if side == "left" and right:
+    return True
+  if side == "right" and left:
+    return True
+  if (side == "left" and left) or (side == "right" and right):
+    return True
+  if same_side_bsm_blocked(side, cs):
+    return True
+  return False
+
+
 class NavAutoBlinker:
   def __init__(self, params: Params | None = None) -> None:
     self._params = params
@@ -172,6 +208,70 @@ class NavAutoBlinker:
     except Exception:
       return False
 
+  def _eligible_turn(
+    self,
+    *,
+    nav,
+    cs,
+    road_ms: float,
+    v_ego: float,
+  ) -> str | None:
+    if not bool(getattr(nav, "shouldSendTurnDesire", False)):
+      return None
+    if bool(getattr(nav, "shouldSendLaneChangeDesire", False)):
+      return None
+    if _as_int(getattr(nav, "maneuverPhase", 0)) != PHASE_TURN_ACTIVE:
+      return None
+
+    side = _dir_name(nav)
+    if side not in ("left", "right"):
+      return None
+    if _blink_side_blocked(side, cs):
+      return None
+
+    if is_urban_context(road_ms, v_ego):
+      if urban_red_left_hold(nav, cs, side=side):
+        return None
+      if urban_rtor_red_hold(nav, cs, side=side):
+        return None
+
+    dist = float(getattr(nav, "nextManeuverDistance", 0.0) or 0.0)
+    if not 0.0 < dist <= float(TURN_DESIRE_WINDOW_M):
+      return None
+    if dist > arm_distance_m(v_ego):
+      return None
+    return side
+
+  def _eligible_fork(
+    self,
+    *,
+    nav,
+    cs,
+    road_ms: float,
+    v_ego: float,
+  ) -> str | None:
+    if not bool(getattr(nav, "shouldSendLaneChangeDesire", False)):
+      return None
+    if bool(getattr(nav, "shouldSendTurnDesire", False)):
+      return None
+    if _as_int(getattr(nav, "maneuverPhase", 0)) != PHASE_HIGHWAY_COMMIT:
+      return None
+    if not _mtype_is_fork(nav):
+      return None
+    if not is_highway_fast_context(road_ms, v_ego):
+      return None
+
+    side = _lc_dir_name(nav)
+    if side not in ("left", "right"):
+      return None
+    if _blink_side_blocked(side, cs):
+      return None
+
+    dist = float(getattr(nav, "nextManeuverDistance", 0.0) or 0.0)
+    if dist <= 0.0 or dist > arm_distance_m(v_ego):
+      return None
+    return side
+
   def _eligible(
     self,
     *,
@@ -189,42 +289,13 @@ class NavAutoBlinker:
       return None
     if not bool(getattr(nav, "active", False)):
       return None
-    if not bool(getattr(nav, "shouldSendTurnDesire", False)):
-      return None
-    if bool(getattr(nav, "shouldSendLaneChangeDesire", False)):
-      return None
-    if _as_int(getattr(nav, "maneuverPhase", 0)) != PHASE_TURN_ACTIVE:
-      return None
-
-    side = _dir_name(nav)
-    if side not in ("left", "right"):
-      return None
-
-    left = bool(getattr(cs, "leftBlinker", False))
-    right = bool(getattr(cs, "rightBlinker", False))
-    if side == "left" and right:
-      return None
-    if side == "right" and left:
-      return None
-    if (side == "left" and left) or (side == "right" and right):
-      return None  # driver already signaling
-
-    if same_side_bsm_blocked(side, cs):
-      return None
 
     road_ms = float(getattr(nav, "roadSpeedLimit", 0.0) or 0.0)
     v_ego = float(getattr(cs, "vEgo", 0.0) or 0.0)
-    if is_urban_context(road_ms, v_ego):
-      if urban_red_left_hold(nav, cs, side=side):
-        return None
-      if urban_rtor_red_hold(nav, cs, side=side):
-        return None
 
-    dist = float(getattr(nav, "nextManeuverDistance", 0.0) or 0.0)
-    if not 0.0 < dist <= float(TURN_DESIRE_WINDOW_M):
-      return None
-    if dist > arm_distance_m(v_ego):
-      return None
+    side = self._eligible_turn(nav=nav, cs=cs, road_ms=road_ms, v_ego=v_ego)
+    if side is None:
+      side = self._eligible_fork(nav=nav, cs=cs, road_ms=road_ms, v_ego=v_ego)
     return side
 
   def update(

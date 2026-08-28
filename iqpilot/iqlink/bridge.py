@@ -401,6 +401,11 @@ class IqlinkBridge:
     n.trafficLight = str(fields.get("trafficLight") or "none")
     n.trafficLightDistM = float(fields.get("trafficLightDistM") or 0.0)
     n.trafficLightRemainS = float(fields.get("trafficLightRemainS") or 0.0)
+    n.roadSpeedLimit = float(fields.get("roadSpeedLimit") or 0.0)
+    n.roadSpeedLimitValid = bool(fields.get("roadSpeedLimitValid"))
+    n.leftTurnPending = bool(fields.get("leftTurnPending"))
+    n.rightTurnPending = bool(fields.get("rightTurnPending"))
+    n.laneRecommend = str(fields.get("laneRecommend") or "none")
     return msg
 
   def _maybe_timeout(self) -> None:
