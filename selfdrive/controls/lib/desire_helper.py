@@ -14,6 +14,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_change import (
   NavExitLaneChangeController,
 )
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_turn import IQNavTurnController, TURN_TRIGGER_MPS
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import eval_nav_turn_desire
 
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
@@ -125,12 +126,22 @@ class DesireHelper:
     if not getattr(nav_state, "shouldSendTurnDesire", False):
       return TurnDirection.none
     direction = getattr(nav_state, "turnDesireDirection", TurnDirection.none)
-    # Same-side BSM: hold the nav turn while side traffic is flagged.
-    if direction == TurnDirection.turnLeft and bool(getattr(carstate, "leftBlindspot", False)):
+    dir_raw = getattr(direction, "raw", direction)
+    if dir_raw in (TurnDirection.none, 0):
       return TurnDirection.none
-    if direction == TurnDirection.turnRight and bool(getattr(carstate, "rightBlindspot", False)):
-      return TurnDirection.none
-    return direction
+    turn_dist = float(getattr(nav_state, "nextManeuverDistance", 0.0) or 0.0)
+    allowed = eval_nav_turn_desire(
+      direction_raw=int(dir_raw),
+      turn_dist_m=turn_dist,
+      v_ego_mps=float(carstate.vEgo),
+      left_blinker=bool(carstate.leftBlinker),
+      right_blinker=bool(carstate.rightBlinker),
+      left_blindspot=bool(getattr(carstate, "leftBlindspot", False)),
+      right_blindspot=bool(getattr(carstate, "rightBlindspot", False)),
+    )
+    if allowed:
+      return direction
+    return TurnDirection.none
 
   def _clear_lane_change(self) -> None:
     self.lane_change_state = LaneChangeState.off

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
+from openpilot.iqpilot.iqlink.protocol import TURN_DESIRE_WINDOW_M
 
 # Keep in sync with lane_turn.py (Low-Speed Turn Planning).
 TURN_TRIGGER_MPS = 45.0 * CV.KPH_TO_MS
@@ -32,6 +33,7 @@ MANEUVER_EXIT = 2
 MANEUVER_MERGE = 3
 MANEUVER_ROUNDABOUT = 7
 # cereal.custom.IQNavState.ManeuverPhase
+PHASE_TURN_ACTIVE = 2
 PHASE_HIGHWAY_PREPARE = 3
 PHASE_HIGHWAY_COMMIT = 4
 # cereal.log.LaneChangeState
@@ -50,6 +52,35 @@ STEER_IN_TURN_DEG = 20.0
 STEER_STRAIGHT_DEG = 12.0
 PATH_STRAIGHT_M = 1.0
 NAV_NEAR_TURN_M = 80.0
+
+
+def eval_nav_turn_desire(
+  *,
+  direction_raw: int,
+  turn_dist_m: float,
+  v_ego_mps: float,
+  left_blinker: bool,
+  right_blinker: bool,
+  left_blindspot: bool,
+  right_blindspot: bool,
+) -> int:
+  """Nav turn execution gate (A1): toast can fire earlier; desire only when confirmed."""
+  if direction_raw not in (TURN_LEFT, TURN_RIGHT):
+    return 0
+  if direction_raw == TURN_LEFT and left_blindspot:
+    return 0
+  if direction_raw == TURN_RIGHT and right_blindspot:
+    return 0
+  near_exec = 0.0 < float(turn_dist_m) <= NAV_NEAR_TURN_M
+  slow_enough = float(v_ego_mps) < TURN_TRIGGER_MPS
+  blinker_ok = (
+    (direction_raw == TURN_LEFT and left_blinker and not right_blinker) or
+    (direction_raw == TURN_RIGHT and right_blinker and not left_blinker)
+  )
+  if blinker_ok or (near_exec and slow_enough):
+    return direction_raw
+  return 0
+
 
 STAGE_OFF = 0
 STAGE_APPROACH = 1
@@ -127,6 +158,16 @@ def _nav_is_lane_change(nav_phase, nav_maneuver_type, nav_send_lc: bool) -> bool
   return False
 
 
+def _nav_led_approach(*, iqlink_on: bool, nav_send_turn: bool, nav_phase: int,
+                      nav_turn_dist_m: float, nav_send_lc: bool) -> bool:
+  """IQ-link nav turn: longitudinal approach without a blinker (toast window)."""
+  if not iqlink_on or not nav_send_turn or nav_send_lc:
+    return False
+  if _as_int(nav_phase) != PHASE_TURN_ACTIVE:
+    return False
+  return 0.0 < float(nav_turn_dist_m) <= TURN_DESIRE_WINDOW_M
+
+
 def _nav_dir_left(nav_maneuver_dir, nav_phase_dir) -> bool:
   return _as_int(nav_maneuver_dir) == TURN_LEFT or _as_int(nav_phase_dir) == NAV_LEFT
 
@@ -136,10 +177,18 @@ def _nav_dir_right(nav_maneuver_dir, nav_phase_dir) -> bool:
 
 
 def _nav_near_matching_turn(*, left: bool, right: bool, nav_maneuver_type,
-                            nav_maneuver_dir, nav_phase_dir, nav_turn_dist_m: float) -> bool:
-  if _as_int(nav_maneuver_type) not in (MANEUVER_TURN, MANEUVER_ROUNDABOUT):
-    return False
+                            nav_maneuver_dir, nav_phase_dir, nav_turn_dist_m: float,
+                            nav_send_turn: bool = False, nav_phase: int = 0) -> bool:
   if not (0.0 < float(nav_turn_dist_m) <= NAV_NEAR_TURN_M):
+    return False
+  nav_active_turn = bool(nav_send_turn) and _as_int(nav_phase) == PHASE_TURN_ACTIVE
+  if nav_active_turn:
+    if left and _nav_dir_left(nav_maneuver_dir, nav_phase_dir):
+      return True
+    if right and _nav_dir_right(nav_maneuver_dir, nav_phase_dir):
+      return True
+    return False
+  if _as_int(nav_maneuver_type) not in (MANEUVER_TURN, MANEUVER_ROUNDABOUT):
     return False
   if left and _nav_dir_left(nav_maneuver_dir, nav_phase_dir):
     return True
@@ -211,13 +260,22 @@ class UrbanTurnPrep:
     nav_phase_dir: int = 0,
     nav_turn_dist_m: float = 0.0,
     nav_send_lc: bool = False,
+    nav_send_turn: bool = False,
+    iqlink_on: bool = False,
   ) -> float | None:
     self._maybe_refresh_params()
 
     if not enabled or gas_pressed or not self._turn_planning_on:
       self.reset()
       return None
-    if not _one_blinker(left_blinker, right_blinker):
+    nav_led = _nav_led_approach(
+      iqlink_on=iqlink_on,
+      nav_send_turn=nav_send_turn,
+      nav_phase=nav_phase,
+      nav_turn_dist_m=nav_turn_dist_m,
+      nav_send_lc=nav_send_lc,
+    )
+    if not _one_blinker(left_blinker, right_blinker) and not nav_led:
       self.reset()
       return None
     if _as_int(lane_change_state) in (LC_STARTING, LC_FINISHING):
@@ -234,16 +292,20 @@ class UrbanTurnPrep:
       return None
 
     lat_m = _path_lateral_m(path_x, path_y)
+    nav_left = nav_led and _nav_dir_left(nav_maneuver_dir, nav_phase_dir)
+    nav_right = nav_led and _nav_dir_right(nav_maneuver_dir, nav_phase_dir)
     turning = (
       _path_matches_blinker(lat_m, left_blinker, right_blinker)
       or _steer_into_blinker(steering_angle_deg, left_blinker, right_blinker)
       or _nav_near_matching_turn(
-        left=left_blinker,
-        right=right_blinker,
+        left=left_blinker or nav_left,
+        right=right_blinker or nav_right,
         nav_maneuver_type=nav_maneuver_type,
         nav_maneuver_dir=nav_maneuver_dir,
         nav_phase_dir=nav_phase_dir,
         nav_turn_dist_m=nav_turn_dist_m,
+        nav_send_turn=nav_send_turn,
+        nav_phase=nav_phase,
       )
     )
     below_gate = v_ego < self._gate_mps

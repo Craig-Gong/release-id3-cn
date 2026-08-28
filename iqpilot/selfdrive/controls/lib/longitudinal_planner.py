@@ -291,6 +291,8 @@ class LongitudinalPlannerIQ:
       nav_phase_dir=getattr(nav, "maneuverDirection", 0),
       nav_turn_dist_m=float(getattr(nav, "nextManeuverDistance", 0.0) or 0.0),
       nav_send_lc=bool(getattr(nav, "shouldSendLaneChangeDesire", False)),
+      nav_send_turn=bool(getattr(nav, "shouldSendTurnDesire", False)),
+      iqlink_on=self._iqlink_on(),
     )
 
   def cruise_envelope(self, v_target: float, v_ego: float, t_idxs) -> np.ndarray:

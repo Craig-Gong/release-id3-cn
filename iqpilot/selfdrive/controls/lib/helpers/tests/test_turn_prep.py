@@ -6,6 +6,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import (
   LC_STARTING,
   MANEUVER_TURN,
   PHASE_HIGHWAY_COMMIT,
+  PHASE_TURN_ACTIVE,
   STAGE_APPROACH,
   STAGE_OFF,
   STAGE_TURN_IN,
@@ -191,3 +192,59 @@ def test_approach_tracks_higher_gate():
   v = _update(helper, 55.0)
   gate = min(TURN_TRIGGER_MPS, 28.0 * CV.MPH_TO_MS)
   assert abs(v - (gate - APPROACH_BELOW_GATE_MS)) < 1e-3
+
+
+def test_iqlink_nav_approach_without_blinker():
+  helper = _prep()
+  v = _update(
+    helper, 55.0,
+    left_blinker=False,
+    right_blinker=False,
+    iqlink_on=True,
+    nav_send_turn=True,
+    nav_phase=PHASE_TURN_ACTIVE,
+    nav_maneuver_dir=TURN_LEFT,
+    nav_turn_dist_m=100.0,
+  )
+  assert v is not None
+  assert helper.stage == STAGE_APPROACH
+
+
+def test_iqlink_nav_turn_in_without_blinker():
+  helper = _prep()
+  assert _update(
+    helper, 55.0,
+    left_blinker=False,
+    right_blinker=False,
+    iqlink_on=True,
+    nav_send_turn=True,
+    nav_phase=PHASE_TURN_ACTIVE,
+    nav_maneuver_dir=TURN_LEFT,
+    nav_turn_dist_m=60.0,
+  ) is not None
+  v = _update(
+    helper, 38.0,
+    left_blinker=False,
+    right_blinker=False,
+    iqlink_on=True,
+    nav_send_turn=True,
+    nav_phase=PHASE_TURN_ACTIVE,
+    nav_maneuver_dir=TURN_LEFT,
+    nav_turn_dist_m=50.0,
+  )
+  assert helper.stage == STAGE_TURN_IN
+  assert abs(v - TURN_IN_MS) < 1e-6
+
+
+def test_iqlink_nav_prep_skipped_when_iqlink_off():
+  helper = _prep()
+  assert _update(
+    helper, 55.0,
+    left_blinker=False,
+    right_blinker=False,
+    iqlink_on=False,
+    nav_send_turn=True,
+    nav_phase=PHASE_TURN_ACTIVE,
+    nav_maneuver_dir=TURN_LEFT,
+    nav_turn_dist_m=60.0,
+  ) is None
