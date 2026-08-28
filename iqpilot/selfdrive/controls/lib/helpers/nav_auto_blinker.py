@@ -155,13 +155,12 @@ def urban_rtor_red_hold(nav, cs, *, side: str) -> bool:
 
 
 def _blink_side_blocked(side: str, cs) -> bool:
+  """Block opposing stalk blinker and same-side BSM; same-side stalk is already lit."""
   left = bool(getattr(cs, "leftBlinker", False))
   right = bool(getattr(cs, "rightBlinker", False))
   if side == "left" and right:
     return True
   if side == "right" and left:
-    return True
-  if (side == "left" and left) or (side == "right" and right):
     return True
   if same_side_bsm_blocked(side, cs):
     return True
@@ -196,9 +195,63 @@ class NavAutoBlinker:
     self._debounce = 0
     self._active_side = None
 
+  def _latched_side(
+    self,
+    *,
+    nav,
+    cs,
+    road_ms: float,
+    v_ego: float,
+  ) -> str | None:
+    """Keep blinking after arm until send_turn / fork ends (ignore arm distance)."""
+    side = self._active_side
+    if side not in ("left", "right"):
+      return None
+    if _blink_side_blocked(side, cs):
+      return None
+
+    if bool(getattr(nav, "shouldSendTurnDesire", False)):
+      if bool(getattr(nav, "shouldSendLaneChangeDesire", False)):
+        return None
+      if _as_int(getattr(nav, "maneuverPhase", 0)) != PHASE_TURN_ACTIVE:
+        return None
+      if _dir_name(nav) != side:
+        return None
+      dist = float(getattr(nav, "nextManeuverDistance", 0.0) or 0.0)
+      if not 0.0 < dist <= float(TURN_DESIRE_WINDOW_M):
+        return None
+      if is_urban_context(road_ms, v_ego):
+        if urban_red_left_hold(nav, cs, side=side):
+          return None
+        if urban_rtor_red_hold(nav, cs, side=side):
+          return None
+      return side
+
+    if bool(getattr(nav, "shouldSendLaneChangeDesire", False)):
+      if bool(getattr(nav, "shouldSendTurnDesire", False)):
+        return None
+      if _as_int(getattr(nav, "maneuverPhase", 0)) != PHASE_HIGHWAY_COMMIT:
+        return None
+      if not _mtype_is_fork(nav):
+        return None
+      if not is_highway_fast_context(road_ms, v_ego):
+        return None
+      if _lc_dir_name(nav) != side:
+        return None
+      dist = float(getattr(nav, "nextManeuverDistance", 0.0) or 0.0)
+      if dist <= 0.0:
+        return None
+      return side
+
+    return None
+
   def _iqlink_on(self, params: Params) -> bool:
     try:
-      return bool(params.get_bool("IqlinkExclusive")) or bool(params.get_bool("NavigationActive"))
+      return (
+        bool(params.get_bool("IqlinkEnabled"))
+        or bool(params.get_bool("IqlinkExclusive"))
+        or bool(params.get_bool("NavigationActive"))
+      )
     except Exception:
       return False
 
@@ -321,6 +374,10 @@ class NavAutoBlinker:
       iqlink_on=iqlink_on,
       link_warn=link_warn,
     )
+    if side is None and self._active_side is not None:
+      road_ms = float(getattr(nav, "roadSpeedLimit", 0.0) or 0.0)
+      v_ego = float(getattr(cs, "vEgo", 0.0) or 0.0)
+      side = self._latched_side(nav=nav, cs=cs, road_ms=road_ms, v_ego=v_ego)
 
     if side is None:
       self.reset()

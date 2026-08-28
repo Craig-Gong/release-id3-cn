@@ -70,10 +70,12 @@ def create_blinker_control(packer, bus, ea_hud_stock_values, ea_control_stock_va
     "EA_Unknown",
   ]}
 
-  if ea_hud_stock_values["EA_Blinken"] == 0:
-    values.update({
-      "EA_Blinken": 1 if left_blinker else (2 if right_blinker else ea_hud_stock_values["EA_Blinken"]),
-    })
+  if left_blinker:
+    values["EA_Blinken"] = 1
+  elif right_blinker:
+    values["EA_Blinken"] = 2
+  elif ea_hud_stock_values["EA_Blinken"] == 0:
+    values["EA_Blinken"] = 0
 
   if hide_error and ea_control_stock_values["EA_Funktionsstatus"] in (0, 1, 7, 8):
     values.update({

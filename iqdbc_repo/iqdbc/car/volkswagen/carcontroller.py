@@ -462,9 +462,18 @@ class CarController(CarControllerBase):
 
     if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
       if self.frame % 2 == 0:
-        blinker_active = CS.left_blinker_active or CS.right_blinker_active
-        left_blinker = CC.leftBlinker if not blinker_active else False
-        right_blinker = CC.rightBlinker if not blinker_active else False
+        # Stalk intent only — BM_links reflects our own EA_02 blink and must not
+        # suppress sustained nav-auto / OP blinker requests on the next frame.
+        left_blinker = bool(CC.leftBlinker)
+        right_blinker = bool(CC.rightBlinker)
+        if CS.leftBlinker and not CC.leftBlinker:
+          left_blinker = False
+        if CS.rightBlinker and not CC.rightBlinker:
+          right_blinker = False
+        if CS.rightBlinker and left_blinker:
+          left_blinker = False
+        if CS.leftBlinker and right_blinker:
+          right_blinker = False
         can_sends.append(self.CCS.create_blinker_control(self.packer_pt, self.CAN.pt, CS.ea_hud_stock_values, CS.ea_control_stock_values,
                                                          left_blinker, right_blinker, self.hide_ea_error))
 
