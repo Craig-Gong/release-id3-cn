@@ -15,6 +15,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_change import (
   NavForkLaneChangeController,
 )
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_turn import IQNavTurnController, TURN_TRIGGER_MPS
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_auto_blinker import nav_auto_blinker_blocks_lc
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import eval_nav_turn_desire
 
 LaneChangeState = log.LaneChangeState
@@ -316,6 +317,9 @@ class DesireHelper:
   def update(self, carstate, lateral_active, lane_change_prob, nav_state=None, modeldata=None, radar_state=None):
     self._last_carstate = carstate
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
+    if nav_auto_blinker_blocks_lc(nav_state):
+      # EA_02 nav blink feeds back on BM_links; do not treat as driver lane-change intent.
+      one_blinker = False
     # Below the turn-desire gate, blinker is an intersection turn — do not run LC.
     below_speed = carstate.vEgo < LANE_CHANGE_SPEED_MIN
     nav_lc_active = self._refresh_turn_overrides(carstate, nav_state)

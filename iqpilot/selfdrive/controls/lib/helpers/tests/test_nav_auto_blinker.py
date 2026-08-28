@@ -211,3 +211,14 @@ def test_bsm_blocks_same_side():
   cs = _cs(leftBlindspot=True)
   left, right = _run(b, nav, cs)
   assert not left and not right
+
+
+def test_blocks_lc_while_nav_turn():
+  from types import SimpleNamespace
+  from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_auto_blinker import nav_auto_blinker_blocks_lc
+
+  p = _Params({"IQNavAutoBlinker": True})
+  nav = SimpleNamespace(active=True, shouldSendTurnDesire=True, shouldSendLaneChangeDesire=False)
+  assert nav_auto_blinker_blocks_lc(nav, p)
+  nav2 = SimpleNamespace(active=True, shouldSendTurnDesire=False, shouldSendLaneChangeDesire=False)
+  assert not nav_auto_blinker_blocks_lc(nav2, p)

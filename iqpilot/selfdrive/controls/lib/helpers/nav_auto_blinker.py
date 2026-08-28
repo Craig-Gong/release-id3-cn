@@ -24,6 +24,29 @@ D_MAX_M = 120.0
 DEBOUNCE_FRAMES = 3
 STANDSTILL_V_MS = 1.0
 
+
+def nav_auto_blinker_blocks_lc(nav, params: Params | None = None) -> bool:
+  """Nav EA_02 blink echoes on carState — must not arm highway lane-change FSM."""
+  store = params
+  if store is None:
+    try:
+      store = Params()
+    except Exception:
+      return False
+  try:
+    if not store.get_bool(PARAM_ENABLED):
+      return False
+  except Exception:
+    return False
+  if nav is None or not getattr(nav, "active", False):
+    return False
+  if bool(getattr(nav, "shouldSendTurnDesire", False)):
+    return True
+  if bool(getattr(nav, "shouldSendLaneChangeDesire", False)):
+    return True
+  return False
+
+
 PHASE_TURN_ACTIVE = 2
 MANEUVER_FORK = 4
 DIR_LEFT = 1
