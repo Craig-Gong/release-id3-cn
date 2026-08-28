@@ -112,6 +112,12 @@ AGENT_MANAGER_IFACE = "org.bluez.AgentManager1"
 # 4. User: 「配对过一次就变成已配对的设备，自动连接」+ fixed 2min PSK / plaintext APK / fix pair fail
 
 
+def status_notify_payload(device_ms: int | None = None) -> bytes:
+  """Phone iq-partner ACK contract: {"ok":true,"t":<device_ms>} (remoonlight SSOT)."""
+  t = int(device_ms if device_ms is not None else time.time() * 1000)
+  return f'{{"ok":true,"t":{t}}}'.encode("ascii")
+
+
 def set_ble_link_state(params: Params, state: int) -> None:
   """UI polls IqlinkBleLinkState (0/1/2). Also mirrors IqlinkBleConnected=(state==2)."""
   state = int(state)
@@ -821,6 +827,8 @@ class IqlinkBleGatt:
 
     def start_notify(_params):
       self._notify_status = True
+      # Phone may WriteValue before StartNotify; flush ACK once notify is armed.
+      self._notify_ok()
       return None
 
     def stop_notify(_params):
@@ -907,7 +915,7 @@ class IqlinkBleGatt:
   def _notify_ok(self) -> None:
     if not self.running or self.bus is None or not self._notify_status:
       return
-    payload = b'{"ok":true}'
+    payload = status_notify_payload()
     self._values["status"] = payload
     try:
       self.bus.emit_signal(

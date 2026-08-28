@@ -8,7 +8,7 @@ IQLINK_PARAM_DEFAULTS = {
   "IqlinkExclusive": "0",
   "IqlinkLinkWarn": "0",
   "IqlinkSsidWhitelist": None,
-  "IqlinkWarnTimeoutS": "3",
+  "IqlinkWarnTimeoutS": "5",
   "IqlinkCancelTimeoutS": "5",
   "IqlinkHotspotSsid": "comma-cplink",
   "IqlinkPinnedGaodeVersion": None,

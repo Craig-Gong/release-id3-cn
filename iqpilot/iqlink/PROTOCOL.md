@@ -46,7 +46,7 @@ Do **not** use setup UUIDs `73f2c700-…` (Konn3kt setup only).
 |------|------|-------|
 | Service | `73f2c710-5e40-4d0d-8b7f-fde61f729100` | primary |
 | Param write | `73f2c711-5e40-4d0d-8b7f-fde61f729100` | write, write-without-response |
-| Status notify | `73f2c712-5e40-4d0d-8b7f-fde61f729100` | notify |
+| Status notify | `73f2c712-5e40-4d0d-8b7f-fde61f729100` | notify (`{"ok":true,"t":<device_ms>}`) |
 
 ### Params (UI)
 

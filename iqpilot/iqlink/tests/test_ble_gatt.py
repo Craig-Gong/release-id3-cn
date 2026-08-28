@@ -14,6 +14,15 @@ from openpilot.iqpilot.iqlink.ble_gatt import (
 )
 
 
+def test_status_notify_payload_includes_device_ms():
+  from openpilot.iqpilot.iqlink.ble_gatt import status_notify_payload
+  import json
+
+  payload = status_notify_payload(1_720_000_000_123)
+  obj = json.loads(payload.decode("ascii"))
+  assert obj == {"ok": True, "t": 1_720_000_000_123}
+
+
 def test_compute_hmac_stable():
   psk = "123456"
   data = {"nRoadLimitSpeed": 80, "nTBTDist": 100}
