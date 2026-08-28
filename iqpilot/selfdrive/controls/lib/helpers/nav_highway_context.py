@@ -1,4 +1,4 @@
-"""Shared IQ-link highway/urban context (soft-curve cap, lane guide, fork LC)."""
+"""Shared IQ-link highway/urban context (soft-curve cap, lane guide)."""
 
 from __future__ import annotations
 
