@@ -148,8 +148,8 @@ def _text_needs_unifont(text: str) -> bool:
 
 
 def font_fallback(font: rl.Font, text: str | None = None) -> rl.Font:
-  """Fall back to unifont for languages that require it, or when text has non-Latin glyphs."""
-  if multilang.requires_unifont() or (text and _text_needs_unifont(text)):
+  """Fall back to unifont when text has non-Latin glyphs (not for all zh-CHS UI)."""
+  if text and _text_needs_unifont(text):
     return gui_app.font(FontWeight.UNIFONT)
   return font
 
