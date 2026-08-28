@@ -18,6 +18,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.common.issue_debug import log_issue_limited
 
 from openpilot.iqpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlannerIQ
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.green_follow_lead import follow_lead_soft_launch
 
 A_CRUISE_MAX_VALS = [2.0, 1.6, 0.8, 0.6]
 A_CRUISE_MAX_BP = [0., 10.0, 25., 40.]
@@ -220,8 +221,9 @@ class LongitudinalPlanner(LongitudinalPlannerIQ):
       self.launch_armed = True
     elif v_ego > LAUNCH_DISARM_SPEED:
       self.launch_armed = False
+    soft_follow_launch = follow_lead_soft_launch(sm, v_ego)
     if (self.launch_armed and self.is_e2e(sm) and not output_should_stop_e2e and
-        not self.nav_stop_request and not self._standstill_hold and
+        not self.nav_stop_request and not self._standstill_hold and not soft_follow_launch and
         np.interp(LAUNCH_COMMIT_T, T_IDXS_MPC, model_v) > LAUNCH_DISARM_SPEED):
       t_cut = min(float(T_IDXS_MPC[np.argmax(model_v > LAUNCH_MOVING_SPEED)]), LAUNCH_COMMIT_T)
       t_shifted = T_IDXS_MPC + t_cut

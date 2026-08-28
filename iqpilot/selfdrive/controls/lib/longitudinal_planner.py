@@ -1,6 +1,7 @@
 """
 Copyright © IQ.Lvbs, apart of Project Teal Lvbs, All Rights Reserved, licensed under https://konn3kt.com/tos
 """
+import time
 from datetime import datetime
 
 import numpy as np
@@ -16,6 +17,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.traffic_stop_offset import Traffic
 from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.engine import IQDynamicController
 from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.imahelper import IQConstants
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.e2e_alerts import EndToEndAlertEngine
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.green_follow_lead import GreenFollowLeadGate
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.junction_hud import junction_hud_active, light_token
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
 from openpilot.iqpilot.iqlink.protocol import nav_turn_pending
@@ -93,6 +95,7 @@ class LongitudinalPlannerIQ:
     self._standstill_hold_s = 0.0
     self._green_launch = False
     self._hold_released = False
+    self._green_follow_gate = GreenFollowLeadGate()
     self.junction_hud = False
     self.turn_prep = UrbanTurnPrep(params=self._params)
 
@@ -341,13 +344,28 @@ class LongitudinalPlannerIQ:
       nav_red=bool(self.nav_stop_request),
     )
 
+  def _release_nav_go(self, should_stop: bool, a_target: float, sm: messaging.SubMaster, *, nav_go: bool) -> tuple[bool, float]:
+    """Release standstill hold for navigation go, optionally waiting on a close lead."""
+    if self._green_follow_gate.may_release(now=time.monotonic(), nav_go=nav_go, sm=sm):
+      self._standstill_hold = False
+      self._standstill_hold_s = 0.0
+      self._hold_released = True
+      self._green_launch = True
+      return False, a_target
+    self._standstill_hold = True
+    self._standstill_hold_s = 0.0
+    self._green_launch = False
+    self._hold_released = False
+    return True, min(float(a_target), 0.0)
+
   def apply_standstill_hold(self, should_stop: bool, a_target: float, v_ego: float, sm: messaging.SubMaster) -> tuple[bool, float]:
     """Keep the car held after a light / model stop until go is stable.
 
     Arm on nav red-stop, Force Stop, planner shouldStop, or vision model-stop.
     Release does not wait for sticky vision-stop at the line (short E2E path).
-    Explicit remainS==1 launches immediately (no 1 s dwell). APK green still waits
-    ~1 s of stable go. Gas always wins.
+    Explicit remainS==1 launches immediately for head car (no close lead); with a
+    close lead, wait until the lead moves or FOLLOW_TIMEOUT_S. APK green still waits
+    ~1 s of stable go before the same follow-lead gate. Gas always wins.
     """
     cs = sm['carState']
     standstill = bool(getattr(cs, "standstill", False) or v_ego <= 0.3)
@@ -396,15 +414,12 @@ class LongitudinalPlannerIQ:
       self._standstill_hold_s = 0.0
       self._green_launch = False
       self._hold_released = False
+      self._green_follow_gate.reset()
       return should_stop, a_target
 
-    # IQ-link: remainS==1 is an immediate go (skip the green dwell timer).
+    # IQ-link: remainS==1 immediate for head car; follow-lead gate when queued.
     if remain_go and not force:
-      self._standstill_hold = False
-      self._standstill_hold_s = 0.0
-      self._hold_released = True
-      self._green_launch = True
-      return False, a_target
+      return self._release_nav_go(should_stop, a_target, sm, nav_go=True)
 
     if standstill:
       if nav_go:
@@ -442,8 +457,7 @@ class LongitudinalPlannerIQ:
     self._standstill_hold_s = 0.0
     self._hold_released = True
     if nav_go:
-      self._green_launch = True
-      return False, a_target
+      return self._release_nav_go(should_stop, a_target, sm, nav_go=True)
     return should_stop, a_target
 
   def _apply_force_stop(self, v_target: float, v_ego: float, sm: messaging.SubMaster, apply_enabled: bool) -> float:

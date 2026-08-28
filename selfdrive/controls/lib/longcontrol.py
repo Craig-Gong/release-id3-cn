@@ -1,4 +1,10 @@
 import numpy as np
+
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.green_follow_lead import (
+  FOLLOW_LEAD_START_ACCEL,
+  LEAD_QUEUE_M,
+  FOLLOW_LEAD_LAUNCH_V_EGO,
+)
 from cereal import car
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
@@ -101,6 +107,9 @@ class LongControl:
     elif self.long_control_state == LongCtrlState.starting:
       # MEB needs a firm floor (startAccel) then a linear climb — PID from ~0 feels sluggish.
       floor = float(self.CP.startAccel)
+      if (has_lead and LEAD_QUEUE_M >= lead_distance > 0.0
+          and CS.vEgo < FOLLOW_LEAD_LAUNCH_V_EGO):
+        floor = min(floor, FOLLOW_LEAD_START_ACCEL)
       desired = max(floor, float(a_target))
       if self.last_output_accel < floor:
         output_accel = floor

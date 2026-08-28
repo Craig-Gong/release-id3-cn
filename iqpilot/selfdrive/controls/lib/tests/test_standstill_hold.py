@@ -5,6 +5,9 @@ DT_MDL = 0.05
 _STANDSTILL_HOLD_RELEASE_S = 1.0
 
 
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.green_follow_lead import GreenFollowLeadGate
+
+
 def _load_planner_cls():
   from openpilot.iqpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlannerIQ
   return LongitudinalPlannerIQ
@@ -20,15 +23,20 @@ def _build_planner(*, nav_stop=False, forcing_stop=False, model_stop=False):
   planner._standstill_hold_s = 0.0
   planner._green_launch = False
   planner._hold_released = False
+  planner._green_follow_gate = GreenFollowLeadGate()
   return planner
 
 
-def _sm(*, standstill=True, gas=False, accel=False, v_ego=0.0, light="none", remain_s=0.0):
-  return {
+def _sm(*, standstill=True, gas=False, accel=False, v_ego=0.0, light="none", remain_s=0.0,
+        lead_status=False, d_rel=6.0, v_lead=0.0):
+  sm = {
     "carState": SimpleNamespace(standstill=standstill, gasPressed=gas, vEgo=v_ego),
     "iqCarState": SimpleNamespace(accelPressed=accel),
     "iqNavState": SimpleNamespace(trafficLight=light, trafficLightRemainS=remain_s),
+    "radarState": SimpleNamespace(leadOne=SimpleNamespace(status=lead_status, dRel=d_rel, vLead=v_lead)),
+    "modelV2": SimpleNamespace(leadsV3=[SimpleNamespace(prob=0.0, x=[50.0], v=[0.0])]),
   }
+  return sm
 
 
 def test_hold_blocks_brief_model_go():
@@ -147,4 +155,48 @@ def test_left_arrow_red_remain_1_releases_immediately():
   should_stop, a_target = planner.apply_standstill_hold(True, -0.4, 0.0, sm)
   assert should_stop is False
   assert planner._standstill_hold is False
+  assert planner._green_launch is True
+
+
+def test_remain_s_1_waits_on_close_lead():
+  from openpilot.iqpilot.selfdrive.controls.lib.helpers.green_follow_lead import LEAD_GO_CONFIRM_S, LEAD_GO_SPEED_MPS
+
+  planner = _build_planner(nav_stop=True)
+  planner.apply_standstill_hold(True, -2.0, 0.0, _sm(light="red", remain_s=8.0, lead_status=True, d_rel=5.0))
+  planner.nav_stop_request = False
+  should_stop, _ = planner.apply_standstill_hold(True, -0.4, 0.0, _sm(light="red", remain_s=1.0, lead_status=True, d_rel=5.0, v_lead=0.0))
+  assert should_stop
+  assert planner._standstill_hold
+
+  released = False
+  sm_go = _sm(light="red", remain_s=1.0, lead_status=True, d_rel=5.2, v_lead=LEAD_GO_SPEED_MPS + 0.2)
+  for _ in range(int((LEAD_GO_CONFIRM_S + 0.2) / DT_MDL)):
+    should_stop, _ = planner.apply_standstill_hold(True, -0.4, 0.0, sm_go)
+    if not should_stop:
+      released = True
+      break
+  assert released
+  assert planner._green_launch is True
+
+
+def test_nav_green_waits_on_close_lead():
+  from openpilot.iqpilot.selfdrive.controls.lib.helpers.green_follow_lead import LEAD_GO_CONFIRM_S, LEAD_GO_SPEED_MPS
+
+  planner = _build_planner(nav_stop=True)
+  planner.apply_standstill_hold(True, -2.0, 0.0, _sm(light="red", lead_status=True, d_rel=4.0))
+  planner.nav_stop_request = False
+  sm_green = _sm(light="green", lead_status=True, d_rel=4.0, v_lead=0.0)
+  for _ in range(int(_STANDSTILL_HOLD_RELEASE_S / DT_MDL)):
+    should_stop, _ = planner.apply_standstill_hold(True, -0.4, 0.0, sm_green)
+  assert should_stop
+  assert planner._standstill_hold
+
+  sm_move = _sm(light="green", lead_status=True, d_rel=4.3, v_lead=LEAD_GO_SPEED_MPS + 0.2)
+  released = False
+  for _ in range(int((LEAD_GO_CONFIRM_S + 0.2) / DT_MDL)):
+    should_stop, _ = planner.apply_standstill_hold(True, -0.4, 0.0, sm_move)
+    if not should_stop:
+      released = True
+      break
+  assert released
   assert planner._green_launch is True
