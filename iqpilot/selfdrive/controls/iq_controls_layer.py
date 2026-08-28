@@ -87,12 +87,13 @@ class IQControlsLayer(InferenceStateBase):
 
   def apply_nav_auto_blinker(self, CC, sm: messaging.SubMaster) -> None:
     """Request EA_02 blinkers from IQ-link nav turn (default off)."""
+    if not bool(sm['selfdriveState'].enabled):
+      return
     try:
       nav = sm['iqNavState']
       cs = sm['carState']
-      engaged = bool(sm['selfdriveState'].enabled)
       left, right = self.nav_auto_blinker.update(
-        nav, cs, engaged=engaged, params=self.params,
+        nav, cs, engaged=True, params=self.params,
       )
       if left:
         CC.leftBlinker = True
