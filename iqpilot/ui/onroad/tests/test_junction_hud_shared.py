@@ -1,6 +1,9 @@
 from openpilot.iqpilot.ui.onroad.junction_hud_shared import (
+  GreenFlashState,
   JunctionHudSnapshot,
+  GREEN_FLASH_S,
   junction_accent_rgb,
+  merge_green_flash,
   read_junction_snapshot,
 )
 
@@ -59,3 +62,46 @@ def test_inactive_when_disengaged():
 def test_accent_colors():
   assert junction_accent_rgb("red")[0] > 200
   assert junction_accent_rgb("yellow")[1] > 150
+  assert junction_accent_rgb("green")[1] > 150
+
+
+def test_green_headline():
+  snap = JunctionHudSnapshot(True, "green", 0.0, 0.0)
+  assert snap.headline == "绿灯"
+  assert snap.detail == "可通行"
+
+
+def test_green_flash_after_stop():
+  state = GreenFlashState()
+  stop = JunctionHudSnapshot(True, "red", 30.0, 5.0)
+  idle = JunctionHudSnapshot(False, "none", 0.0, 0.0)
+  t0 = 100.0
+
+  merge_green_flash(stop, engaged=True, has_lead=False, light="red",
+                    dist_m=30.0, remain_s=5.0, state=state, now=t0)
+  snap = merge_green_flash(idle, engaged=True, has_lead=False, light="green",
+                           dist_m=0.0, remain_s=0.0, state=state, now=t0 + 0.1)
+  assert snap.active and snap.light == "green" and snap.headline == "绿灯"
+
+  snap_late = merge_green_flash(idle, engaged=True, has_lead=False, light="green",
+                                dist_m=0.0, remain_s=0.0, state=state, now=t0 + GREEN_FLASH_S + 0.1)
+  assert not snap_late.active
+
+
+def test_green_flash_skips_without_prior_stop():
+  state = GreenFlashState()
+  idle = JunctionHudSnapshot(False, "none", 0.0, 0.0)
+  snap = merge_green_flash(idle, engaged=True, has_lead=False, light="green",
+                           dist_m=0.0, remain_s=0.0, state=state, now=1.0)
+  assert not snap.active
+
+
+def test_green_flash_hidden_with_lead():
+  state = GreenFlashState()
+  stop = JunctionHudSnapshot(True, "red", 10.0, 3.0)
+  idle = JunctionHudSnapshot(False, "none", 0.0, 0.0)
+  merge_green_flash(stop, engaged=True, has_lead=False, light="red",
+                    dist_m=10.0, remain_s=3.0, state=state, now=10.0)
+  snap = merge_green_flash(idle, engaged=True, has_lead=True, light="green",
+                           dist_m=0.0, remain_s=0.0, state=state, now=10.1)
+  assert not snap.active

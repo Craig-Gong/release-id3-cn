@@ -24,8 +24,10 @@ from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.iqwidgets.lib import canvas
 from openpilot.iqpilot.ui.onroad.junction_hud_shared import (
+  GreenFlashState,
   JunctionHudSnapshot,
   junction_accent_rgb,
+  merge_green_flash,
   read_junction_snapshot,
 )
 from iqdbc.car.volkswagen.values import VolkswagenFlags
@@ -315,9 +317,37 @@ class IQJunctionHud:
     self._snap = JunctionHudSnapshot(False, "none", 0.0, 0.0)
     self._face = gui_app.font(FontWeight.SEMI_BOLD)
     self._detail_face = gui_app.font(FontWeight.MEDIUM)
+    self._green_flash = GreenFlashState()
 
   def update(self) -> None:
-    self._snap = read_junction_snapshot(_feed(), engaged=ui_state.engaged)
+    sm = _feed()
+    engaged = ui_state.engaged
+    base = read_junction_snapshot(sm, engaged=engaged)
+    light = "none"
+    dist_m = 0.0
+    remain_s = 0.0
+    try:
+      nav = sm["iqNavState"]
+      light = str(getattr(nav, "trafficLight", "none") or "none")
+      dist_m = float(getattr(nav, "trafficLightDistM", 0.0) or 0.0)
+      remain_s = float(getattr(nav, "trafficLightRemainS", 0.0) or 0.0)
+    except Exception:
+      pass
+    has_lead = False
+    try:
+      has_lead = bool(getattr(sm["radarState"].leadOne, "status", False))
+    except Exception:
+      pass
+    self._snap = merge_green_flash(
+      base,
+      engaged=engaged,
+      has_lead=has_lead,
+      light=light,
+      dist_m=dist_m,
+      remain_s=remain_s,
+      state=self._green_flash,
+      now=time.monotonic(),
+    )
 
   def render(self, rect) -> None:
     if not self._snap.active:
