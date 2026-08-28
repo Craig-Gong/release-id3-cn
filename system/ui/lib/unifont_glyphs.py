@@ -11,7 +11,7 @@ EXTRA_CHARS = "–‑✓×°§•X⚙✕◀▶✔⌫⇧␣○●↳çêüñ–�
 UNIFONT_LANGUAGES = frozenset({"ar", "th", "zh-CHT", "zh-CHS", "ko", "ja"})
 _UNIFONT_SIZE = 16
 _GLYPH_PADDING = 6
-_CACHE_STAMP = "id3_ui_cjk_v1"
+_CACHE_STAMP = "id3_ui_cjk_v2"
 
 
 def _fonts_dir() -> Path:
