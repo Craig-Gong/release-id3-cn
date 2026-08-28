@@ -179,6 +179,15 @@ class IqlinkBridge:
       cancel_s = DEFAULT_CANCEL_TIMEOUT_S
     return max(warn_s, 0.5), max(cancel_s, warn_s)
 
+  def _ack_ble_rx(self) -> None:
+    """Any live BLE write clears LinkWarn without dropping the R1 exec snapshot."""
+    self._last_rx = time.monotonic()
+    try:
+      self.params.put_bool("IqlinkLinkWarn", False)
+    except Exception:
+      pass
+    self._warn_logged = False
+
   def _vision_stop(self) -> bool:
     try:
       self.sm.update(0)
@@ -216,7 +225,7 @@ class IqlinkBridge:
     with self._lock:
       same = fp == getattr(self, "_raw_fp", None) and self._raw_payload is not None
     if same:
-      self._last_rx = time.monotonic()
+      self._ack_ble_rx()
       return
 
     fields = proto.map_carrot_to_nav_fields(
@@ -242,7 +251,7 @@ class IqlinkBridge:
       and not fields.get("destinationValid")
       and not fields.get("nextManeuverValid")
     ):
-      self._last_rx = time.monotonic()
+      self._ack_ble_rx()
       # Keepalive never clears an existing exec snapshot (R1).
       if self._latest is None:
         try:
@@ -269,13 +278,12 @@ class IqlinkBridge:
       pass
     self.params.put_bool("IqlinkExclusive", True)
     self.params.put_bool("NavigationActive", True)
-    self.params.put_bool("IqlinkLinkWarn", False)
+    self._ack_ble_rx()
     # IQ-link on: no nav-exit auto LC / nudgeless ALC (product: driver or blinker ALC only).
     try:
       self.params.put_bool("NavExitLaneChange", False)
     except Exception:
       pass
-    self._warn_logged = False
     if fields.get("destinationValid"):
       # Remain-only valid often has no POI/coords — never invent a pin (esp. not ego GPS).
       # Also drop a stale pin left by an older session / prior ego-as-goal bug.

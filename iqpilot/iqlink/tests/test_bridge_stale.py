@@ -109,6 +109,50 @@ def test_ingest_ignores_unchanged_payload():
   assert abs(b._latest["speedTarget"] - 80 / 3.6) < 1e-3
 
 
+def test_keepalive_clears_link_warn():
+  """Empty BLE heartbeat must clear IqlinkLinkWarn so nav long resumes after re-engage."""
+  p = FakeParams({"IqlinkLinkWarn": True})
+  b = IqlinkBridge.__new__(IqlinkBridge)
+  b.params = p
+  b._lock = threading.Lock()
+  b._latest = {"active": True, "valid": True, "speedTarget": 16.67}
+  b._raw_payload = {"nRoadLimitSpeed": 60, "nTBTDist": 120, "nTBTTurnType": 1}
+  b._raw_fp = None
+  b._last_rx = 0.0
+  b._command_index = 0
+  b._last_lc_cmd = False
+  b._warn_logged = True
+  b._road_limit_hold = type("H", (), {"filter_kph": lambda self, k, t: k})()
+  b.sm = type("SM", (), {"update": lambda *a, **k: None, "alive": {}})()
+  b.ingest({"nRoadLimitSpeed": 0})
+  assert p.get_bool("IqlinkLinkWarn") is False
+  assert b._warn_logged is False
+  assert b._latest is not None
+
+
+def test_duplicate_payload_clears_link_warn():
+  p = FakeParams({"IqlinkLinkWarn": True})
+  b = IqlinkBridge.__new__(IqlinkBridge)
+  b.params = p
+  b._lock = threading.Lock()
+  b._latest = None
+  b._raw_payload = None
+  b._raw_fp = None
+  b._last_rx = 0.0
+  b._command_index = 0
+  b._last_lc_cmd = False
+  b._warn_logged = True
+  b.sm = type("SM", (), {"update": lambda *a, **k: None, "alive": {}})()
+  payload = {"nRoadLimitSpeed": 60, "nTBTDist": 80, "nTBTTurnType": 1}
+  b.ingest(payload)
+  assert p.get_bool("IqlinkLinkWarn") is False
+  p.values["IqlinkLinkWarn"] = True
+  b._warn_logged = True
+  b.ingest(dict(payload))
+  assert p.get_bool("IqlinkLinkWarn") is False
+  assert b._warn_logged is False
+
+
 def test_ingest_disables_nav_exit_alc():
   p = FakeParams({"NavExitLaneChange": True, "AutoLaneChangeTimer": 1})
   b = IqlinkBridge.__new__(IqlinkBridge)
