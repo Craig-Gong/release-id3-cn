@@ -176,12 +176,6 @@ class IQDynamicLayout(Widget):
         "IQForceStops",
       ),
       _toggle_item(
-        "IQ-link 导航自动打灯",
-        "IQ-link 导航转弯时按车速提前请求同向转向灯（高速约 50–120 米；城区叠加红灯/右转待转/盲区门控）。"
-        "默认关——启用前请先做低速 EA_02 打灯验证。",
-        "IQNavAutoBlinker",
-      ),
-      _toggle_item(
         "IQ-link 高速弯缓收",
         "IQ-link 快速路/高速转弯时，按 TBT 距离平缓收巡航速度；城区仍走低速打灯转弯预备。",
         "IQNavSoftCurveCap",

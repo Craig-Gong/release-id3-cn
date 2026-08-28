@@ -37,7 +37,6 @@ EXTRA_PARAM_DEFAULTS = {
   "AutoGasSyncSpeed": "1",
   "IQTrafficStopOffset": "3",
   "IQLeadStopDistance": "4",
-  "IQNavAutoBlinker": "0",
   "IQNavSoftCurveCap": "1",
   "IQNavLaneGuide": "1",
   "IQNavHighwayAlc": "0",
@@ -53,7 +52,6 @@ EXTRA_PARAM_DEFAULTS = {
 EXTRA_BOOL_KEYS = {
   "AutoGasSyncSpeed",
   "EcoflowEnabled",
-  "IQNavAutoBlinker",
   "IQNavSoftCurveCap",
   "IQNavLaneGuide",
   "IQNavHighwayAlc",

@@ -233,8 +233,6 @@ class Controls(IQControlsLayer):
         cloudlog.error(f"actuators.{p} not finite {actuators.to_dict()}")
         setattr(actuators, p, 0.0)
 
-    self.apply_nav_auto_blinker(CC, self.sm)
-
     return CC, lac_log
 
   def publish(self, CC, lac_log):

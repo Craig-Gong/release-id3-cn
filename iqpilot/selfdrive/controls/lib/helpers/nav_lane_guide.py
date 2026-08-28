@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 
 from openpilot.common.params import Params
-from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_auto_blinker import is_highway_fast_context
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_highway_context import is_highway_fast_context
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_decel import approach_speed_ms
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import (
   DEFAULT_TURN_GATE_MPS,

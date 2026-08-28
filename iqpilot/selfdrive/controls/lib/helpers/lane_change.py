@@ -302,7 +302,7 @@ class NavForkLaneChangeController:
     if self._raw(getattr(nav_state, "nextManeuverType", _ManeuverType.none)) != int(_ManeuverType.fork):
       return False
 
-    from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_auto_blinker import is_highway_fast_context
+    from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_highway_context import is_highway_fast_context
     from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_turn import TURN_TRIGGER_MPS
 
     if float(carstate.vEgo) < TURN_TRIGGER_MPS:

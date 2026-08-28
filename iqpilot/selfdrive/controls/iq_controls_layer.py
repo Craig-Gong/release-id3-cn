@@ -19,7 +19,6 @@ from openpilot.iqpilot.common.steer_delay import resolve_steer_delay
 from openpilot.iqpilot.selfdrive.car.enhanced_stock_longitudinal_control import build_iq_control_params_from_plan
 from openpilot.iqpilot.selfdrive.iqmodeld.models.inference_state import InferenceStateBase
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.blinker_pause import IQSignalPauseController
-from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_auto_blinker import NavAutoBlinker
 from openpilot.iqpilot.selfdrive.controls.lib.iq_dynamic.radar_manager import RadarManager
 
 _PARAM_REFRESH_S = 3.0
@@ -33,7 +32,6 @@ class IQControlsLayer(InferenceStateBase):
     self.CP = CP
     self.params = params
     self.blinker_pause_lateral = IQSignalPauseController()
-    self.nav_auto_blinker = NavAutoBlinker(params)
 
     cloudlog.info("IQ controls layer waiting for IQCarParams")
     self.CP_IQ = messaging.log_from_bytes(params.get("IQCarParams", block=True), custom.IQCarParams)
@@ -84,23 +82,6 @@ class IQControlsLayer(InferenceStateBase):
   @staticmethod
   def _lead_snapshot(ld: log.RadarState.LeadData) -> dict:
     return {field: getattr(ld, field) for field in _LEAD_FIELDS}
-
-  def apply_nav_auto_blinker(self, CC, sm: messaging.SubMaster) -> None:
-    """Request EA_02 blinkers from IQ-link nav turn (default off)."""
-    if not bool(sm['selfdriveState'].enabled):
-      return
-    try:
-      nav = sm['iqNavState']
-      cs = sm['carState']
-      left, right = self.nav_auto_blinker.update(
-        nav, cs, engaged=True, params=self.params,
-      )
-      if left:
-        CC.leftBlinker = True
-      if right:
-        CC.rightBlinker = True
-    except Exception:
-      pass
 
   # --- build + publish the IQ car-control message ------------------------------
   def _compose_iq_carcontrol(self, sm: messaging.SubMaster) -> custom.IQCarControl:

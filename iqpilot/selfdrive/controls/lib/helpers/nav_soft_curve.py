@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from openpilot.common.params import Params
 from openpilot.iqpilot.iqlink.protocol import TURN_DESIRE_WINDOW_M
-from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_auto_blinker import (
+from openpilot.iqpilot.selfdrive.controls.lib.helpers.nav_highway_context import (
   arm_distance_m,
   is_highway_fast_context,
 )
