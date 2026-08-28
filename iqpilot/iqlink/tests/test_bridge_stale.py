@@ -29,6 +29,14 @@ class FakeParams:
     self.values.pop(key, None)
 
 
+def _mock_road_limit_hold():
+  return type("H", (), {"filter_kph": lambda self, k, t: k})()
+
+
+def _mock_sm():
+  return type("SM", (), {"update": lambda *a, **k: None, "alive": {}})()
+
+
 def _bridge(params: FakeParams, *, age_s: float) -> IqlinkBridge:
   b = IqlinkBridge.__new__(IqlinkBridge)
   b.params = params
@@ -122,8 +130,8 @@ def test_keepalive_clears_link_warn():
   b._command_index = 0
   b._last_lc_cmd = False
   b._warn_logged = True
-  b._road_limit_hold = type("H", (), {"filter_kph": lambda self, k, t: k})()
-  b.sm = type("SM", (), {"update": lambda *a, **k: None, "alive": {}})()
+  b._road_limit_hold = _mock_road_limit_hold()
+  b.sm = _mock_sm()
   b.ingest({"nRoadLimitSpeed": 0})
   assert p.get_bool("IqlinkLinkWarn") is False
   assert b._warn_logged is False
@@ -142,7 +150,8 @@ def test_duplicate_payload_clears_link_warn():
   b._command_index = 0
   b._last_lc_cmd = False
   b._warn_logged = True
-  b.sm = type("SM", (), {"update": lambda *a, **k: None, "alive": {}})()
+  b._road_limit_hold = _mock_road_limit_hold()
+  b.sm = _mock_sm()
   payload = {"nRoadLimitSpeed": 60, "nTBTDist": 80, "nTBTTurnType": 1}
   b.ingest(payload)
   assert p.get_bool("IqlinkLinkWarn") is False
@@ -165,7 +174,8 @@ def test_ingest_disables_nav_exit_alc():
   b._command_index = 0
   b._last_lc_cmd = False
   b._warn_logged = False
-  b.sm = type("SM", (), {"update": lambda *a, **k: None, "alive": {}})()
+  b._road_limit_hold = _mock_road_limit_hold()
+  b.sm = _mock_sm()
   b.ingest({"nRoadLimitSpeed": 60})
   assert p.get_bool("NavExitLaneChange") is False
   assert p.values.get("AutoLaneChangeTimer") == 1  # not forced to DIRECT

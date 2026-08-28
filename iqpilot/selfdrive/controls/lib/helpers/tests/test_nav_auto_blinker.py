@@ -75,7 +75,8 @@ def test_is_urban_context():
 def test_debounce_before_blink():
   b = NavAutoBlinker(_Params({"IQNavAutoBlinker": True}))
   b.read_params()
-  nav = _nav()
+  # 40 km/h → arm_distance_m = 50 m (D_MIN); default 60 m is outside the arm window.
+  nav = _nav(nextManeuverDistance=45.0)
   cs = _cs()
   for i in range(DEBOUNCE_FRAMES - 1):
     left, right = b.update(nav, cs, engaged=True, params=_Params({"IqlinkExclusive": True}))
@@ -124,7 +125,7 @@ def test_too_far_no_blink():
 
 def test_opposite_blinker_blocks():
   b = NavAutoBlinker(_Params({"IQNavAutoBlinker": True}))
-  nav = _nav()
+  nav = _nav(nextManeuverDistance=45.0)
   cs = _cs()
   cs.rightBlinker = True
   left, right = _run(b, nav, cs)
@@ -135,7 +136,7 @@ def test_highway_skips_urban_red_hold():
   b = NavAutoBlinker(_Params({"IQNavAutoBlinker": True}))
   nav = _nav(
     turnDesireDirection="left",
-    nextManeuverDistance=100.0,
+    nextManeuverDistance=80.0,
     roadSpeedLimit=100.0 * CV.KPH_TO_MS,
     trafficLight="red",
     leftTurnPending=True,
@@ -169,7 +170,7 @@ def test_urban_red_left_arms_when_stopped():
   nav = _nav(
     trafficLight="red",
     leftTurnPending=True,
-    nextManeuverDistance=120.0,
+    nextManeuverDistance=45.0,
   )
   cs = _cs(v_kph=0.5)
   left, right = _run(b, nav, cs)
@@ -197,7 +198,7 @@ def test_urban_rtor_blinks_when_light_near():
     turnDesireDirection="right",
     trafficLight="red",
     rightTurnPending=True,
-    nextManeuverDistance=60.0,
+    nextManeuverDistance=45.0,
     trafficLightDistM=40.0,
   )
   left, right = _run(b, nav, _cs(v_kph=25.0))
@@ -206,7 +207,7 @@ def test_urban_rtor_blinks_when_light_near():
 
 def test_bsm_blocks_same_side():
   b = NavAutoBlinker(_Params({"IQNavAutoBlinker": True}))
-  nav = _nav()
+  nav = _nav(nextManeuverDistance=45.0)
   cs = _cs(leftBlindspot=True)
   left, right = _run(b, nav, cs)
   assert not left and not right
