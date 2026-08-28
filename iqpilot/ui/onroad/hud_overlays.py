@@ -283,92 +283,10 @@ ellipsize = clip_to_width
 
 
 # ============================================================================
-#  Junction / traffic-stop bar (IQ-link color optional)
-# ============================================================================
-_JUNC_H = 44
-# Top-center strip above the speed digits (_SPEED_TOP). Keep a few px of air.
-_JUNC_Y = 4
-_JUNC_FONT = 32
-_JUNC_PAD = 36
-_JUNC_MIN_W = 220
-_JUNC_DOT = 18
-_JUNC_RED = (210, 48, 52)
-_JUNC_YELLOW = (214, 168, 24)
-_JUNC_PLAIN = (230, 230, 230)
-
-
-class IQJunctionHud:
-  def __init__(self):
-    self._active = False
-    self._light = "none"
-    self._dist_m = 0.0
-    self._remain_s = 0.0
-    self._face = gui_app.font(FontWeight.SEMI_BOLD)
-
-  def update(self) -> None:
-    sm = _feed()
-    self._active = False
-    self._light = "none"
-    self._dist_m = 0.0
-    self._remain_s = 0.0
-    if not ui_state.engaged:
-      return
-    try:
-      self._active = bool(sm["iqPlan"].e2eAlerts.junctionStop)
-    except Exception:
-      return
-    if not self._active:
-      return
-    try:
-      nav = sm["iqNavState"]
-      token = str(getattr(nav, "trafficLight", "none") or "none").strip().lower()
-      self._light = token if token in ("red", "yellow") else "none"
-      self._dist_m = float(getattr(nav, "trafficLightDistM", 0.0) or 0.0)
-      self._remain_s = float(getattr(nav, "trafficLightRemainS", 0.0) or 0.0)
-    except Exception:
-      pass
-
-  def _label(self) -> str:
-    if self._light == "red":
-      head = "红灯"
-    elif self._light == "yellow":
-      head = "黄灯"
-    else:
-      return "前方停车"
-    bits = [head]
-    if self._dist_m >= 1.0:
-      bits.append(f"{int(round(self._dist_m))} 米")
-    if self._remain_s >= 1.0:
-      bits.append(f"{int(self._remain_s)} 秒")
-    return "  ".join(bits)
-
-  def render(self, rect) -> None:
-    if not self._active:
-      return
-    label = self._label()
-    extent = canvas.span(self._face, label, _JUNC_FONT)
-    bar_w = max(_JUNC_MIN_W, extent.x + _JUNC_PAD + _JUNC_DOT + 16)
-    bar_w = min(bar_w, rect.width - 40)
-    bar = canvas.Box(rect.x + (rect.width - bar_w) / 2, rect.y + _JUNC_Y, bar_w, _JUNC_H)
-    canvas.panel(bar, 0.2, 10, canvas.shade(0, 0, 0, 150))
-    if self._light == "red":
-      fill = _JUNC_RED
-    elif self._light == "yellow":
-      fill = _JUNC_YELLOW
-    else:
-      fill = _JUNC_PLAIN
-    dot = canvas.Box(bar.x + 14, bar.y + (_JUNC_H - _JUNC_DOT) / 2, _JUNC_DOT, _JUNC_DOT)
-    canvas.panel(dot, 1.0, 8, canvas.shade(*fill, 230))
-    canvas.glyphs(self._face, label,
-                  canvas.Pt(bar.x + 14 + _JUNC_DOT + 10, bar.y + (bar.height - extent.y) / 2),
-                  _JUNC_FONT, canvas.shade(255, 255, 255, 220))
-
-
-# ============================================================================
-#  Nav lane-recommend / second-TBT guide (below junction bar when both shown)
+#  Nav lane-recommend / second-TBT guide (top-center, below speed area)
 # ============================================================================
 _GUIDE_H = 40
-_GUIDE_Y = _JUNC_Y + _JUNC_H + 6
+_GUIDE_Y = 8
 _GUIDE_FONT = 28
 _GUIDE_PAD = 28
 _GUIDE_MIN_W = 200
