@@ -42,7 +42,7 @@ def test_lane_recommend_hint_after_hold():
   nav = _nav(laneRecommend="left")
   cap = g.update(nav, engaged=True, iqlink_on=True, v_ego=25.0,
                  posted_limit_ms=100 * CV.KPH_TO_MS, slc_enabled=True)
-  assert g.hint == "Keep left lane"
+  assert g.hint == "靠左车道"
   assert cap is not None and cap < 25.0
 
 
@@ -56,7 +56,7 @@ def test_second_next_hint():
   )
   cap = g.update(nav, engaged=True, iqlink_on=True, v_ego=30.0,
                  posted_limit_ms=100 * CV.KPH_TO_MS, slc_enabled=True)
-  assert g.hint == "Left turn ahead"
+  assert g.hint == "前方左转"
   assert cap is not None and cap < 30.0
 
 

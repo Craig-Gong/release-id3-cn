@@ -7,6 +7,7 @@ for shapes/text/textures. Each call forwards verbatim to the backing library —
 output is identical to a raw pyray call, only the call site reads in IQ terms.
 """
 import pyray as _p
+from openpilot.system.ui.lib.application import font_fallback
 from openpilot.system.ui.lib.text_measure import measure_text_cached as _measure
 
 Rgba = _p.Color
@@ -89,10 +90,12 @@ def span(box_w, text: str, size: int, spacing: float = 0):
 
 
 def glyphs(font, text: str, at: Pt, size: int, color: Rgba, spacing: float = 0) -> None:
+  font = font_fallback(font, text)
   _p.draw_text_ex(font, text, at, size, spacing, color)
 
 
 def glyphs_centered(font, text: str, size: int, center: Pt, color: Rgba, spacing: float = 0) -> None:
+  font = font_fallback(font, text)
   extent = _measure(font, text, size, spacing)
   _p.draw_text_ex(font, text, _p.Vector2(center.x - extent.x / 2, center.y - extent.y / 2), size, spacing, color)
 

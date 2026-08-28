@@ -1426,37 +1426,37 @@ class NavMapPanel(Widget):
   def _draw_provider_badge(self, map_rect: rl.Rectangle):
     status = self._mapbox.status()
     offline_status = self._offline.status()
-    base = self.road_name or "Navigation"
+    base = self.road_name or "导航"
     if not self._online_maps_enabled and not self._offline_maps_enabled:
-      label = "Map sources disabled"
+      label = "地图源已关闭"
     elif not self._online_maps_enabled:
       # Offline-only mode: local tiles are the primary (and only) source.
       if offline_status == "offline_ready" and self._offline.has_content():
-        label = f"{base} (offline)"
+        label = f"{base}（离线）"
       else:
         label = {
-          "offline_missing": "Offline maps missing",
-          "offline_invalid": "Offline maps invalid",
-        }.get(offline_status, "Loading offline map")
+          "offline_missing": "离线地图缺失",
+          "offline_invalid": "离线地图无效",
+        }.get(offline_status, "加载离线地图")
     elif status == "offline_cache":
-      label = f"{base} (Mapbox cached)"
+      label = f"{base}（Mapbox 缓存）"
     elif status == "ready" or self._mapbox.has_content():
       label = base
     elif self._offline_maps_enabled and offline_status == "offline_ready" and self._offline.has_content():
-      label = f"{base} (offline)"
+      label = f"{base}（离线）"
     else:
       label = {
-        "disabled": "Mapbox disabled",
-        "token_missing": "Mapbox token missing",
-        "loading": "Loading live map",
-        "error": "Mapbox unavailable",
-        "offline_cache": "Mapbox cached",
+        "disabled": "Mapbox 已关闭",
+        "token_missing": "Mapbox 令牌缺失",
+        "loading": "加载在线地图",
+        "error": "Mapbox 不可用",
+        "offline_cache": "Mapbox 缓存",
       }.get(status, base)
       if self._offline_maps_enabled and status in {"token_missing", "error"}:
         if offline_status == "offline_missing":
-          label = "Offline maps missing"
+          label = "离线地图缺失"
         elif offline_status == "offline_invalid":
-          label = "Offline maps invalid"
+          label = "离线地图无效"
 
     badge = rl.Rectangle(map_rect.x + 16, map_rect.y + 16, min(280.0, map_rect.width - 32), 38)
     rl.draw_rectangle_rounded(badge, 0.28, 10, rl.Color(7, 12, 18, 175))
@@ -1476,8 +1476,8 @@ class NavMapPanel(Widget):
       return "--"
     if ui_state.is_metric:
       if self.next_distance >= 1000.0:
-        return f"{self.next_distance / 1000.0:.1f} km"
-      return f"{self.next_distance:.0f} m"
+        return f"{self.next_distance / 1000.0:.1f} 公里"
+      return f"{self.next_distance:.0f} 米"
 
     feet = self.next_distance * 3.28084
     if feet >= 900.0:
@@ -1490,7 +1490,7 @@ class NavMapPanel(Widget):
     if not self._display_route_active() or self.distance_remaining <= 0.0:
       return "--"
     if ui_state.is_metric:
-      return f"{self.distance_remaining / 1000.0:.1f} km"
+      return f"{self.distance_remaining / 1000.0:.1f} 公里"
     return f"{self.distance_remaining * 0.000621371:.1f} mi"
 
   def _format_eta_clock(self) -> str:
@@ -1612,16 +1612,16 @@ class NavMapPanel(Widget):
     elif display_route_active and self.destination_name:
       title = self.destination_name
     elif display_route_active:
-      title = "Route guidance"
+      title = "路线引导"
     else:
-      title = self.road_name or "Navigation"
+      title = self.road_name or "导航"
 
     if display_next_valid and self.road_name:
       sublabel = self.road_name
     elif display_route_active:
-      sublabel = "Route active"
+      sublabel = "导航中"
     else:
-      sublabel = self.road_name or "Navigation standby"
+      sublabel = self.road_name or "导航待机"
 
     text_x = icon_tile.x + icon_tile.width + 22
     right_x = header_rect.x + header_rect.width - 22
@@ -1647,10 +1647,10 @@ class NavMapPanel(Widget):
     chips_x = footer_rect.x + 20
     chips_gap = 12
     chip_width = (footer_rect.width - 40 - chips_gap * 2) / 3.0
-    self._draw_stat_chip(rl.Rectangle(chips_x, chips_y, chip_width, 54), self._format_eta_clock(), "eta")
-    minutes_text = f"{self.time_remaining / 60.0:.1f} min" if self._display_route_active() and self.time_remaining > 0.0 else "--"
-    self._draw_stat_chip(rl.Rectangle(chips_x + chip_width + chips_gap, chips_y, chip_width, 54), minutes_text, "time")
-    self._draw_stat_chip(rl.Rectangle(chips_x + (chip_width + chips_gap) * 2, chips_y, chip_width, 54), self._format_remaining_distance(), "left")
+    self._draw_stat_chip(rl.Rectangle(chips_x, chips_y, chip_width, 54), self._format_eta_clock(), "到达")
+    minutes_text = f"{self.time_remaining / 60.0:.1f} 分钟" if self._display_route_active() and self.time_remaining > 0.0 else "--"
+    self._draw_stat_chip(rl.Rectangle(chips_x + chip_width + chips_gap, chips_y, chip_width, 54), minutes_text, "用时")
+    self._draw_stat_chip(rl.Rectangle(chips_x + (chip_width + chips_gap) * 2, chips_y, chip_width, 54), self._format_remaining_distance(), "剩余")
 
   def _draw_info_panel(self, panel_rect: rl.Rectangle):
     info_rect = rl.Rectangle(panel_rect.x + 14, panel_rect.y + MAP_HEIGHT + 26, panel_rect.width - 28, panel_rect.height - MAP_HEIGHT - 40)
@@ -1667,9 +1667,9 @@ class NavMapPanel(Widget):
     elif display_route_active and self.destination_name:
       title = self.destination_name
     elif display_route_active:
-      title = "Route guidance"
+      title = "路线引导"
     else:
-      title = self.road_name or "Navigation"
+      title = self.road_name or "导航"
     title_x = info_rect.x + 162
     title_max_width = info_rect.width - 178
     title_size = self._fit_text_size(self._title_font, title, title_max_width, 34, 24)
@@ -1680,30 +1680,30 @@ class NavMapPanel(Widget):
     if display_next_valid and self.road_name:
       road_label = self.road_name
     elif display_route_active:
-      road_label = "Route active"
+      road_label = "导航中"
     else:
-      road_label = self.road_name or "No active route"
+      road_label = self.road_name or "无活动路线"
     road_size = self._fit_text_size(self._micro_font, road_label, title_max_width, 22, 18)
     road_y = info_rect.y + 18 + len(title_lines) * (title_size + 2) + 8
     rl.draw_text_ex(self._micro_font, road_label, rl.Vector2(title_x, road_y), road_size, 0, rl.Color(171, 184, 196, 240))
 
-    eta_text = f"{(self.time_remaining / 60.0):.1f} min" if display_route_active and self.time_remaining > 0 else "--"
-    remaining_text = f"{(self.distance_remaining / 1000.0):.1f} km" if display_route_active and self.distance_remaining > 0 else "--"
-    next_text = f"{self.next_distance:.0f} m" if display_next_valid and self.next_distance > 0 else "--"
+    eta_text = f"{(self.time_remaining / 60.0):.1f} 分钟" if display_route_active and self.time_remaining > 0 else "--"
+    remaining_text = f"{(self.distance_remaining / 1000.0):.1f} 公里" if display_route_active and self.distance_remaining > 0 else "--"
+    next_text = f"{self.next_distance:.0f} 米" if display_next_valid and self.next_distance > 0 else "--"
 
     stat_y = info_rect.y + info_rect.height - 58
     available_width = info_rect.width - 178
     chip_width = (available_width - STAT_GAP * 2) / 3.0
-    self._draw_stat_chip(rl.Rectangle(title_x, stat_y, chip_width, 50), next_text, "next")
-    self._draw_stat_chip(rl.Rectangle(title_x + chip_width + STAT_GAP, stat_y, chip_width, 50), eta_text, "eta")
-    self._draw_stat_chip(rl.Rectangle(title_x + (chip_width + STAT_GAP) * 2, stat_y, chip_width, 50), remaining_text, "left")
+    self._draw_stat_chip(rl.Rectangle(title_x, stat_y, chip_width, 50), next_text, "随后")
+    self._draw_stat_chip(rl.Rectangle(title_x + chip_width + STAT_GAP, stat_y, chip_width, 50), eta_text, "用时")
+    self._draw_stat_chip(rl.Rectangle(title_x + (chip_width + STAT_GAP) * 2, stat_y, chip_width, 50), remaining_text, "剩余")
 
   def _draw_stat_chip(self, rect: rl.Rectangle, value: str, label: str):
     rl.draw_rectangle_rounded(rect, 0.24, 10, rl.Color(18, 30, 42, 255))
     value_size = self._fit_text_size(self._body_font, value, rect.width - 16, 25, 17)
-    label_size = self._fit_text_size(self._micro_font, label.upper(), rect.width - 16, 12, 9)
+    label_size = self._fit_text_size(self._micro_font, label, rect.width - 16, 12, 9)
     value_width = measure_text_cached(self._body_font, value, value_size).x
-    label_width = measure_text_cached(self._micro_font, label.upper(), label_size).x
+    label_width = measure_text_cached(self._micro_font, label, label_size).x
     rl.draw_text_ex(
       self._body_font,
       value,
@@ -1714,7 +1714,7 @@ class NavMapPanel(Widget):
     )
     rl.draw_text_ex(
       self._micro_font,
-      label.upper(),
+      label,
       rl.Vector2(rect.x + (rect.width - label_width) * 0.5, rect.y + 33),
       label_size,
       0,

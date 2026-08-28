@@ -23,17 +23,21 @@ def _get_longitudinal_plan_ext(sm: messaging.SubMaster):
   return sm['iqPlan']
 
 
+def _speed_unit(metric: bool) -> str:
+  return "公里/时" if metric else "mph"
+
+
 def speed_limit_adjust_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
   plan = _get_longitudinal_plan_ext(sm)
   resolver = plan.speedLimit.resolver
   assist = plan.speedLimit.assist
   speed_conv = CV.MS_TO_KPH if metric else CV.MS_TO_MPH
   speed = round(resolver.speedLimit * speed_conv)
-  unit = "km/h" if metric else "mph"
+  unit = _speed_unit(metric)
   if assist.state == SpeedLimitAssistState.adapting:
-    message = f"Speed Limit: Adjusting to {speed} {unit}"
+    message = f"限速：调整至 {speed} {unit}"
   else:
-    message = f"Speed Limit: Active at {speed} {unit}"
+    message = f"限速：已跟限 {speed} {unit}"
   return Alert(
     message,
     "",
@@ -45,15 +49,15 @@ def speed_limit_pre_active_alert(CP: car.CarParams, CS: car.CarState, sm: messag
   plan = _get_longitudinal_plan_ext(sm)
   resolver = plan.speedLimit.resolver
   speed_conv = CV.MS_TO_KPH if metric else CV.MS_TO_MPH
-  unit = "km/h" if metric else "mph"
+  unit = _speed_unit(metric)
   pending_speed = round(resolver.speedLimit * speed_conv)
   last_speed = resolver.speedLimitFinalLast * speed_conv
   is_lower = pending_speed < last_speed or last_speed <= 0
   confirm_hint = "SET" if is_lower else "RES"
   # Same hold as speedLimitActive / constructionZone (4s). 0.1s was unreadable.
   return Alert(
-    f"Speed Limit: {pending_speed} {unit}",
-    f"Press {confirm_hint} to apply",
+    f"限速：{pending_speed} {unit}",
+    f"按 {confirm_hint} 确认",
     AlertStatus.normal, AlertSize.mid,
     Priority.LOW, VisualAlert.none, AudibleAlertIQ.promptSingleLow, 4.)
 
@@ -62,9 +66,9 @@ def speed_limit_changed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging
   resolver = _get_longitudinal_plan_ext(sm).speedLimit.resolver
   speed_conv = CV.MS_TO_KPH if metric else CV.MS_TO_MPH
   speed = round(resolver.speedLimit * speed_conv)
-  unit = "km/h" if metric else "mph"
+  unit = _speed_unit(metric)
   return Alert(
-    f"Speed Limit changed to {speed} {unit}",
+    f"限速已变更：{speed} {unit}",
     "",
     AlertStatus.normal, AlertSize.small,
     Priority.LOW, VisualAlert.none, AudibleAlertIQ.promptSingleHigh, 3.)
@@ -74,48 +78,48 @@ def construction_zone_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.S
   resolver = _get_longitudinal_plan_ext(sm).speedLimit.resolver
   speed_conv = CV.MS_TO_KPH if metric else CV.MS_TO_MPH
   speed = round(resolver.speedLimit * speed_conv)
-  unit = "KM/H" if metric else "MPH"
+  unit = _speed_unit(metric)
   return Alert(
-    f"Construction Zone Detected: Speed {speed} {unit}",
+    f"施工区：限速 {speed} {unit}",
     "",
     AlertStatus.userPrompt, AlertSize.small,
     Priority.MID, VisualAlert.none, AudibleAlertIQ.promptSingleHigh, 4.)
 
 
 _CAMERA_LABELS = {
-  int(custom.IQNavState.CameraType.fixedSpeed): "Speed Camera",
-  int(custom.IQNavState.CameraType.mobileSpeed): "Mobile Speed Camera",
-  int(custom.IQNavState.CameraType.sectionStart): "Average-Speed Zone",
-  int(custom.IQNavState.CameraType.sectionEnd): "Average-Speed Zone Ends",
-  int(custom.IQNavState.CameraType.averageZone): "Average-Speed Zone",
-  int(custom.IQNavState.CameraType.redLight): "Red-Light Camera",
-  int(custom.IQNavState.CameraType.bump): "Speed Bump",
-  int(custom.IQNavState.CameraType.alpr): "Flock / ALPR Camera",
+  int(custom.IQNavState.CameraType.fixedSpeed): "固定测速",
+  int(custom.IQNavState.CameraType.mobileSpeed): "移动测速",
+  int(custom.IQNavState.CameraType.sectionStart): "区间测速",
+  int(custom.IQNavState.CameraType.sectionEnd): "区间测速结束",
+  int(custom.IQNavState.CameraType.averageZone): "区间测速",
+  int(custom.IQNavState.CameraType.redLight): "闯红灯拍照",
+  int(custom.IQNavState.CameraType.bump): "减速带",
+  int(custom.IQNavState.CameraType.alpr): "车牌识别",
 }
 
 
 def speed_camera_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
   nav = sm['iqNavState']
   ctype = int(getattr(nav.cameraType, "raw", nav.cameraType))
-  label = _CAMERA_LABELS.get(ctype, "Speed Camera")
+  label = _CAMERA_LABELS.get(ctype, "测速摄像头")
   distance = float(nav.cameraDistance)
   # RF (BLE/WiFi) Flock detection is a live proximity hit with no meaningful
   # distance — flockd/navd flag it with distance 0 on the alpr camera type.
   if ctype == int(custom.IQNavState.CameraType.alpr) and distance <= 0.0:
     return Alert(
-      "Flock Camera Detected",
+      "发现车牌识别摄像头",
       "",
       AlertStatus.normal, AlertSize.small,
       Priority.HIGH, VisualAlert.none, AudibleAlert.prompt, .2)
   if metric:
-    dist_str = f"{distance:.0f} m" if distance < 1000.0 else f"{distance / 1000.0:.1f} km"
+    dist_str = f"{distance:.0f} 米" if distance < 1000.0 else f"{distance / 1000.0:.1f} 公里"
   else:
     feet = distance * 3.28084
-    dist_str = f"{int(round(feet / 10.0) * 10)} ft" if feet < 1000.0 else f"{distance * 0.000621371:.1f} mi"
+    dist_str = f"{int(round(feet / 10.0) * 10)} 英尺" if feet < 1000.0 else f"{distance * 0.000621371:.1f} 英里"
   detail = dist_str
   if float(nav.cameraSpeedLimit) > 0.0:
     speed_conv = CV.MS_TO_KPH if metric else CV.MS_TO_MPH
-    unit = "km/h" if metric else "mph"
+    unit = "公里/时" if metric else "mph"
     detail += f" • {round(float(nav.cameraSpeedLimit) * speed_conv)} {unit}"
   return Alert(
     f"{label} • {detail}",
@@ -164,23 +168,23 @@ _GUIDANCE_EVENTS: EVENTS_IQ_TYPE = {
 
   EventNameIQ.navExitLeft: {
     ET.WARNING: Alert(
-      "Navigation: Exit Maneuver",
-      "Nudge the wheel left to change lanes",
+      "导航：驶出匝道",
+      "请向左轻拨方向盘变道",
       AlertStatus.userPrompt, AlertSize.mid,
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 1.5),
   },
 
   EventNameIQ.navExitRight: {
     ET.WARNING: Alert(
-      "Navigation: Exit Maneuver",
-      "Nudge the wheel right to change lanes",
+      "导航：驶出匝道",
+      "请向右轻拨方向盘变道",
       AlertStatus.userPrompt, AlertSize.mid,
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 1.5),
   },
 
   EventNameIQ.navTurnLeft: {
     ET.WARNING: Alert(
-      "Navigation: Turning Left",
+      "导航：左转",
       "",
       AlertStatus.normal, AlertSize.small,
       Priority.MID, VisualAlert.none, AudibleAlert.none, 1.5),
@@ -188,7 +192,7 @@ _GUIDANCE_EVENTS: EVENTS_IQ_TYPE = {
 
   EventNameIQ.navTurnRight: {
     ET.WARNING: Alert(
-      "Navigation: Turning Right",
+      "导航：右转",
       "",
       AlertStatus.normal, AlertSize.small,
       Priority.MID, VisualAlert.none, AudibleAlert.none, 1.5),

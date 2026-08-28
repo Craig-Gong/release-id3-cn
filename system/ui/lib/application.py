@@ -142,9 +142,14 @@ FONT_SOURCE_FILES = {
 }
 
 
-def font_fallback(font: rl.Font) -> rl.Font:
-  """Fall back to unifont for languages that require it."""
-  if multilang.requires_unifont():
+def _text_needs_unifont(text: str) -> bool:
+  # Broad scripts (CJK, Cyrillic, Arabic, …) are not in Inter; match option_dialog.
+  return any(ord(c) >= 0x250 for c in text)
+
+
+def font_fallback(font: rl.Font, text: str | None = None) -> rl.Font:
+  """Fall back to unifont for languages that require it, or when text has non-Latin glyphs."""
+  if multilang.requires_unifont() or (text and _text_needs_unifont(text)):
     return gui_app.font(FontWeight.UNIFONT)
   return font
 
@@ -947,7 +952,7 @@ class GuiApplication(IQAppHooks):
       rl._orig_draw_text_ex = rl.draw_text_ex
 
     def _draw_text_ex_scaled(font, text, position, font_size, spacing, tint):
-      font = font_fallback(font)
+      font = font_fallback(font, text)
       return rl._orig_draw_text_ex(font, text, position, font_size * FONT_SCALE, spacing, tint)
 
     rl.draw_text_ex = _draw_text_ex_scaled

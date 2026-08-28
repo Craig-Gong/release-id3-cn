@@ -330,16 +330,16 @@ class IQJunctionHud:
 
   def _label(self) -> str:
     if self._light == "red":
-      head = tr("Red light")
+      head = "红灯"
     elif self._light == "yellow":
-      head = tr("Yellow light")
+      head = "黄灯"
     else:
-      return tr("Stop ahead")
+      return "前方停车"
     bits = [head]
     if self._dist_m >= 1.0:
-      bits.append(f"{int(round(self._dist_m))} m")
+      bits.append(f"{int(round(self._dist_m))} 米")
     if self._remain_s >= 1.0:
-      bits.append(f"{int(self._remain_s)} s")
+      bits.append(f"{int(self._remain_s)} 秒")
     return "  ".join(bits)
 
   def render(self, rect) -> None:

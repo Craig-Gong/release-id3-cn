@@ -93,17 +93,17 @@ class _TextHold:
 
 def _hint_for_lane(side: str) -> str:
   if side == "left":
-    return "Keep left lane"
+    return "靠左车道"
   if side == "right":
-    return "Keep right lane"
+    return "靠右车道"
   return ""
 
 
 def _hint_for_second(side: str) -> str:
   if side == "left":
-    return "Left turn ahead"
+    return "前方左转"
   if side == "right":
-    return "Right turn ahead"
+    return "前方右转"
   return ""
 
 
