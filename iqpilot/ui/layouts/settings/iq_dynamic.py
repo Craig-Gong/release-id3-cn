@@ -194,6 +194,18 @@ class IQDynamicLayout(Widget):
         "speed cap. Does not auto lane-change.",
         "IQNavLaneGuide",
       ),
+      _toggle_item(
+        "IQ-link Highway Fork ALC",
+        "When IQ-link is navigating a highway fork (lc* / highwayCommit), arm the lane-change FSM "
+        "between 150 m and the aggressive LC window. Default off — log nudge first, then enable Direct.",
+        "IQNavHighwayAlc",
+      ),
+      _toggle_item(
+        "IQ-link Highway Fork ALC Direct",
+        "With Highway Fork ALC on: skip the steering nudge and auto-start the lane change when BSM is clear. "
+        "Default off (nudge / light steering torque required).",
+        "IQNavHighwayAlcDirect",
+      ),
       _option_item(
         "Lead Stop Distance",
         "How far behind a stopped lead to settle (Lead MPC). Default 4.0 m. Does not change cruise following time gap. "

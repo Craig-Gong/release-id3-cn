@@ -63,6 +63,7 @@ def eval_nav_turn_desire(
   right_blinker: bool,
   left_blindspot: bool,
   right_blindspot: bool,
+  suppress_highway_blinker: bool = False,
 ) -> int:
   """Nav turn execution gate (A1): toast can fire earlier; desire only when confirmed."""
   if direction_raw not in (TURN_LEFT, TURN_RIGHT):
@@ -77,6 +78,9 @@ def eval_nav_turn_desire(
     (direction_raw == TURN_LEFT and left_blinker and not right_blinker) or
     (direction_raw == TURN_RIGHT and right_blinker and not left_blinker)
   )
+  if blinker_ok:
+    if suppress_highway_blinker and float(v_ego_mps) >= TURN_TRIGGER_MPS:
+      blinker_ok = False
   if blinker_ok or (near_exec and slow_enough):
     return direction_raw
   return 0

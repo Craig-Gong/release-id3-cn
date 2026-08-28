@@ -30,6 +30,16 @@ def test_nav_turn_blinker_confirms_when_fast():
   assert d == TURN_LEFT
 
 
+def test_nav_turn_suppress_highway_blinker_during_fork_alc():
+  d = eval_nav_turn_desire(
+    direction_raw=TURN_LEFT,
+    turn_dist_m=120.0,
+    suppress_highway_blinker=True,
+    **_cs(55.0, left=True),
+  )
+  assert d == 0
+
+
 def test_nav_turn_bsm_blocks():
   d = eval_nav_turn_desire(direction_raw=TURN_LEFT, turn_dist_m=50.0, **_cs(40.0, bsl=True))
   assert d == 0

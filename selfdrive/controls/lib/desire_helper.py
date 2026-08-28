@@ -12,6 +12,7 @@ from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_change import (
   IQLaneSwapController,
   AutoLaneChangeMode,
   NavExitLaneChangeController,
+  NavForkLaneChangeController,
 )
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.lane_turn import IQNavTurnController, TURN_TRIGGER_MPS
 from openpilot.iqpilot.selfdrive.controls.lib.helpers.turn_prep import eval_nav_turn_desire
@@ -103,11 +104,14 @@ class DesireHelper:
     self.keep_pulse_timer = 0.0
     self.prev_one_blinker = False
     self.prev_nav_exit_active = False
+    self.prev_nav_fork_active = False
     self.desire = log.Desire.none
 
     self.alc = IQLaneSwapController(self)
     self.lane_turn_controller = IQNavTurnController(self)
     self.nav_exit = NavExitLaneChangeController(_read_enable_bsm())
+    self.nav_fork = NavForkLaneChangeController(_read_enable_bsm())
+    self._fork_lc_engaged = False
     self.lane_turn_direction = TurnDirection.none
     self.nav_turn_direction = TurnDirection.none
     self.turn_desire_stop_timer = 0.0
@@ -118,7 +122,7 @@ class DesireHelper:
     return _direction_from_blinkers(carstate)
 
   @staticmethod
-  def _nav_turn_desire(nav_state, carstate):
+  def _nav_turn_desire(nav_state, carstate, suppress_highway_blinker: bool = False):
     if nav_state is None or not getattr(nav_state, "active", False):
       return TurnDirection.none
     if getattr(nav_state, "maneuverPhase", NavManeuverPhase.none) != NavManeuverPhase.turnActive:
@@ -138,6 +142,7 @@ class DesireHelper:
       right_blinker=bool(carstate.rightBlinker),
       left_blindspot=bool(getattr(carstate, "leftBlindspot", False)),
       right_blindspot=bool(getattr(carstate, "rightBlindspot", False)),
+      suppress_highway_blinker=suppress_highway_blinker,
     )
     if allowed:
       return direction
@@ -158,47 +163,70 @@ class DesireHelper:
       v_ego=speed_mps,
     )
     self.lane_turn_direction = self.lane_turn_controller.get_turn_direction()
-    self.nav_turn_direction = self._nav_turn_desire(nav_state, carstate)
 
     self.nav_exit.update_params()
     self.nav_exit.update(nav_state, carstate)
-    return bool(self.nav_exit.active)
+    self.nav_fork.update_params()
+    self.nav_fork.update(nav_state, carstate)
+    self.nav_fork.note_lane_change_state(self.lane_change_state)
+    suppress_fork_blinker = self.nav_fork.blocks_nav_turn_blinker()
+    self.nav_turn_direction = self._nav_turn_desire(
+      nav_state, carstate, suppress_highway_blinker=suppress_fork_blinker,
+    )
+    return bool(self.nav_exit.active or self.nav_fork.active)
 
-  def _reset_required(self, lateral_active: bool, nav_exit_active: bool) -> bool:
+  def _reset_required(self, lateral_active: bool, nav_lc_active: bool) -> bool:
     timed_out = self.lane_change_timer > LANE_CHANGE_TIME_MAX
-    feature_disabled = self.alc.lane_change_set_timer == AutoLaneChangeMode.OFF and not nav_exit_active
+    feature_disabled = (
+      self.alc.lane_change_set_timer == AutoLaneChangeMode.OFF and not nav_lc_active
+    )
     return (not lateral_active) or timed_out or feature_disabled
 
-  def _begin_from_idle(self, one_blinker: bool, nav_exit_active: bool, below_speed: bool) -> None:
+  def _begin_from_idle(self, one_blinker: bool, nav_lc_active: bool, below_speed: bool) -> None:
     if below_speed:
       return
     if one_blinker and not self.prev_one_blinker:
       self.lane_change_state = LaneChangeState.preLaneChange
       self.lane_change_direction = _direction_from_blinkers(self._last_carstate)
       self.lane_change_ll_prob = 1.0
+      self._fork_lc_engaged = False
       return
-    if nav_exit_active and not self.prev_nav_exit_active:
+    nav_fork_active = self.nav_fork.active
+    nav_exit_active = self.nav_exit.active
+    if nav_fork_active and not self.prev_nav_fork_active:
+      self.lane_change_state = LaneChangeState.preLaneChange
+      self.lane_change_direction = self.nav_fork.direction
+      self.lane_change_ll_prob = 1.0
+      self._fork_lc_engaged = True
+    elif nav_exit_active and not self.prev_nav_exit_active:
       self.lane_change_state = LaneChangeState.preLaneChange
       self.lane_change_direction = self.nav_exit.direction
       self.lane_change_ll_prob = 1.0
+      self._fork_lc_engaged = False
 
-  def _refresh_requested_direction(self, one_blinker: bool, nav_exit_active: bool) -> None:
+  def _refresh_requested_direction(self, one_blinker: bool, nav_lc_active: bool) -> None:
     if one_blinker:
       self.lane_change_direction = _direction_from_blinkers(self._last_carstate)
-    elif nav_exit_active:
+    elif self.nav_fork.active:
+      self.lane_change_direction = self.nav_fork.direction
+    elif self.nav_exit.active:
       self.lane_change_direction = self.nav_exit.direction
 
-  def _step_pre_lane_change(self, one_blinker: bool, nav_exit_active: bool, below_speed: bool) -> None:
-    self._refresh_requested_direction(one_blinker, nav_exit_active)
+  def _step_pre_lane_change(self, one_blinker: bool, nav_lc_active: bool, below_speed: bool) -> None:
+    self._refresh_requested_direction(one_blinker, nav_lc_active)
     blindspot_detected = _blindspot_matches(self._last_carstate, self.lane_change_direction)
     steering_ready = _steering_nudge_matches(self._last_carstate, self.lane_change_direction)
-    nav_auto_start = nav_exit_active and self.nav_exit.auto_allowed
+    nav_auto_start = (
+      (self.nav_exit.active and self.nav_exit.auto_allowed) or
+      (self.nav_fork.active and self.nav_fork.auto_allowed)
+    )
 
     self.alc.update_lane_change(blindspot_detected=blindspot_detected, brake_pressed=self._last_carstate.brakePressed)
     allowed_to_launch = steering_ready or self.alc.auto_lane_change_allowed or nav_auto_start
 
-    if (not (one_blinker or nav_exit_active)) or below_speed:
+    if (not (one_blinker or nav_lc_active)) or below_speed:
       self._clear_lane_change()
+      self._fork_lc_engaged = False
     elif allowed_to_launch and not blindspot_detected:
       self.lane_change_state = LaneChangeState.laneChangeStarting
 
@@ -214,12 +242,12 @@ class DesireHelper:
     self.lane_change_direction = LaneChangeDirection.none
     self.lane_change_state = LaneChangeState.preLaneChange if one_blinker else LaneChangeState.off
 
-  def _advance_lane_change_machine(self, one_blinker: bool, nav_exit_active: bool, below_speed: bool, lane_change_prob: float) -> None:
+  def _advance_lane_change_machine(self, one_blinker: bool, nav_lc_active: bool, below_speed: bool, lane_change_prob: float) -> None:
     if self.lane_change_state == LaneChangeState.off:
-      self._begin_from_idle(one_blinker, nav_exit_active, below_speed)
+      self._begin_from_idle(one_blinker, nav_lc_active, below_speed)
       return
     if self.lane_change_state == LaneChangeState.preLaneChange:
-      self._step_pre_lane_change(one_blinker, nav_exit_active, below_speed)
+      self._step_pre_lane_change(one_blinker, nav_lc_active, below_speed)
       return
     if self.lane_change_state == LaneChangeState.laneChangeStarting:
       self._step_lane_change_starting(lane_change_prob)
@@ -290,18 +318,26 @@ class DesireHelper:
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
     # Below the turn-desire gate, blinker is an intersection turn — do not run LC.
     below_speed = carstate.vEgo < LANE_CHANGE_SPEED_MIN
-    nav_exit_active = self._refresh_turn_overrides(carstate, nav_state)
-    turn_owns_blinker = self.lane_turn_direction != TurnDirection.none or self.nav_turn_direction != TurnDirection.none
+    nav_lc_active = self._refresh_turn_overrides(carstate, nav_state)
+    fork_lc_busy = self._fork_lc_engaged or self.nav_fork.latched
+    turn_owns_blinker = (
+      self.lane_turn_direction != TurnDirection.none or
+      (self.nav_turn_direction != TurnDirection.none and not fork_lc_busy)
+    )
 
     self.alc.update_params()
-    if turn_owns_blinker or self._reset_required(lateral_active, nav_exit_active):
+    if turn_owns_blinker or self._reset_required(lateral_active, nav_lc_active):
       self._clear_lane_change()
+      if turn_owns_blinker:
+        self._fork_lc_engaged = False
+        self.nav_fork.note_lane_change_state(LaneChangeState.off)
     else:
-      self._advance_lane_change_machine(one_blinker, nav_exit_active, below_speed, lane_change_prob)
+      self._advance_lane_change_machine(one_blinker, nav_lc_active, below_speed, lane_change_prob)
 
     self._update_timer()
     self.prev_one_blinker = one_blinker and lateral_active
-    self.prev_nav_exit_active = nav_exit_active
+    self.prev_nav_exit_active = self.nav_exit.active
+    self.prev_nav_fork_active = self.nav_fork.active
     self.alc.update_state()
     self._pick_desire_output()
     self._apply_keep_pulse()
