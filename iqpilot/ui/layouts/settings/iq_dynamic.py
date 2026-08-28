@@ -185,17 +185,6 @@ class IQDynamicLayout(Widget):
         "C3XL 路口条显示车道推荐与下一动作预见；可选弱纵向预备。不自动变道。",
         "IQNavLaneGuide",
       ),
-      _toggle_item(
-        "IQ-link 高速分叉变道",
-        "IQ-link 高速分叉（lc* / highwayCommit）在 150 米外至 aggressive LC 窗内进入变道 FSM。"
-        "默认关——建议先路试 nudge，再开自动起变。",
-        "IQNavHighwayAlc",
-      ),
-      _toggle_item(
-        "IQ-link 高速分叉自动变道",
-        "已开「高速分叉变道」时：跳过轻拨方向盘，盲区无车时自动起变。默认关。",
-        "IQNavHighwayAlcDirect",
-      ),
       _option_item(
         "跟停距离",
         "停在前车后方多远（Lead MPC）。默认 4.0 米。不改巡航时距；自定义停距在其上微调。",

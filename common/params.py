@@ -39,8 +39,6 @@ EXTRA_PARAM_DEFAULTS = {
   "IQLeadStopDistance": "4",
   "IQNavSoftCurveCap": "1",
   "IQNavLaneGuide": "1",
-  "IQNavHighwayAlc": "0",
-  "IQNavHighwayAlcDirect": "0",
   # EcoFlow Delta 3 12V DC (ecoflowd). Default OFF — enable after setting credentials.
   "EcoflowEnabled": "0",
   "EcoflowPhone": None,
@@ -54,8 +52,6 @@ EXTRA_BOOL_KEYS = {
   "EcoflowEnabled",
   "IQNavSoftCurveCap",
   "IQNavLaneGuide",
-  "IQNavHighwayAlc",
-  "IQNavHighwayAlcDirect",
 }
 EXTRA_FLOAT_KEYS = {
   "IQTrafficStopOffset",
