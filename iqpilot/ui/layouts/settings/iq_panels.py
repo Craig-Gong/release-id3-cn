@@ -265,6 +265,8 @@ class VisualsLayout(Widget):
       return tr("Waiting for phone IQ-link. Pairing code 999999.")
 
     def _on_iqlink(enabled: bool):
+      from openpilot.iqpilot.iqlink.konn3kt_ble_exclusive import sync_konn3kt_ble_for_iqlink
+      sync_konn3kt_ble_for_iqlink(self._params, enabled)
       if enabled:
         try:
           self._params.put_bool("IqlinkBlePairFailed", False)

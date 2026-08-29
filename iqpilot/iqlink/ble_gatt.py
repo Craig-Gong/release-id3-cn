@@ -17,6 +17,7 @@ import time
 from typing import Any, Callable
 
 from openpilot.common.params import Params
+from openpilot.iqpilot.iqlink.konn3kt_ble_exclusive import sync_konn3kt_ble_for_iqlink
 
 
 class _LazyCloudlog:
@@ -1327,6 +1328,8 @@ def run_ble_gatt_loop(ingest_cb: Callable[[dict[str, Any]], None]) -> None:
       enabled = params.get_bool("IqlinkEnabled")
     except Exception:
       enabled = False
+
+    sync_konn3kt_ble_for_iqlink(params, enabled)
 
     # Rising edge: open 2-minute discover/PSK UI window (advertising is separate)
     if enabled and not was_enabled:

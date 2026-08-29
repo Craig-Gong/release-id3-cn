@@ -489,6 +489,8 @@ def main() -> None:
   bridge = IqlinkBridge()
   try:
     from openpilot.iqpilot.iqlink.ble_gatt import ensure_ble_psk, run_ble_gatt_loop
+    from openpilot.iqpilot.iqlink.konn3kt_ble_exclusive import sync_konn3kt_ble_for_iqlink
+    sync_konn3kt_ble_for_iqlink(params)
     if params.get_bool("IqlinkEnabled"):
       ensure_ble_psk(params)
 

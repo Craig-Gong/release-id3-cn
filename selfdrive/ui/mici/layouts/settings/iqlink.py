@@ -12,6 +12,7 @@ from __future__ import annotations
 import pyray as rl
 
 from openpilot.common.params import Params, UnknownKeyName
+from openpilot.iqpilot.iqlink.konn3kt_ble_exclusive import sync_konn3kt_ble_for_iqlink
 from openpilot.selfdrive.ui.lib.iqlink_status import iqlink_hmac_up, iqlink_status_color
 from openpilot.selfdrive.ui.mici.widgets.stock_button import BigButton
 from openpilot.system.ui.lib.application import gui_app, MousePos
@@ -77,6 +78,7 @@ class IqlinkBigButton(BigButton):
     try:
       new_val = not self._bridge_on()
       self._params.put_bool("IqlinkEnabled", new_val)
+      sync_konn3kt_ble_for_iqlink(self._params, new_val)
       if new_val:
         # Rising edge also cleared in ble loop; clear fail so lamp leaves red promptly.
         try:

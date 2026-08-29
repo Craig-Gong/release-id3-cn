@@ -24,6 +24,8 @@ Notes:
 
 **Live parameters use BLE GATT only.** Device Wi‑Fi STA (internet / SSH) is unrelated to Partner push.
 
+IQ-link (`73f2c710-…`) and Konn3kt settings BLE (`73f2c600-…`) share **hci0**. While `IqlinkEnabled` is on, `iqlinkd` sets `Konn3ktBleTransportEnabled=0`; when IQ-link is off, it sets `Konn3ktBleTransportEnabled=1` so Konn3kt App can use BLE settings again. Konn3kt cloud/cellular is unaffected.
+
 Deprecated (do not use as fallback): UDP 7705 / 7706, TCP 7713.
 
 ## Longitudinal behavior (summary)
