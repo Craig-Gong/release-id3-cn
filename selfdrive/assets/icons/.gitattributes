@@ -1,6 +1,0 @@
-*.png -filter -diff -merge -text
-*/*.png -filter -diff -merge -text
-*/*/*.png -filter -diff -merge -text
-*.svg -filter -diff -merge text eol=lf
-*/*.svg -filter -diff -merge text eol=lf
-*/*/*.svg -filter -diff -merge text eol=lf
