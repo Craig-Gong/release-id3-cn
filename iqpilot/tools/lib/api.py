@@ -1,0 +1,62 @@
+import os
+import json
+import requests
+from requests.adapters import HTTPAdapter, Retry
+
+from iqpilot.system.hardware.hw import Paths
+
+API_HOST = os.getenv('API_HOST', 'https://api-iqlabs.konn3kt.com')
+
+# TODO: this should be merged into common.api
+
+class CommaApi:
+  def __init__(self, token=None):
+    self.session = requests.Session()
+    self.session.headers['User-agent'] = 'OpenpilotTools'
+    if token:
+      self.session.headers['Authorization'] = 'JWT ' + token
+
+    retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    self.session.mount('https://', HTTPAdapter(max_retries=retries))
+
+  def request(self, method, endpoint, **kwargs):
+    with self.session.request(method, API_HOST + '/' + endpoint, **kwargs) as resp:
+      resp_json = resp.json()
+      if isinstance(resp_json, dict) and resp_json.get('error'):
+        if resp.status_code in [401, 403]:
+          raise UnauthorizedError('Unauthorized. Authenticate with tools/lib/auth.py')
+
+        e = APIError(str(resp.status_code) + ":" + resp_json.get('description', str(resp_json['error'])))
+        e.status_code = resp.status_code
+        raise e
+      return resp_json
+
+  def get(self, endpoint, **kwargs):
+    return self.request('GET', endpoint, **kwargs)
+
+  def post(self, endpoint, **kwargs):
+    return self.request('POST', endpoint, **kwargs)
+
+class APIError(Exception):
+  pass
+
+class UnauthorizedError(Exception):
+  pass
+
+def get_token():
+  try:
+    with open(os.path.join(Paths.config_root(), 'auth.json')) as f:
+      return json.load(f)['access_token']
+  except Exception:
+    return None
+
+def set_token(token):
+  os.makedirs(Paths.config_root(), exist_ok=True)
+  with open(os.path.join(Paths.config_root(), 'auth.json'), 'w') as f:
+    json.dump({'access_token': token}, f)
+
+def clear_token():
+  try:
+    os.unlink(os.path.join(Paths.config_root(), 'auth.json'))
+  except FileNotFoundError:
+    pass

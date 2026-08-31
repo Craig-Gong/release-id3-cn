@@ -1,0 +1,45 @@
+{
+  "python/_iqclosure/_vendored.json": {
+    "mode": 420,
+    "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "size": 3
+  },
+  "python/iqpilot_private/__init__.py": {
+    "mode": 420,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size": 0
+  },
+  "python/iqpilot_private/updater/__init__.py": {
+    "mode": 420,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size": 0
+  },
+  "python/iqpilot_private/updater/_iqos_pat_blob.cpython-312-aarch64-linux-gnu.so": {
+    "mode": 493,
+    "sha256": "949c976482e5168aa1898087a5a0c02f523e4b8a43940eaadba56e5df81819f2",
+    "size": 67616
+  },
+  "python/iqpilot_private/updater/_pat_blob.cpython-312-aarch64-linux-gnu.so": {
+    "mode": 493,
+    "sha256": "908a448f4ddad2d95ef524a771ee0038c62e72c44598cc8db2755c178b950de0",
+    "size": 67616
+  },
+  "python/iqpilot_private/updater/git_remote.cpython-312-aarch64-linux-gnu.so": {
+    "mode": 493,
+    "sha256": "c3495a4480205bbf1e21e7ea0b55a27409be1da68e974ef070946bfd726c8c90",
+    "size": 136576
+  },
+  "runtime": {
+    "entries": {
+      "iqpilot_private.updater.git_remote": {
+        "path": "python/iqpilot_private/updater/git_remote.cpython-312-aarch64-linux-gnu.so",
+        "type": "python-module"
+      }
+    }
+  },
+  "signatures": {
+    "python/iqpilot_private/updater/_iqos_pat_blob.cpython-312-aarch64-linux-gnu.so": "2BgXuTkWa3sjvPsyTgFHVBaZYOE+6MmRE+/lUlINyD05fHG6qgf6GJPeYyy6TPNZqhBWoI5z/NmRjAoVzzsSDQ==",
+    "python/iqpilot_private/updater/_pat_blob.cpython-312-aarch64-linux-gnu.so": "EvASRs8Z45SknoiFmd9FpFV0boTy2L+OIJqEQMfVq88jglU/RVs5RNg/JW3SrghodMvxgTIXzBrZy2OggDPRCQ==",
+    "python/iqpilot_private/updater/git_remote.cpython-312-aarch64-linux-gnu.so": "wbN3CwOrLv0iX3a2nSmr4dTr3kEHrSEPmQ+S6IiccUzgVo8rBQXRe0dduyiQZzXrnEBYRAvz66WXfyWPrWs8AQ=="
+  }
+}

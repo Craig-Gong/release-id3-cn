@@ -1,0 +1,53 @@
+{
+  "entries": [
+    {
+      "mode": 493,
+      "path": "iqpilot_bundle_runner",
+      "relative_to": "runtime_root",
+      "sha256": "13af5da8a783b2f2e20464187e468a2acb58fbbf03340ced6f9b8a69874fe7ed",
+      "size": 134160
+    },
+    {
+      "mode": 420,
+      "path": "python/openpilot/__init__.py",
+      "relative_to": "runtime_root",
+      "sha256": "acff7d771dbec2a17c97ea2de7c0a86f12f1119616932ddb09e7c670bf2eed25",
+      "size": 580
+    },
+    {
+      "mode": 420,
+      "path": "python/openpilot/system/__init__.py",
+      "relative_to": "runtime_root",
+      "sha256": "399977f784cfb3a5e1c1d2f4e75619214c37ec2b4127802f0b739ab8e768ce82",
+      "size": 602
+    },
+    {
+      "mode": 420,
+      "path": "python/openpilot/system/proprietary_runtime/__init__.py",
+      "relative_to": "runtime_root",
+      "sha256": "3243b0edf306e17fe860e0c2a64fc2354be0d72ad12b613eea1dfeb426bb522b",
+      "size": 742
+    },
+    {
+      "mode": 493,
+      "path": "python/openpilot/system/proprietary_runtime/_verified_import.so",
+      "relative_to": "runtime_root",
+      "sha256": "cd8cf31c11742d4f2079b398a9dec9e6df60f5a79dfe42c1d6888614bd8e500b",
+      "size": 200416
+    },
+    {
+      "mode": 420,
+      "path": "/usr/lib/systemd/system/hephaestusd.service",
+      "relative_to": "absolute",
+      "sha256": "3b70e8873c7eb813e70798300b76c153dddda9947c1301cbba7e103962461fa2",
+      "size": 1627
+    },
+    {
+      "mode": 420,
+      "path": "/usr/lib/systemd/system/ble-transportd.service",
+      "relative_to": "absolute",
+      "sha256": "6b5bf61ebfebffe3d125bb766c13c391b83e8feda04b89f47de2725c6fe186e3",
+      "size": 1907
+    }
+  ]
+}

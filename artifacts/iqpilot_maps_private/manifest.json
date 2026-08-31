@@ -1,0 +1,39 @@
+{
+  "python/_iqclosure/_vendored.json": {
+    "mode": 420,
+    "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "size": 3
+  },
+  "python/iqpilot_private/__init__.py": {
+    "mode": 420,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size": 0
+  },
+  "python/iqpilot_private/maps/__init__.cpython-312-aarch64-linux-gnu.so": {
+    "mode": 493,
+    "sha256": "b4f12341a5ebeb6263226cd03391c6505c708279c9c4ff4c0057326f6325e8ab",
+    "size": 67616
+  },
+  "python/iqpilot_private/maps/__init__.py": {
+    "mode": 420,
+    "sha256": "5128931b54d4f1ff131185e7711d56a788b5e2cb71e3c8154a2f79fef184b452",
+    "size": 118
+  },
+  "python/iqpilot_private/maps/git_auth.cpython-312-aarch64-linux-gnu.so": {
+    "mode": 493,
+    "sha256": "84600544b6ca61637b1d332d4881a00083ef9001efba65ac45cca79a2a526c33",
+    "size": 67856
+  },
+  "runtime": {
+    "entries": {
+      "iqpilot_private.maps.git_auth": {
+        "path": "python/iqpilot_private/maps/git_auth.cpython-312-aarch64-linux-gnu.so",
+        "type": "python-module"
+      }
+    }
+  },
+  "signatures": {
+    "python/iqpilot_private/maps/__init__.cpython-312-aarch64-linux-gnu.so": "f9iG6goRpO0HKZpoQUoZ7KGcO7YBqV3oBtZxtES4IjeOqUl7zPaVAMxGYD0jkkjtC5HKBH2fldpGGOAoQvhbBw==",
+    "python/iqpilot_private/maps/git_auth.cpython-312-aarch64-linux-gnu.so": "63rRKgkKdIVzRaDNRFYj+X/NRNnZrwra43QGZF8VcafRopvwXnXrSgjxmgLPIRZQVk5YPcn9cgHXAuU2UJjdDw=="
+  }
+}
