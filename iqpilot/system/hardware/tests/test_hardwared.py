@@ -21,9 +21,9 @@ def test_tici_channel_type_allowed():
   assert is_supported_tici_branch(metadata)
 
 
-def test_unsupported_branch_rejected_for_tici():
-  metadata = SimpleNamespace(channel="random-branch", channel_type="dev")
-  assert not is_supported_tici_branch(metadata)
+def test_c3xl_fork_never_blocks_on_branch_name():
+  metadata = SimpleNamespace(channel="release-id3-cn-on-4be198e", channel_type="dev")
+  assert is_supported_tici_branch(metadata)
 
 
 def recovery_update(recovery: CanStartupRecovery, now: float, **kwargs) -> bool:

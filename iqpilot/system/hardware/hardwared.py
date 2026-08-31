@@ -226,7 +226,10 @@ def set_offroad_alert_if_changed(offroad_alert: str, show_alert: bool, extra_tex
 
 
 def is_supported_tici_branch(build_metadata) -> bool:
-  return build_metadata.channel_type == "tici" or build_metadata.channel in ALLOWED_TICI_BRANCHES
+  # C3XL reports device_type "tici". Official IQ.Pilot blocks onroad unless the
+  # branch is in ALLOWED_TICI_BRANCHES (or channel_type == "tici"). This car's
+  # fork branch is neither; blocking keeps card off so the car is never identified.
+  return True
 
 def touch_thread(end_event):
   count = 0

@@ -95,18 +95,17 @@ class SelfdriveD(GapButtonActions):
     self.gps_location_service = get_gps_location_service(self.params)
     self.gps_packets = [self.gps_location_service]
     self.sensor_packets = ["accelerometer", "gyroscope"]
-    self.camera_packets = ["roadCameraState", "driverCameraState", "wideRoadCameraState"]
-    if os.path.exists('/tmp/lite_hw'):
-      self.camera_packets.remove("driverCameraState")
+    # C3XL has no driver camera. /tmp/lite_hw is C3 Lite, not this device.
+    # Requiring driverCameraState flashes Camera Malfunction on every onroad wake.
+    self.camera_packets = ["roadCameraState", "wideRoadCameraState"]
 
     # TODO: de-couple selfdrived with card/conflate on carState without introducing controls mismatches
     self.car_state_sock = messaging.sub_sock('carState', timeout=20)
 
     ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan', 'iqDriveModelData', 'iqNavState', 'vehicleParameters', 'driverAssistance', 'testJoystick']
-    if os.path.exists('/tmp/lite_hw'):
-      ignore += ['driverCameraState', 'driverMonitoringState']
+    ignore += ['driverCameraState', 'driverMonitoringState']
     if SIMULATION:
-      ignore += ['driverCameraState', 'managerState']
+      ignore += ['managerState']
     if REPLAY:
       # no vipc in replay will make them ignored anyways
       ignore += ['roadCameraState', 'wideRoadCameraState', 'userBookmark', 'iqPlan']
@@ -618,6 +617,9 @@ class SelfdriveD(GapButtonActions):
         if VisionStreamType.VISION_STREAM_WIDE_ROAD not in available_streams:
           self.sm.ignore_alive.append('wideRoadCameraState')
           self.sm.ignore_valid.append('wideRoadCameraState')
+        if VisionStreamType.VISION_STREAM_DRIVER not in available_streams:
+          self.sm.ignore_alive.append('driverCameraState')
+          self.sm.ignore_valid.append('driverCameraState')
 
         if REPLAY and any(ps.controlsAllowed for ps in self.sm['pandaStates']):
           self.state_machine.state = State.enabled
