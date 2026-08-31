@@ -25,6 +25,7 @@ from iqpilot.common.params import Params
 from iqpilot.common.realtime import Ratekeeper
 from iqpilot.common.swaglog import cloudlog
 from iqpilot.system.ecoflow.client import EcoflowError, EcoflowSession
+from iqpilot.system.ecoflow.enabled import heal_enabled, is_enabled as _ecoflow_enabled
 
 MEB_KLEMMEN_ADDR = 0x3C0
 MEB_IGNITION_HOLD_S = 2.0
@@ -65,16 +66,6 @@ def meb_ignition_from_can(
   return False, last_on_ts, saw_klemmen
 
 
-def _ecoflow_enabled(params: Params) -> bool:
-  try:
-    raw = params.get("EcoflowEnabled")
-  except Exception:
-    return False
-  if raw is None:
-    return False
-  return params.get_bool("EcoflowEnabled")
-
-
 def _network_up(network_type: int) -> bool:
   return network_type != log.DeviceState.NetworkType.none
 
@@ -82,6 +73,7 @@ def _network_up(network_type: int) -> bool:
 class EcoflowDaemon:
   def __init__(self):
     self.params = Params()
+    heal_enabled(self.params)
     self.session: EcoflowSession | None = None
     self._want_dc: bool | None = None
     self._applied_dc: bool | None = None
@@ -364,6 +356,7 @@ def main() -> None:
     f"DC off delay {_DC_OFF_DELAY_S:.0f}s)"
   )
   daemon = EcoflowDaemon()
+  heal_enabled(daemon.params)
   can_sock = messaging.sub_sock("can", timeout=100)
   ds_sock = messaging.sub_sock("deviceState", conflate=True)
   last_on_ts: float | None = None

@@ -1,19 +1,24 @@
 """Green / remainS release gate when following a lead at a traffic light.
 
 Head car (no close lead): unchanged — remainS==1 immediate, green ~1 s dwell.
-Follow car: navigation may say go, but hold until the lead moves or a timeout.
+Follow car: navigation may say go, but hold until the lead moves. Close gaps
+never time out; farther queue locks may still time out so a phantom radar
+point cannot pin the car forever.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-# Planner tick (openpilot.common.realtime.DT_MDL).
+# Planner tick (iqpilot.common.realtime.DT_MDL).
 _DT_MDL = 0.05
 
 # Within this range we treat the scene as queue follow (not head car).
 LEAD_QUEUE_M = 12.0
 LEAD_MIN_D_M = 0.5
+
+# Inside this bumper gap, never auto-go on timeout (driver gas still wins).
+CLOSE_HOLD_M = 8.0
 
 # Lead must be crawling before we release (stable window).
 LEAD_GO_SPEED_MPS = 0.4
@@ -22,8 +27,11 @@ LEAD_GO_CONFIRM_S = 0.5
 # Or distance opening vs last sample while nav says go.
 LEAD_GAP_M = 0.3
 
-# Do not wait forever behind a stuck lead / bad radar lock.
+# Farther queue / weak lock only: do not wait forever behind a stuck 8–12 m lead.
 FOLLOW_TIMEOUT_S = 4.0
+
+# Vision fallback: close stopped cars often sit just under 0.5 at a bumper.
+VISION_LEAD_PROB = 0.4
 
 # Scheme 2: softer starting / E2E launch while still in the queue envelope.
 FOLLOW_LEAD_START_ACCEL = 1.1
@@ -43,6 +51,10 @@ def _sm_get(sm: Any, key: str) -> Any:
   return sm[key]
 
 
+def _in_queue(d_rel: float) -> bool:
+  return LEAD_MIN_D_M < d_rel <= LEAD_QUEUE_M
+
+
 def read_follow_lead(sm: Any) -> LeadSnapshot:
   """Radar-first with vision fallback for close stopped leads."""
   d_rel = 0.0
@@ -50,10 +62,11 @@ def read_follow_lead(sm: Any) -> LeadSnapshot:
   radar_ok = False
   try:
     lead = _sm_get(sm, "radarState").leadOne
-    if bool(getattr(lead, "status", False)):
+    radar_track = bool(getattr(lead, "status", False) or getattr(lead, "present", False))
+    if radar_track:
       d_rel = float(getattr(lead, "dRel", 0.0) or 0.0)
       v_lead = float(getattr(lead, "vLead", 0.0) or 0.0)
-      radar_ok = LEAD_MIN_D_M < d_rel <= LEAD_QUEUE_M
+      radar_ok = _in_queue(d_rel)
   except Exception:
     radar_ok = False
 
@@ -63,10 +76,10 @@ def read_follow_lead(sm: Any) -> LeadSnapshot:
   try:
     model = _sm_get(sm, "modelV2")
     ml = model.leadsV3[0]
-    if float(ml.prob) > 0.5:
+    if float(ml.prob) > VISION_LEAD_PROB:
       d_rel = float(ml.x[0])
       v_lead = float(ml.v[0])
-      if LEAD_MIN_D_M < d_rel <= LEAD_QUEUE_M:
+      if _in_queue(d_rel):
         return LeadSnapshot(True, d_rel, v_lead)
   except Exception:
     pass
@@ -129,6 +142,9 @@ class GreenFollowLeadGate:
     if gap_opening:
       self.reset()
       return True
+    # Close bumper: wait for the lead. Timeout is only for farther / weak locks.
+    if lead.d_rel <= CLOSE_HOLD_M:
+      return False
     if self._nav_go_since is not None and (now - self._nav_go_since) >= FOLLOW_TIMEOUT_S:
       self.reset()
       return True

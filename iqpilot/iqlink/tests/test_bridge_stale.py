@@ -179,3 +179,43 @@ def test_ingest_disables_nav_exit_alc():
   b.ingest({"nRoadLimitSpeed": 60})
   assert p.get_bool("NavExitLaneChange") is False
   assert p.values.get("AutoLaneChangeTimer") == 1  # not forced to DIRECT
+
+
+_DEST_NAV = {
+  "szGoalName": "home",
+  "nGoPosDist": 8000,
+  "goalPosY": 31.23,
+  "goalPosX": 121.47,
+  "nTBTDist": 200,
+  "nTBTTurnType": 1,
+}
+
+
+def test_dest_zero_speed_keeps_exec_and_updates_tbt():
+  """Gaode dest still valid but nRoadLimitSpeed=0 must not drop nav long."""
+  p = FakeParams({})
+  b = IqlinkBridge.__new__(IqlinkBridge)
+  b.params = p
+  b._lock = threading.Lock()
+  b._latest = None
+  b._raw_payload = None
+  b._raw_fp = None
+  b._last_rx = 0.0
+  b._command_index = 0
+  b._last_lc_cmd = False
+  b._warn_logged = False
+  b._road_limit_hold = _mock_road_limit_hold()
+  b.sm = _mock_sm()
+  b.ingest({"nRoadLimitSpeed": 60, **_DEST_NAV})
+  assert b._latest["longitudinalEngaged"] is True
+  posted = float(b._latest["speedTarget"])
+
+  zeroed = dict(_DEST_NAV)
+  zeroed["nRoadLimitSpeed"] = 0
+  zeroed["nTBTDist"] = 80
+  zeroed["nGoPosDist"] = 7900
+  b.ingest(zeroed)
+  assert b._latest["longitudinalEngaged"] is True
+  assert abs(b._latest["speedTarget"] - posted) < 1e-3
+  assert b._latest["nextManeuverDistance"] == 80.0
+  assert abs(b._latest["roadSpeedLimit"] - posted) < 1e-3

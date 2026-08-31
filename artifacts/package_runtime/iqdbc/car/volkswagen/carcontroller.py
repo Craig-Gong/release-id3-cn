@@ -275,6 +275,8 @@ class CarController(CarControllerBase):
     self.mlb_lead_distance_bars_last = None
     self.speed_limit_last = 0
     self.speed_limit_changed_timer = 0
+    self.iq_curve_last = False
+    self.iq_curve_changed_timer = 0
     self.blinkerActive = None
     self.hide_ea_error = False
     self.radar_disabled_warning_timer = 0
@@ -594,7 +596,9 @@ class CarController(CarControllerBase):
 
     if self.frame % self.CCP.LDW_STEP == 0:
       hud_alert = 0
-      if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw) or CS.out.steerFaultTemporary:
+      # Do not use steerFaultTemporary: P→D / EPS init briefly sets it and the
+      # cluster shows 请立即接管 / 车道保持. Only OP steerRequired/ldw.
+      if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw):
         hud_alert = self.CCP.LDW_MESSAGES["laneAssistTakeOver"]
       steering_pressed_hud = (self.frame // 2) % 2 == 0 if self.entering else CS.out.steeringPressed
       if self.CP.flags & (VolkswagenFlags.MEB | VolkswagenFlags.MQB_EVO):
@@ -624,14 +628,30 @@ class CarController(CarControllerBase):
           self.speed_limit_changed_timer = self.frame
         self.speed_limit_last = CS.out.cruiseState.speedLimit
         sl_active = self.frame - self.speed_limit_changed_timer < 400
-        speed_limit = CS.out.cruiseState.speedLimitPredicative if sl_predicative_active else (CS.out.cruiseState.speedLimit if sl_active else 0)
+
+        iq_curve = bool(getattr(CC_IQ, "curveSlowdown", False))
+        if iq_curve and not self.iq_curve_last:
+          self.iq_curve_changed_timer = self.frame
+        self.iq_curve_last = iq_curve
+        iq_curve_hud = iq_curve and (self.frame - self.iq_curve_changed_timer < 400)
+        junction_hud = bool(getattr(CC_IQ, "junctionHud", False))
+
+        speed_limit = CS.out.vEgo if iq_curve_hud else (
+          CS.out.cruiseState.speedLimitPredicative if sl_predicative_active else (CS.out.cruiseState.speedLimit if sl_active else 0)
+        )
 
         acc_hud_event = self.CCS.acc_hud_event(acc_hud_status, CS.esp_hold_confirmation, sl_predicative_active,
-                                               CS.speed_limit_predicative_type, sl_active)
+                                               CS.speed_limit_predicative_type, sl_active, iq_curve=iq_curve_hud,
+                                               junction=junction_hud)
+        # Kreuzung pictogram while approaching; at standstill keep event 3 (ready to start).
+        acc_primary_text = self.CCS.ACC_TEXT_KREUZUNG if (
+          junction_hud and not CS.esp_hold_confirmation and not fcw_alert
+        ) else 0
 
         can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, hud_control.setSpeed * CV.MS_TO_KPH,
                                                          hud_control.leadVisible, hud_control.leadDistanceBars + 1, show_distance_bars,
-                                                         CS.esp_hold_confirmation, distance, gap, fcw_alert, acc_hud_event, speed_limit))
+                                                         CS.esp_hold_confirmation, distance, gap, fcw_alert, acc_hud_event, speed_limit,
+                                                         acc_primary_text=acc_primary_text))
       else:
         # MLB scales the raw lead distance against the set follow gap in the packer, the others clamp to a bar count
         leadDistance = hud_control.leadDistance if self.CCS is mlbcan else \

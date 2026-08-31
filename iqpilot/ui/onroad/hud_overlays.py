@@ -14,10 +14,18 @@ from iqpilot.selfdrive.ui.ui_state import ui_state
 from iqpilot.selfdrive.ui.onroad.hud_renderer import COLORS, FONT_SIZES, UI_CONFIG
 from iqpilot.selfdrive.ui.mici.onroad.alert_renderer import IconSide, TURN_SIGNAL_BLINK_PERIOD
 from iqpilot.selfdrive.ui.mici.onroad.torque_bar import TorqueBar
-from iqpilot.system.ui.lib.application import gui_app, FontWeight
+from iqpilot.system.ui.lib.application import gui_app, FontWeight, font_fallback
 from iqpilot.system.ui.lib.multilang import tr
 from iqpilot.system.ui.widgets import Widget
 from iqpilot.system.ui.iqwidgets.lib import canvas
+from iqpilot.ui.onroad.cruise_cluster import GUIDE_CARD_H, JUNC_CARD_H
+from iqpilot.ui.onroad.junction_hud_shared import (
+  GreenFlashState,
+  JunctionHudSnapshot,
+  junction_accent_rgb,
+  merge_green_flash,
+  read_junction_snapshot,
+)
 from iqdbc.car.volkswagen.values import VolkswagenFlags
 
 def _feed():
@@ -243,6 +251,157 @@ class RoadNameBanner(Widget):
 
 RoadNameRenderer = RoadNameBanner
 ellipsize = clip_to_width
+
+
+def _fit_text_size(face, text: str, max_w: float, max_sz: int, min_sz: int) -> int:
+  size = max_sz
+  while size > min_sz and canvas.span(font_fallback(face, text), text, size).x > max_w:
+    size -= 1
+  return size
+
+
+_HOUSING_W = 24
+_LAMP_R = 6.0
+_INSET = 12
+_HEAD_MAX = 40
+_HEAD_MIN = 32
+_DETAIL_MAX = 28
+_DETAIL_MIN = 20
+_LIGHTS = (("red", (210, 48, 52)), ("yellow", (214, 168, 24)), ("green", (72, 196, 112)))
+
+
+class IQJunctionHud:
+  def __init__(self):
+    self._snap = JunctionHudSnapshot(False, "none", 0.0, 0.0)
+    self._face = gui_app.font(FontWeight.SEMI_BOLD)
+    self._detail_face = gui_app.font(FontWeight.MEDIUM)
+    self._green_flash = GreenFlashState()
+
+  @property
+  def visible(self) -> bool:
+    return bool(self._snap.active)
+
+  def update(self) -> None:
+    sm = _feed()
+    engaged = ui_state.engaged
+    base = read_junction_snapshot(sm, engaged=engaged)
+    light = "none"
+    dist_m = 0.0
+    remain_s = 0.0
+    try:
+      nav = sm["iqNavState"]
+      light = str(getattr(nav, "trafficLight", "none") or "none")
+      dist_m = float(getattr(nav, "trafficLightDistM", 0.0) or 0.0)
+      remain_s = float(getattr(nav, "trafficLightRemainS", 0.0) or 0.0)
+    except Exception:
+      pass
+    has_lead = False
+    try:
+      has_lead = bool(getattr(sm["radarState"].leadOne, "status", False))
+    except Exception:
+      pass
+    self._snap = merge_green_flash(
+      base,
+      engaged=engaged,
+      has_lead=has_lead,
+      light=light,
+      dist_m=dist_m,
+      remain_s=remain_s,
+      state=self._green_flash,
+      now=time.monotonic(),
+    )
+
+  def render_at(self, x: float, y: float, width: float) -> None:
+    if not self._snap.active:
+      return
+    headline = self._snap.headline
+    detail = self._snap.detail
+    if not detail and self._snap.light == "none":
+      detail = "注意前方"
+
+    bar = canvas.Box(x, y, width, JUNC_CARD_H)
+    canvas.panel(bar, 0.18, 10, canvas.shade(0, 0, 0, 176))
+    canvas.panel_outline(bar, 0.18, 10, 1.0, canvas.shade(255, 255, 255, 28))
+
+    fill = junction_accent_rgb(self._snap.light)
+    if self._snap.light == "none":
+      fill = (190, 198, 210)
+    canvas.panel(canvas.Box(x + 5, y + 16, 3, JUNC_CARD_H - 32), 1.0, 4, canvas.shade(*fill, 220))
+
+    housing_h = JUNC_CARD_H - 28
+    hx, hy = x + _INSET, y + 14
+    canvas.panel(canvas.Box(hx, hy, _HOUSING_W, housing_h), 0.42, 6, canvas.shade(16, 18, 22, 230))
+    for i, (name, rgb) in enumerate(_LIGHTS):
+      cy = hy + housing_h * (0.20 + i * 0.30)
+      cx = hx + _HOUSING_W / 2
+      if self._snap.light == name:
+        lamp = (*rgb, 245)
+      else:
+        lamp = (46, 50, 56, 210)
+      canvas.disc(cx, cy, _LAMP_R, canvas.shade(*lamp))
+
+    text_left = hx + _HOUSING_W + 12
+    text_right = x + width - _INSET
+    inner_w = max(48.0, text_right - text_left)
+    head_face = font_fallback(self._face, headline)
+    head_size = _fit_text_size(self._face, headline, inner_w, _HEAD_MAX, _HEAD_MIN)
+    head_ext = canvas.span(head_face, headline, head_size)
+    has_second = bool(detail)
+    block_h = head_ext.y + ((8 + 28) if has_second else 0.0)
+    top = y + (JUNC_CARD_H - block_h) / 2
+    canvas.glyphs(head_face, headline, canvas.Pt(text_left, top), head_size, canvas.shade(255, 255, 255, 238))
+    if not has_second:
+      return
+    det_face = font_fallback(self._detail_face, detail)
+    det_size = _fit_text_size(self._detail_face, detail, inner_w, _DETAIL_MAX, _DETAIL_MIN)
+    canvas.glyphs(det_face, detail, canvas.Pt(text_left, top + head_ext.y + 8),
+                  det_size, canvas.shade(196, 206, 218, 220))
+
+
+_GUIDE_PLAIN = (200, 220, 255)
+_GUIDE_FONT = 32
+_GUIDE_MIN = 24
+
+
+class IQNavGuideHud:
+  def __init__(self):
+    self._hint = ""
+    self._face = gui_app.font(FontWeight.SEMI_BOLD)
+
+  @property
+  def visible(self) -> bool:
+    return bool(self._hint)
+
+  def update(self) -> None:
+    self._hint = ""
+    if not ui_state.engaged:
+      return
+    try:
+      alerts = _feed()["iqPlan"].e2eAlerts
+      if bool(getattr(alerts, "junctionStop", False)):
+        return
+      self._hint = str(getattr(alerts, "navGuideHint", "") or "").strip()
+    except Exception:
+      return
+
+  def render_at(self, x: float, y: float, width: float) -> None:
+    if not self._hint:
+      return
+    label = self._hint
+    face = font_fallback(self._face, label)
+    size = _GUIDE_FONT
+    inner_w = max(40.0, width - 56)
+    while size > _GUIDE_MIN and canvas.span(face, label, size).x > inner_w:
+      size -= 1
+    extent = canvas.span(face, label, size)
+    bar = canvas.Box(x, y, width, GUIDE_CARD_H)
+    canvas.panel(bar, 0.18, 10, canvas.shade(0, 0, 0, 156))
+    canvas.panel_outline(bar, 0.18, 10, 1.0, canvas.shade(255, 255, 255, 24))
+    canvas.panel(canvas.Box(x + 5, y + 14, 3, GUIDE_CARD_H - 28), 1.0, 4, canvas.shade(*_GUIDE_PLAIN, 200))
+    canvas.glyphs(face, label,
+                  canvas.Pt(x + 40, y + (GUIDE_CARD_H - extent.y) / 2),
+                  size, canvas.shade(*_GUIDE_PLAIN, 225))
+
 
 from dataclasses import dataclass, field
 

@@ -94,6 +94,11 @@ def manager_init() -> None:
     seed_default_bundle_if_unset(params)
   except Exception:
     cloudlog.exception("failed to seed default model bundle")
+  try:
+    from iqpilot.system.ecoflow.enabled import heal_enabled
+    heal_enabled(params)
+  except Exception:
+    cloudlog.exception("failed to heal EcoflowEnabled overlay")
   for k, value in initialized_defaults.items():
     if value is not None and params.get(k) is None:
       params.put(k, value)

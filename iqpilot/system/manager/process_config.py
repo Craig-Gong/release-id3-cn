@@ -83,13 +83,8 @@ def iqlink_needed(started: bool, params: Params, CP: car.CarParams) -> bool:
   return iqlink_enabled(params)
 
 def ecoflow_enabled(params: Params) -> bool:
-  try:
-    raw = params.get("EcoflowEnabled")
-  except Exception:
-    return False
-  if raw is None:
-    return False
-  return params.get_bool("EcoflowEnabled")
+  from iqpilot.system.ecoflow.enabled import is_enabled
+  return is_enabled(params)
 
 def ecoflow_needed(started: bool, params: Params, CP: car.CarParams) -> bool:
   return ecoflow_enabled(params)

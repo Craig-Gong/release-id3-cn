@@ -25,6 +25,7 @@ from iqpilot.iqlink import (
   DEFAULT_WARN_TIMEOUT_S,
 )
 from iqpilot.iqlink import protocol as proto
+from iqpilot.iqlink.exec_snapshot import preserve_exec_long
 from iqpilot.iqlink.road_limit_hold import IqlinkRoadLimitHold
 
 NavState = custom.IQNavState
@@ -260,6 +261,7 @@ class IqlinkBridge:
         except Exception:
           pass
       return
+    fields = self._preserve_exec_long(fields)
     send_lc = bool(fields.get("shouldSendLaneChangeDesire"))
     if send_lc and not self._last_lc_cmd:
       self._command_index += 1
@@ -302,6 +304,11 @@ class IqlinkBridge:
           self.params.remove("NavigationDestination")
         except Exception:
           pass
+
+  def _preserve_exec_long(self, fields: dict[str, Any]) -> dict[str, Any]:
+    with self._lock:
+      prev = self._latest
+    return preserve_exec_long(fields, prev)
 
   def _publish_inactive(self) -> None:
     msg = messaging.new_message("iqNavState")
@@ -468,9 +475,9 @@ class IqlinkBridge:
           or remapped.get("destinationValid")
           or remapped.get("nextManeuverValid")
         ):
-          fields = remapped
+          fields = self._preserve_exec_long(remapped)
           with self._lock:
-            self._latest = remapped
+            self._latest = fields
 
       if fields is None:
         self._publish_inactive()

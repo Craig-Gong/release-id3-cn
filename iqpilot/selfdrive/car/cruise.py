@@ -214,6 +214,8 @@ V_CRUISE_MAX = 200  # ~ 124 mph
 V_CRUISE_UNSET = 255
 V_CRUISE_INITIAL = 40
 V_CRUISE_INITIAL_EXPERIMENTAL_MODE = 105
+# carrot AutoGasSyncSpeed: hold gas this long before MAX follows vEgo.
+GAS_SYNC_HOLD_FRAMES = 40  # 0.4 s at 100 Hz
 IMPERIAL_INCREMENT = round(CV.MPH_TO_KPH, 1)  # round here to avoid rounding errors incrementing set speed
 
 ButtonEvent = car.CarState.ButtonEvent
@@ -236,6 +238,8 @@ class VCruiseHelper(VCruiseHelperIQ):
     self.v_cruise_kph = V_CRUISE_UNSET
     self.v_cruise_cluster_kph = V_CRUISE_UNSET
     self.v_cruise_kph_last = 0
+    self.cruise_speed_user_set = False
+    self._gas_pressed_count = 0
     self.button_timers = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0}
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
     self.slc_set_speed_request_id = 0
@@ -285,10 +289,14 @@ class VCruiseHelper(VCruiseHelperIQ):
     if CS.cruiseState.available:
       _enabled = self.update_enabled_state(CS, enabled)
       if not self.CP.pcmCruise or (not self.CP_IQ.pcmCruiseSpeed and _enabled):
+        # VW OP long: follow current speed until the driver sets/engages, so SET is not 105.
+        if self.volkswagen_standby_set_speed and not _enabled and not self.cruise_speed_user_set:
+          self._apply_v_cruise_kph(CS.vEgo * CV.MS_TO_KPH)
         # if stock cruise is completely disabled, then we can use our own set speed logic
         self._update_v_cruise_non_pcm(CS, _enabled, is_metric, self.volkswagen_standby_set_speed)
         self._record_slc_set_speed_increase(self.v_cruise_kph_last, _enabled)
         self.update_speed_limit_assist_v_cruise_non_pcm()
+        self._sync_v_cruise_from_gas(CS, _enabled)
         self.v_cruise_cluster_kph = self.v_cruise_kph
         self.update_button_timers(CS, enabled)
       else:
@@ -308,6 +316,36 @@ class VCruiseHelper(VCruiseHelperIQ):
       self.v_cruise_kph = V_CRUISE_UNSET
       self.v_cruise_cluster_kph = V_CRUISE_UNSET
       self._slc_pcm_speed_last = None
+      self.cruise_speed_user_set = False
+      self._gas_pressed_count = 0
+
+  def _sync_v_cruise_from_gas(self, CS, enabled) -> None:
+    """While engaged, holding the accelerator raises MAX to current speed.
+
+    From carrot AutoGasSyncSpeed. Alpha Long VW owns set speed (pcmCruise=False).
+    A short tap does not change MAX; hold ~0.4 s, then only raise, never lower.
+    """
+    if CS.gasPressed:
+      self._gas_pressed_count += 1
+    else:
+      self._gas_pressed_count = 0
+      return
+
+    if not enabled or not self.volkswagen_standby_set_speed or not self.v_cruise_initialized:
+      return
+    try:
+      if not self.params.get_bool("AutoGasSyncSpeed"):
+        return
+    except Exception:
+      pass
+    if self._gas_pressed_count <= GAS_SYNC_HOLD_FRAMES:
+      return
+
+    v_ms = CS.vEgoCluster if CS.vEgoCluster > 0 else CS.vEgo
+    v_ego_kph = int(round(v_ms * CV.MS_TO_KPH))
+    if v_ego_kph > self.v_cruise_kph:
+      self._apply_v_cruise_kph(v_ego_kph)
+      self.cruise_speed_user_set = True
 
   def _update_v_cruise_non_pcm(self, CS, enabled, is_metric, allow_standby_adjustment=False):
     # handle button presses. TODO: this should be in state_control, but a decelCruise press
@@ -356,6 +394,7 @@ class VCruiseHelper(VCruiseHelperIQ):
       self.v_cruise_kph = max(self.v_cruise_kph, CS.vEgo * CV.MS_TO_KPH)
 
     self.v_cruise_kph = np.clip(round(self.v_cruise_kph, 1), self.v_cruise_min, V_CRUISE_MAX)
+    self.cruise_speed_user_set = True
 
   def update_button_timers(self, CS, enabled):
     # increment timer for buttons still pressed
@@ -369,9 +408,25 @@ class VCruiseHelper(VCruiseHelperIQ):
         self.button_timers[b.type.raw] = 1 if b.pressed else 0
         self.button_change_states[b.type.raw] = {"standstill": CS.cruiseState.standstill, "enabled": enabled}
 
-  def initialize_v_cruise(self, CS, experimental_mode: bool, iq_dynamic_mode: bool) -> None:
+  def _apply_v_cruise_kph(self, v_cruise_kph: float) -> None:
+    lo = self.v_cruise_min if self.v_cruise_min else V_CRUISE_MIN
+    self.v_cruise_kph = int(round(np.clip(v_cruise_kph, lo, V_CRUISE_MAX)))
+    self.v_cruise_cluster_kph = self.v_cruise_kph
+
+  def initialize_v_cruise(self, CS, experimental_mode: bool, iq_dynamic_mode: bool, freeze: bool = True) -> None:
     # initializing is handled by the PCM
-    if self.CP.pcmCruise or self.v_cruise_initialized:
+    if self.CP.pcmCruise:
+      return
+
+    # Alpha Long VW: SET uses current speed, not the experimental 105 km/h floor.
+    if self.volkswagen_standby_set_speed:
+      if not self.v_cruise_initialized:
+        self._apply_v_cruise_kph(CS.vEgo * CV.MS_TO_KPH)
+      if freeze:
+        self.cruise_speed_user_set = True
+      return
+
+    if self.v_cruise_initialized:
       return
 
     initial_experimental_mode = experimental_mode and not iq_dynamic_mode

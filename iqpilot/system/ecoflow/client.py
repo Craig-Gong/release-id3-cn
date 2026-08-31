@@ -4,7 +4,8 @@ P231 (classic Delta 3) uses protobuf SET (tolwi hassio-ecoflow-cloud):
   Delta3SetCommand.cfg_dc12v_out_open = 18 → wrapped in Delta3SendHeaderMsg
   cmd_func=254, cmd_id=17 → MQTT /app/{userId}/{sn}/thing/property/set
 
-Credentials: Params (EcoflowPhone/Password/Sn) or ECOFLOW_* env. Never commit secrets.
+Credentials: /data/ecoflow_params/* first, then Params (EcoflowPhone/Password/Sn),
+then ECOFLOW_* env. Never commit secrets.
 """
 from __future__ import annotations
 
@@ -25,6 +26,9 @@ from typing import Any
 DEFAULT_API_BASE = "https://api.ecoflow.com"
 CN_API_BASE = "https://api-cn.ecoflow.com"  # China App Store / phone accounts
 USER_AGENT = "okhttp/3.14.9"
+
+# Survive C3XL /data/params/d rebuilds.
+ECOFLOW_PARAM_DIR = Path("/data/ecoflow_params")
 
 DC_MODE_PROTO = "proto"              # P231 / classic Delta 3 (protobuf)
 DC_MODE_MPPT_CAR = "mpptCar"         # D361 JSON live-tested
@@ -65,6 +69,16 @@ def _load_local_env_files() -> None:
     except OSError:
       continue
     break
+
+
+def _file_cred(key: str) -> str:
+  try:
+    p = ECOFLOW_PARAM_DIR / key
+    if not p.is_file():
+      return ""
+    return p.read_text(encoding="utf-8").strip()
+  except OSError:
+    return ""
 
 
 class EcoflowError(RuntimeError):
@@ -187,7 +201,7 @@ class EcoflowSession:
 
   @classmethod
   def from_params(cls, params: Any = None) -> "EcoflowSession":
-    """Load credentials from Params first, then fall back to ECOFLOW_* env."""
+    """Load credentials: /data/ecoflow_params → Params → ECOFLOW_* env."""
     if params is None:
       try:
         from iqpilot.common.params import Params
@@ -196,6 +210,9 @@ class EcoflowSession:
         params = None
 
     def _pget(key: str) -> str:
+      file_val = _file_cred(key)
+      if file_val:
+        return file_val
       if params is None:
         return ""
       try:

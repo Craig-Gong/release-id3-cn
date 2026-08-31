@@ -13,10 +13,13 @@ from iqpilot.ui.onroad.hud_overlays import (
   IQSpeedLimitOverlay,
   IQTurnSignalOverlay,
   IQSpeedOverlay,
+  IQJunctionHud,
+  IQNavGuideHud,
 )
 from iqpilot.ui.onroad.nav_map_panel import NavMapPanel
 from iqpilot.ui.onroad.soft_warning import SoftWarningRenderer
 from iqpilot.ui.onroad.emac_status import EmacStatusRenderer
+from iqpilot.ui.onroad.cruise_cluster import cluster_box, stack_layout
 
 ENABLE_FLOATING_NAV_MAP_PANEL = False
 ENABLE_SPLIT_NAV_MAP_PANEL = True
@@ -34,6 +37,8 @@ class IQHudRenderer(HudRenderer):
     self.turn_signal_controller = IQTurnSignalOverlay()
     self.speed_renderer = IQSpeedOverlay()
     self.soft_warning_renderer = SoftWarningRenderer()
+    self.junction_hud = IQJunctionHud()
+    self.nav_guide_hud = IQNavGuideHud()
     self._torque_bar = TorqueBar(scale=3.0, always=True)
 
   def _update_state(self) -> None:
@@ -51,6 +56,11 @@ class IQHudRenderer(HudRenderer):
     self.turn_signal_controller.update()
     self.speed_renderer.update()
     self.soft_warning_renderer.update()
+    self.junction_hud.update()
+    self.nav_guide_hud.update()
+    # Hide remembered/default MAX (e.g. 105 km/h) until C3XL is actually engaged.
+    if not ui_state.engaged:
+      self.is_cruise_set = False
 
   def _draw_current_speed(self, rect: rl.Rectangle) -> None:
     self.speed_renderer.render(rect)
@@ -70,9 +80,18 @@ class IQHudRenderer(HudRenderer):
       self.nav_map_panel.render(rect)
     self.emac_status.render(rect)
     self.road_name_renderer.render(torque_rect)
+    self._render_nav_cards(rect)
     self.turn_signal_controller.render(rect)
     self.soft_warning_renderer.render(rect)
     self.rocket_fuel.render(rect, ui_state.sm)
+
+  def _render_nav_cards(self, rect: rl.Rectangle) -> None:
+    cx, cy, cw, ch = cluster_box(rect.x, rect.y, metric=ui_state.is_metric)
+    jy, gy = stack_layout(cy + ch, junction=self.junction_hud.visible, guide=self.nav_guide_hud.visible)
+    if jy is not None:
+      self.junction_hud.render_at(cx, jy, cw)
+    if gy is not None:
+      self.nav_guide_hud.render_at(cx, gy, cw)
 
   def split_nav_enabled(self) -> bool:
     if not ENABLE_SPLIT_NAV_MAP_PANEL:

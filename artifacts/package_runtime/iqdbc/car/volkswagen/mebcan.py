@@ -25,7 +25,10 @@ ACC_HUD_ACTIVE   = 3
 ACC_HUD_ENABLED  = 2
 ACC_HUD_DISABLED = 0
 
-  
+ACC_HUD_EVENT_CROSSING = 9  # Kreuzung / junction pictogram
+ACC_TEXT_KREUZUNG = 30      # ACC_Texte_Primaeranz_02 Kreuzungs_Symbol
+
+ 
 def create_steering_control(packer, bus, apply_curvature, lkas_enabled, power):
   values = {
     "Curvature": abs(apply_curvature), # in rad/m
@@ -284,16 +287,18 @@ def acc_hud_status_value(main_switch_on, acc_faulted, long_active, override):
   return acc_hud_control
 
 
-def acc_hud_event(acc_hud_control, esp_hold, speed_limit_predicative, speed_limit_predicative_type, speed_limit):
+def acc_hud_event(acc_hud_control, esp_hold, speed_limit_predicative, speed_limit_predicative_type, speed_limit,
+                  iq_curve=False, junction=False):
   acc_event = 0
   
   if esp_hold and acc_hud_control == ACC_HUD_ACTIVE:
     acc_event = 3 # acc ready message at standstill
+  elif acc_hud_control in (ACC_HUD_ACTIVE, ACC_HUD_OVERRIDE) and junction:
+    acc_event = ACC_HUD_EVENT_CROSSING  # junction / stop-ahead; not Ampel color
+  elif acc_hud_control in (ACC_HUD_ACTIVE, ACC_HUD_OVERRIDE) and (iq_curve or (speed_limit_predicative and speed_limit_predicative_type == PSD_TYPE_CURV_SPEED)):
+    acc_event = 6 # acc limited by curve (predicative / IQ.Dynamic)
   elif acc_hud_control in (ACC_HUD_ACTIVE, ACC_HUD_OVERRIDE) and speed_limit_predicative:
-    if speed_limit_predicative_type == PSD_TYPE_CURV_SPEED:
-      acc_event = 6 # acc limited by curve (predicative)
-    else:
-      acc_event = 4 # acc limited by speed limit by nav (predicative)
+    acc_event = 4 # acc limited by speed limit by nav (predicative)
   elif acc_hud_control in (ACC_HUD_ACTIVE, ACC_HUD_OVERRIDE) and speed_limit:
     acc_event = 5 # acc limited by speed limit by camera (recently detected)
 
@@ -310,10 +315,11 @@ def get_desired_gap(distance_bars, desired_gap, current_gap_signal):
   return gap
 
 
-def create_acc_hud_control(packer, bus, acc_control, set_speed, lead_visible, distance_bars, show_distance_bars, esp_hold, distance, desired_gap, fcw_alert, acc_event, speed_limit):
+def create_acc_hud_control(packer, bus, acc_control, set_speed, lead_visible, distance_bars, show_distance_bars, esp_hold, distance, desired_gap, fcw_alert, acc_event, speed_limit, acc_primary_text=0):
 
   values = {
     "ACC_Status_ACC":                acc_control,
+    "ACC_Texte_Primaeranz_02":       acc_primary_text if acc_control in (ACC_HUD_ACTIVE, ACC_HUD_OVERRIDE) and not fcw_alert else 0,
     "ACC_Tempolimit":                map_speed_to_acc_tempolimit(speed_limit) if acc_control in (ACC_HUD_ACTIVE, ACC_HUD_OVERRIDE) else 0, # display speed limits (message type defined by ACC_Events)
     "ACC_Wunschgeschw_02":           set_speed if set_speed < 250 else 327.36,
     "ACC_Gesetzte_Zeitluecke":       distance_bars, # 5 distance bars available (3 are used by OP)
