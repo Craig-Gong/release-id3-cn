@@ -115,12 +115,18 @@ function agnos_init {
     # logo. There, flash headless via agnos.py --swap (identical download+write+swap, no surface).
     # On IQ.OS weston is down -> the updater picks updater_magic (DRM), which renders the on-screen
     # progress prompt fine, so fall through and keep it. This mirrors the updater's own weston check.
+    # C3XL: agnos.py --swap and updater_magic loop forever if git.konn3kt.com/iqos
+    # 404s (private repo / missing GitAuthBlob). Time-box the flash so first boot
+    # still reaches manager on the current IQ.OS; updated.py can retry later.
+    AGNOS_FLASH_TIMEOUT_S="${AGNOS_FLASH_TIMEOUT_S:-2700}"
     if systemctl is-active --quiet weston-ready; then
-      if $AGNOS_PY --swap $MANIFEST; then
+      if timeout "$AGNOS_FLASH_TIMEOUT_S" $AGNOS_PY --swap $MANIFEST; then
         sudo reboot
       fi
+    elif timeout "$AGNOS_FLASH_TIMEOUT_S" "$DIR/iqpilot/system/hardware/tici/updater" $AGNOS_PY $MANIFEST; then
+      sudo reboot
     fi
-    $DIR/iqpilot/system/hardware/tici/updater $AGNOS_PY $MANIFEST
+    echo "IQ.OS update to $AGNOS_VERSION did not finish; continuing on $CURRENT_AGNOS_VERSION"
   fi
 }
 
@@ -262,12 +268,20 @@ function launch {
   # start manager
   cd "$DIR/iqpilot/system/manager"
   export PWD="$(pwd)"
+  if [ -f "$DIR/prebuilt" ] && [ ! -x "$DIR/iqpilot/system/camerad/camerad" ]; then
+    echo "ERROR: prebuilt tree is missing native camerad. rsync the Mac IQ.Pilot-on-release working tree; a git clone does not include gitignored aarch64 binaries."
+  fi
   if [ ! -f $DIR/prebuilt ]; then
     if pkill -f /tmp/installer 2>/dev/null; then sleep 1; fi
     "$DIR/.venv/bin/python3" ./build.py
   fi
 
-  "$DIR/.venv/bin/python3" ./manager.py
+  if [ -x "$DIR/.venv/bin/python3" ]; then
+    "$DIR/.venv/bin/python3" ./manager.py
+  else
+    echo "WARNING: $DIR/.venv/bin/python3 missing; falling back to /usr/local/venv/bin/python3"
+    /usr/local/venv/bin/python3 ./manager.py
+  fi
 
   # if broken, keep on screen error
   while true; do sleep 1; done

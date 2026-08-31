@@ -114,6 +114,13 @@ sync_python_env() {
       printf '%s\n' "$RUNTIME_WHEEL_LOCK_SHA" > "$DIR/.iqpilot-runtime-wheel-lock-sha256"
     fi
   fi
+  # package_runtime can mark PACKAGES_READY without creating .venv. launch_chffrplus
+  # always execs $DIR/.venv/bin/python3, so a missing venv is a first-boot hard fail.
+  if [ ! -x "$DIR/.venv/bin/python3" ]; then
+    UV_CACHE_DIR="$DIR/.uv-cache"
+    UV_CACHE_DIR="$UV_CACHE_DIR" uv venv --python /usr/local/venv/bin/python3 "$DIR/.venv" || return 1
+    VENV_SITE_PACKAGES="$("$DIR/.venv/bin/python3" -c 'import site; print(site.getsitepackages()[0])')"
+  fi
   if [ -n "$VENV_SITE_PACKAGES" ]; then
     printf 'import site; site.addsitedir("%s")\n' "$BASE_SITE_PACKAGES" | sudo tee "$VENV_SITE_PACKAGES/iqpilot-system-venv.pth" >/dev/null
   fi
