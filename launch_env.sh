@@ -23,10 +23,7 @@ if [ -z "$AGNOS_VERSION" ]; then
 
   case "$DEVICE_MODEL" in
     *)
-      # C3XL is on IQ.OS 4.9.3. Official 4be198e expects 4.9.7 and would
-      # flash IQ.OS on first boot (launch agnos_init + updated.py). Do not.
-      export AGNOS_VERSION="IQ.OS 4.9.3"
-      export AGNOS_COMPAT_VERSIONS="IQ.OS 4.9.3,IQ.OS 4.9.7"
+      export AGNOS_VERSION="IQ.OS 4.9.7"
       ;;
   esac
 fi
