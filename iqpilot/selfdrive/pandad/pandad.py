@@ -186,6 +186,12 @@ def main() -> None:
     # IQ panda FW does not set ignitionCan from MEB 0x3C0.
     os.environ['STARTED'] = '1'
 
+    # Native pandad is compiled to compare FW against
+    # /data/openpilot/.venv/.../panda/board/obj/ which this rsync tree
+    # does not have. Python already matched artifacts/package_runtime.
+    # Do not flash from native; the C3XL stub is patched.
+    os.environ['BOARDD_SKIP_FW_CHECK'] = '1'
+
     # run pandad with all connected serials as arguments
     os.environ['MANAGER_DAEMON'] = 'pandad'
     process = subprocess.Popen(["./pandad", *panda_serials], cwd=os.path.join(BASEDIR, "iqpilot/selfdrive/pandad"))
