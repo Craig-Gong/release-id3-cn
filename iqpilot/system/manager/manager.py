@@ -17,7 +17,7 @@ from iqpilot.common.params import Params, ParamKeyFlag
 from iqpilot.common.text_window import TextWindow
 from iqpilot.system.hardware import HARDWARE
 from iqpilot.system.loggerd.crash_recovery import recover_unclean_segments
-from iqpilot.system.manager.helpers import unblock_stdout, write_onroad_params, save_bootlog, heal_param_perms
+from iqpilot.system.manager.helpers import unblock_stdout, write_onroad_params, save_bootlog, heal_param_perms, seed_onroad_carparams
 from iqpilot.system.manager.process import ensure_running
 from iqpilot.system.manager.process_config import managed_processes
 from iqpilot.konn3kt.registration import register, UNREGISTERED_DONGLE_ID
@@ -75,6 +75,7 @@ def manager_init() -> None:
   params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)
   params.clear_all(ParamKeyFlag.CLEAR_ON_OFFROAD_TRANSITION)
   params.clear_all(ParamKeyFlag.CLEAR_ON_IGNITION_ON)
+  seed_onroad_carparams(params)
   if build_metadata.release_channel:
     params.clear_all(ParamKeyFlag.DEVELOPMENT_ONLY)
 
@@ -206,6 +207,7 @@ def manager_thread() -> None:
       except Exception:
         cloudlog.exception("failed to leave power save on onroad transition")
       params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)
+      seed_onroad_carparams(params)
     elif not started and started_prev:
       params.clear_all(ParamKeyFlag.CLEAR_ON_OFFROAD_TRANSITION)
 

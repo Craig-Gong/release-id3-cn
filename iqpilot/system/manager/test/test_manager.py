@@ -8,6 +8,7 @@ from iqpilot.common.params import Params
 import iqpilot.system.manager.manager as manager
 from iqpilot.system.manager.process import BundleProcess, NativeProcess, ensure_running
 from iqpilot.system.manager.process_config import managed_processes, procs
+from iqpilot.system.manager.helpers import seed_onroad_carparams
 from iqpilot.system.hardware import HARDWARE
 
 os.environ['FAKEUPLOAD'] = "1"
@@ -34,6 +35,30 @@ class TestManager:
 
   def test_duplicate_procs(self):
     assert len(procs) == len(managed_processes), "Duplicate process names"
+
+  def test_seed_onroad_carparams_restores_from_persistent(self):
+    params = Params()
+    params.put("CarParamsPersistent", b"cp")
+    params.put("IQCarParamsPersistentV2", b"iq")
+    assert params.get("CarParams") is None
+    assert params.get("IQCarParams") is None
+
+    seed_onroad_carparams(params)
+
+    assert params.get("CarParams") == b"cp"
+    assert params.get("IQCarParams") == b"iq"
+
+  def test_seed_onroad_carparams_keeps_live_values(self):
+    params = Params()
+    params.put("CarParamsPersistent", b"old")
+    params.put("CarParams", b"live")
+    params.put("IQCarParamsPersistentV2", b"old-iq")
+    params.put("IQCarParams", b"live-iq")
+
+    seed_onroad_carparams(params)
+
+    assert params.get("CarParams") == b"live"
+    assert params.get("IQCarParams") == b"live-iq"
 
   def test_models_manager_uses_private_bundle(self):
     proc = managed_processes["models_manager"]

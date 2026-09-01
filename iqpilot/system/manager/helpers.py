@@ -50,6 +50,23 @@ def write_onroad_params(started, params):
   params.put_bool("IsOffroad", not started)
 
 
+def seed_onroad_carparams(params: Params) -> None:
+  """Restore live CarParams after onroad-transition clears.
+
+  manager clears CLEAR_ON_ONROAD_TRANSITION keys as soon as hardwared sets
+  started=True. selfdrived/iqmodeld/controlsd block on CarParams while card
+  waits for the first CAN frame to fingerprint, which leaves the UI on
+  "Waiting to start" with no camera for several seconds on C3XL."""
+  if params.get("CarParams") is None:
+    persistent = params.get("CarParamsPersistent")
+    if persistent is not None:
+      params.put("CarParams", persistent)
+  if params.get("IQCarParams") is None:
+    persistent_iq = params.get("IQCarParamsPersistentV2")
+    if persistent_iq is not None:
+      params.put("IQCarParams", persistent_iq)
+
+
 def heal_param_perms():
   """Self-heal for a boot-bricking failure mode: a stray root process occasionally
   writes a param (seen with RouteCount/CurrentRoute) as root:root 0600, which manager
