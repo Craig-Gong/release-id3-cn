@@ -109,8 +109,9 @@ def main() -> None:
           cloudlog.info("keep live panda")
           no_internal_panda_count = 0
         else:
-          cloudlog.info("No pandas found, resetting internal panda")
-          HARDWARE.reset_internal_panda()
+          # C3XL: GPIO RST can deadlock the patched bootstub clock_init.
+          # Native pandad aborting is not something a reset will recover.
+          cloudlog.info("No pandas found, skip GPIO reset on C3XL")
           time.sleep(3)
 
       for serial in PandaDFU.list():

@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from iqdbc.car.interfaces import ACCEL_MIN
-from iqpilot.selfdrive.modeld.constants import ModelConstants
+from iqpilot.selfdrive.iqmodeld.config import ModelConstants
 from iqpilot.selfdrive.controls.lib.traffic_stop_offset import (
   TrafficStopOffset,
   _sanitize_offset_m,

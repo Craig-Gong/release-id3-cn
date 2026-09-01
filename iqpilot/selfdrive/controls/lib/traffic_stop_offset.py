@@ -14,7 +14,7 @@ Does not touch radard / IQCustomStopDistance / IQLeadStopDistance. Skips:
 from iqdbc.car.interfaces import ACCEL_MIN
 from iqpilot.common.params import Params, UnknownKeyName
 from iqpilot.common.realtime import DT_MDL
-from iqpilot.selfdrive.modeld.constants import ModelConstants
+from iqpilot.selfdrive.iqmodeld.config import ModelConstants
 from iqpilot.selfdrive.controls.lib.custom_stop_distance import (
   E2E_STOP_HOLD_BUFFER,
   E2E_STOP_HOLD_MAX_V,

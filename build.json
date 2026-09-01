@@ -1,0 +1,11 @@
+{
+  "channel": "release-id3-cn-on-4be198e",
+  "openpilot": {
+    "version": "IQ.Pilot 1.0c",
+    "release_notes": "# IQ.Pilot User Changelog",
+    "git_commit": "515ed658e0ac9d5e88d6c13df60494ec429fa3f5",
+    "git_origin": "https://github.com/Craig-Gong/release-id3-cn.git",
+    "git_commit_date": "1788201147 2026-09-01 02:32:27 +0800",
+    "build_style": "rsync"
+  }
+}
