@@ -194,6 +194,24 @@ def test_seed_default_bundle_replaces_unusable_leftover(monkeypatch: pytest.Monk
   assert params.get("ModelManager_DownloadIndex") == "81"
 
 
+class _Bundle:
+  def __init__(self, internal="", display="", file_name=""):
+    self.internalName = internal
+    self.displayName = display
+    art = type("A", (), {"fileName": file_name})()
+    self.models = [type("M", (), {"artifact": art, "type": "supercombo"})()]
+
+
+def test_official_macrostiff_catalog_row_is_usable():
+  bundle = _Bundle("MM", "Macrostiff Model (January 01, 2026)", "driving_combined_d70b1393.pkl")
+  assert model_helpers._iq_bundle_usable(bundle)
+
+
+def test_sunnypilot_macrosti_leftover_is_not_usable():
+  leftover = _Bundle("MACROSTI", "Macrostiff", "driving_macrosti_tinygrad.pkl.chunk01of04")
+  assert not model_helpers._iq_bundle_usable(leftover)
+
+
 def test_default_model_is_not_resolved_to_manifest_pop_bundle():
   pop_bundle = type("Bundle", (), {"internalName": "Pop (Default)", "displayName": "Pop (Default)"})()
 

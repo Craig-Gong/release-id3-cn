@@ -214,13 +214,16 @@ def _coerce_bundle_dict(raw):
 def _iq_bundle_usable(bundle) -> bool:
   if bundle is None:
     return False
-  label = f"{getattr(bundle, 'internalName', '')} {getattr(bundle, 'displayName', '')}".lower()
-  if "macrosti" in label:
+  # Reject leftover sunnypilot USBGPU rows (internalName MACROSTI / chunked
+  # driving_macrosti_*.pkl). Official catalog Macrostiff is "MM" + combined pkl;
+  # its display name contains "Macrostiff" and must still be selectable.
+  internal = (getattr(bundle, "internalName", "") or "").strip().lower()
+  if internal in ("macrosti", "macrostiff") or internal.startswith("macrosti"):
     return False
   for model in _bundle_models(bundle):
     file_name = (getattr(getattr(model, "artifact", None), "fileName", "") or "").lower()
     type_raw = str(getattr(getattr(model, "type", None), "raw", getattr(model, "type", ""))).lower()
-    if "macrosti" in file_name or "chunk" in file_name or type_raw == "chunked":
+    if file_name.startswith("driving_macrosti") or ".chunk" in file_name or file_name.endswith("chunkmanifest") or type_raw == "chunked":
       return False
   return True
 
