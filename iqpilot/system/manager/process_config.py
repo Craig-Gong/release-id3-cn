@@ -162,7 +162,9 @@ def egpu_enabled(started, params, CP: car.CarParams) -> bool:
           and _egpu_present(params))
 
 def big_model_enabled(started, params, CP: car.CarParams) -> bool:
-  return params.get_bool("IQEmacEnabled") or egpu_selected(params)
+  # IQEgpuEnabled leftover without a dock must not steal modelV2 from the
+  # small runner. Selector / eGPU workers only start when a backend is real.
+  return params.get_bool("IQEmacEnabled") or _egpu_present(params)
 
 def hephaestus_ready_shim(started, params, CP: car.CarParams) -> bool:
   return hephaestus_ready(params)

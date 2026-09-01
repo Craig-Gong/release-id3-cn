@@ -730,10 +730,13 @@ def main(demo: bool = False, channel_path: str | None = "auto"):
   if channel_path == "auto":
     channel_path = None
     params = Params()
-    from iqpilot.selfdrive.iqmodeld.egpu_helpers import egpu_selected
-    if params.get_bool("IQEmacEnabled") or egpu_selected(params):
+    from iqpilot.selfdrive.iqmodeld.egpu_helpers import egpu_present_consented
+    # Match manager: only demote when a big backend will actually publish.
+    # IQEgpuEnabled leftover / no dock would otherwise swallow modelV2.
+    if params.get_bool("IQEmacEnabled") or egpu_present_consented(params):
       from iqpilot.selfdrive.iqmodeld.model_channel import SMALL_CHANNEL
       channel_path = SMALL_CHANNEL
+      cloudlog.warning("iqmodeld: publishing on small channel (big backend in use)")
   InferenceDaemon(demo=demo, channel_path=channel_path).serve()
 
 

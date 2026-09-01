@@ -47,13 +47,26 @@ class TestManager:
     proc.proc.is_alive.return_value = True
 
     deadline = manager.update_modeld_watchdog(None, True, False, proc, 10.0)
-    assert deadline == 10.0 + manager.MODELD_WATCHDOG_TIMEOUT
+    assert deadline == 10.0 + manager.MODELD_WATCHDOG_LOAD_TIMEOUT
+    # still loading at the old 30s stall window
+    assert manager.update_modeld_watchdog(deadline, True, False, proc, 10.0 + manager.MODELD_WATCHDOG_TIMEOUT) == deadline
+    proc.restart.assert_not_called()
     assert manager.update_modeld_watchdog(deadline, True, False, proc, deadline - 0.1) == deadline
     proc.restart.assert_not_called()
 
     next_deadline = manager.update_modeld_watchdog(deadline, True, False, proc, deadline)
     proc.restart.assert_called_once_with()
-    assert next_deadline == deadline + manager.MODELD_WATCHDOG_TIMEOUT
+    assert next_deadline == deadline + manager.MODELD_WATCHDOG_LOAD_TIMEOUT
+
+  def test_modeld_watchdog_uses_short_timeout_after_first_modelv2(self, mocker):
+    proc = mocker.Mock()
+    proc.proc.is_alive.return_value = True
+
+    deadline = manager.update_modeld_watchdog(None, True, False, proc, 10.0)
+    deadline = manager.update_modeld_watchdog(deadline, True, True, proc, 40.0)
+    assert deadline == 40.0 + manager.MODELD_WATCHDOG_TIMEOUT
+    manager.update_modeld_watchdog(deadline, True, False, proc, deadline)
+    proc.restart.assert_called_once_with()
 
   def test_modeld_watchdog_tracks_output_and_resets(self, mocker):
     proc = mocker.Mock()

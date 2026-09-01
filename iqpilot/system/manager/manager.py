@@ -27,18 +27,23 @@ from iqpilot.system.hardware.hw import Paths
 
 
 MODELD_WATCHDOG_TIMEOUT = 30.0
+# First publish after tinygrad load on C3XL is often >30s. Killing mid-load
+# loops forever and never reaches "models loaded".
+MODELD_WATCHDOG_LOAD_TIMEOUT = 180.0
 
 
 def update_modeld_watchdog(deadline: float | None, started: bool, model_updated: bool, process, now: float) -> float | None:
   running = process.proc is not None and process.proc.is_alive()
   if not started or not running:
     return None
-  if deadline is None or model_updated:
+  if deadline is None:
+    return now + MODELD_WATCHDOG_LOAD_TIMEOUT
+  if model_updated:
     return now + MODELD_WATCHDOG_TIMEOUT
   if now >= deadline:
     cloudlog.error("iqmodeld is alive but not publishing modelV2; restarting")
     process.restart()
-    return now + MODELD_WATCHDOG_TIMEOUT
+    return now + MODELD_WATCHDOG_LOAD_TIMEOUT
   return deadline
 
 
