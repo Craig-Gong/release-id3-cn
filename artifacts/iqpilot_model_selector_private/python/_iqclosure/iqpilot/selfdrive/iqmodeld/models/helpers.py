@@ -200,6 +200,31 @@ def is_default_bundle(bundle) -> bool:
   return bool(bundle is not None and getattr(bundle, "ref", None) == _DEFAULT_BUNDLE_REF)
 
 
+def _coerce_bundle_dict(raw):
+  if not raw:
+    return None
+  if isinstance(raw, str):
+    try:
+      raw = json.loads(raw)
+    except json.JSONDecodeError:
+      return None
+  return raw if isinstance(raw, dict) else None
+
+
+def _iq_bundle_usable(bundle) -> bool:
+  if bundle is None:
+    return False
+  label = f"{getattr(bundle, 'internalName', '')} {getattr(bundle, 'displayName', '')}".lower()
+  if "macrosti" in label:
+    return False
+  for model in _bundle_models(bundle):
+    file_name = (getattr(getattr(model, "artifact", None), "fileName", "") or "").lower()
+    type_raw = str(getattr(getattr(model, "type", None), "raw", getattr(model, "type", ""))).lower()
+    if "macrosti" in file_name or "chunk" in file_name or type_raw == "chunked":
+      return False
+  return True
+
+
 def ensure_default_model_files(bundle_dict: dict = None) -> None:
   bundle_dict = bundle_dict if bundle_dict is not None else _load_default_bundle_dict()
   try:
@@ -240,7 +265,9 @@ def select_default_model(params: Params = None) -> None:
 
 def seed_default_bundle_if_unset(params: Params = None) -> None:
   params = Params() if params is None else params
-  if params.get(_ACTIVE_BUNDLE_KEY):
+  # Leftover sunnypilot / incompatible JSON is truthy but get_active_bundle()
+  # returns None. Treat that as unset so official Default (CD210) can seed.
+  if get_active_bundle(params) is not None:
     return
   queued_download = params.get(_DOWNLOAD_INDEX_KEY)
   try:
@@ -261,7 +288,7 @@ def get_active_bundle(params: Params = None):
   params = Params() if params is None else params
 
   try:
-    active_bundle = params.get(_ACTIVE_BUNDLE_KEY) or {}
+    active_bundle = _coerce_bundle_dict(params.get(_ACTIVE_BUNDLE_KEY))
     if not active_bundle:
       return None
     is_compatible = globals().get("is_bundle_version_compatible")
@@ -269,6 +296,8 @@ def get_active_bundle(params: Params = None):
       return None
     bundle = ModelBundle(**active_bundle)
   except Exception:
+    return None
+  if not _iq_bundle_usable(bundle):
     return None
 
   replacement = _find_runtime_upgrade(bundle, params)

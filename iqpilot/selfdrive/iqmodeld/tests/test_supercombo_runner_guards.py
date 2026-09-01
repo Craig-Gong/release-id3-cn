@@ -181,6 +181,19 @@ def test_seed_default_bundle_leaves_an_existing_active_bundle_alone(monkeypatch:
   assert params.get("ModelManager_DownloadIndex") == "81"
 
 
+def test_seed_default_bundle_replaces_unusable_leftover(monkeypatch: pytest.MonkeyPatch):
+  monkeypatch.setattr(model_helpers, "ensure_default_model_files", lambda *a, **k: None)
+  monkeypatch.setattr(model_helpers, "get_active_bundle", lambda params=None: None)
+
+  params = _FakeParams({"internalName": "MACROSTI", "short_name": "macrostiff"})
+  params.put("ModelManager_DownloadIndex", "81")
+
+  model_helpers.seed_default_bundle_if_unset(params)
+
+  assert params.get("ModelManager_ActiveBundle").get("ref") == "default"
+  assert params.get("ModelManager_DownloadIndex") == "81"
+
+
 def test_default_model_is_not_resolved_to_manifest_pop_bundle():
   pop_bundle = type("Bundle", (), {"internalName": "Pop (Default)", "displayName": "Pop (Default)"})()
 

@@ -72,6 +72,9 @@ def _cleanup_unsupported_params(cp, cp_iq, store=None) -> None:
 
 def apply_iq_car_config(ci, store=None) -> None:
   store = store or _Store()
+  if ci.CP_IQ is None:
+    ci.CP_IQ = _dbc.IQCarParams()
+    _log.error("CP_IQ missing after fingerprint; using defaults")
   if _stamp_lateral_model(ci.CP, ci.CP_IQ, store):
     ci.configure_torque_tune(ci.CP.carFingerprint, ci.CP.lateralTuning)
   _cleanup_unsupported_params(ci.CP, ci.CP_IQ, store)

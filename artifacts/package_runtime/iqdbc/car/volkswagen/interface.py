@@ -392,3 +392,4 @@ class CarInterface(CarInterfaceBase):
     if (stock_cp.pcmCruise and (stock_cp.flags & VolkswagenFlags.MEB)
         and not (stock_cp.flags & VolkswagenFlags.MEB_GEN2)):
       ret.pcmCruiseSpeed = False
+    return ret
