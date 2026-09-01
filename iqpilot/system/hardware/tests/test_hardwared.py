@@ -6,6 +6,7 @@ from iqpilot.system.hardware.hardwared import (
   CAN_STARTUP_RECOVERY_DELAY,
   CAN_STARTUP_RECOVERY_MAX_ATTEMPTS,
   CanStartupRecovery,
+  carparams_bytes_for_sleep,
   is_supported_tici_branch,
 )
 
@@ -24,6 +25,26 @@ def test_tici_channel_type_allowed():
 def test_c3xl_fork_never_blocks_on_branch_name():
   metadata = SimpleNamespace(channel="release-id3-cn-on-4be198e", channel_type="dev")
   assert is_supported_tici_branch(metadata)
+
+
+class _BytesParams:
+  def __init__(self, data):
+    self.data = data
+
+  def get(self, key):
+    return self.data.get(key)
+
+
+def test_sleep_carparams_prefers_live_then_prev_then_persistent():
+  live, prev, persistent = b"live", b"prev", b"persist"
+  assert carparams_bytes_for_sleep(_BytesParams({
+    "CarParams": live, "CarParamsPrevRoute": prev, "CarParamsPersistent": persistent,
+  })) == live
+  assert carparams_bytes_for_sleep(_BytesParams({
+    "CarParamsPrevRoute": prev, "CarParamsPersistent": persistent,
+  })) == prev
+  assert carparams_bytes_for_sleep(_BytesParams({"CarParamsPersistent": persistent})) == persistent
+  assert carparams_bytes_for_sleep(_BytesParams({})) is None
 
 
 def recovery_update(recovery: CanStartupRecovery, now: float, **kwargs) -> bool:

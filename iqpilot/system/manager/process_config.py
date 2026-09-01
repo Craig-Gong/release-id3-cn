@@ -207,7 +207,7 @@ procs = [
   PythonProcess("calibrationd", "iqpilot.selfdrive.locationd.calibrationd", only_onroad),
   PythonProcess("controlsd", "iqpilot.selfdrive.controls.controlsd", and_(not_joystick, iscar)),
   PythonProcess("joystickd", "iqpilot.tools.joystick.joystickd", or_(joystick, notcar)),
-  PythonProcess("selfdrived", "iqpilot.selfdrive.selfdrived.selfdrived", only_onroad),
+  PythonProcess("selfdrived", "iqpilot.selfdrive.selfdrived.selfdrived", only_onroad, restart_if_crash=True),
   PythonProcess("card", "iqpilot.selfdrive.car.card", only_onroad),
   PythonProcess("deleter", "iqpilot.system.loggerd.deleter", always_run),
   PythonProcess("dmonitoringd", "iqpilot.selfdrive.monitoring.dmonitoringd", driver_monitoring, enabled=not PC),

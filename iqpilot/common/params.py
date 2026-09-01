@@ -33,6 +33,8 @@ IQLINK_INT_KEYS = {"IqlinkBleLinkState"}
 # IQTrafficStopOffset: meters short of a vision red/model stop (not follow gap).
 # Stored as a float so the UI can step 0.5 m. Old integer files ("3") still read as 3.0.
 # IQLeadStopDistance: parked follow gap behind a stopped lead (Lead MPC STOP_DISTANCE).
+# IQ.OS rebuilds /data/params/d on boot; these live in /data/id3_params so sliders survive.
+ID3_PARAM_DIR = "/data/id3_params"
 EXTRA_PARAM_DEFAULTS = {
   "AutoGasSyncSpeed": "1",
   "IQTrafficStopOffset": "3",
@@ -144,9 +146,11 @@ try:
     def _extra_path(self, key) -> str:
       name = _iqlink_key_name(key)
       # /data/params/d is rebuilt on boot; only native PERSISTENT keys return.
-      # Keep Ecoflow* outside that overlay so credentials survive reboot.
+      # Keep Ecoflow* and C3XL driving extras outside that overlay.
       if name.startswith("Ecoflow"):
         return os.path.join("/data/ecoflow_params", name)
+      if name in EXTRA_PARAM_DEFAULTS:
+        return os.path.join(ID3_PARAM_DIR, name)
       return os.path.join(self.get_param_path(""), name)
 
     def check_key(self, key):
@@ -157,10 +161,20 @@ try:
     def get(self, key, block: bool = False, return_default: bool = False, encoding=None):
       if _iqlink_is_extra(key):
         dat = _iqlink_read(self._extra_path(key))
+        name = _iqlink_key_name(key)
+        if dat is None and name in EXTRA_PARAM_DEFAULTS and not name.startswith("Ecoflow"):
+          legacy = os.path.join(self.get_param_path(""), name)
+          dat = _iqlink_read(legacy)
+          if dat is not None:
+            _iqlink_write(self._extra_path(key), dat)
+            try:
+              os.remove(legacy)
+            except OSError:
+              pass
         if dat is None and not return_default:
           # Match native missing-file behavior for most keys, but IqlinkEnabled
           # defaults ON like the iq-link product key.
-          if _iqlink_key_name(key) == "IqlinkEnabled":
+          if name == "IqlinkEnabled":
             return _iqlink_decode(key, None, encoding)
           return None
         return _iqlink_decode(key, dat, encoding)

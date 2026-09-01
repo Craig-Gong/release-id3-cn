@@ -142,6 +142,17 @@ def _is_meb(CP) -> bool:
     return False
 
 
+def carparams_bytes_for_sleep(params: Params):
+  # Live CarParams only exists onroad. Offroad (parked in the car, harness still
+  # connected) C3XL must keep no_sleep from the last fingerprint, or hardwared
+  # will DoShutdown after ~5 min and IQ panda cannot bootkick from 0x3C0.
+  for key in ("CarParams", "CarParamsPrevRoute", "CarParamsPersistent"):
+    raw = params.get(key)
+    if raw:
+      return raw
+  return None
+
+
 class _CarParamsCache:
   def __init__(self, refresh_s: float = 5.0):
     self._refresh_s = refresh_s
@@ -155,7 +166,7 @@ class _CarParamsCache:
       return
     self._last_check = now
 
-    cp_bytes = params.get("CarParams")
+    cp_bytes = carparams_bytes_for_sleep(params)
     if not cp_bytes or cp_bytes == self._last_bytes:
       return
     self._last_bytes = cp_bytes
