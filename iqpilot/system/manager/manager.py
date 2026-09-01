@@ -3,6 +3,7 @@ import datetime
 import os
 import signal
 import sys
+import threading
 import time
 import traceback
 
@@ -26,7 +27,7 @@ from iqpilot.system.version import get_build_metadata
 from iqpilot.system.hardware.hw import Paths
 
 
-MANAGER_POLL_MS = 500  # compromise: react within ~0.5s without 5x ensure_running churn
+MANAGER_POLL_MS = 1000
 
 MODELD_WATCHDOG_TIMEOUT = 30.0
 # First publish after tinygrad load on C3XL is often >30s. Killing mid-load
@@ -173,6 +174,11 @@ def manager_cleanup() -> None:
   cloudlog.info("everything is dead")
 
 
+def _reset_onroad_params(params: Params) -> None:
+  params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)
+  seed_onroad_carparams(params)
+
+
 def manager_thread() -> None:
   cloudlog.bind(daemon="manager")
   cloudlog.info("manager start")
@@ -227,6 +233,10 @@ def manager_thread() -> None:
     ignition_prev = ignition
 
     ensure_running(managed_processes.values(), started, params=params, CP=sm['carParams'], not_run=ignore)
+
+    if rising_onroad:
+      threading.Thread(target=_reset_onroad_params, args=(params,), daemon=True).start()
+
     modeld_deadline = update_modeld_watchdog(
       modeld_deadline, started, sm.updated['modelV2'], managed_processes['iqmodeld'], time.monotonic()
     )

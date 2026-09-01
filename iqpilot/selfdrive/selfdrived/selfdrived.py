@@ -165,12 +165,6 @@ class SelfdriveD(GapButtonActions):
     self.startup_event = EventName.startup if is_remote and build_metadata.tested_channel else EventName.startupMaster
     if HARDWARE.get_device_type() == 'mici':
       self.startup_event = None
-    # Skip the full-screen welcome card on repeat drives; first fingerprint still shows it.
-    if self.startup_event in (EventName.startup, EventName.startupMaster) and any(
-      self.params.get(k) is not None
-      for k in ("CarParamsPersistent", "CarParams", "CarParamsCache")
-    ):
-      self.startup_event = None
     if not car_recognized:
       self.startup_event = EventName.startupNoCar
     elif car_recognized and self.CP.passive:
@@ -528,8 +522,16 @@ class SelfdriveD(GapButtonActions):
         self.events.add(EventName.paramsdTemporaryError)
 
     # conservative HW alert. if the data or frequency are off, locationd will throw an error
-    if any((self.sm.frame - self.sm.recv_frame[s])*DT_CTRL > 10. for s in self.sensor_packets):
-      self.events.add(EventName.sensorDataInvalid)
+    if self.initialized:
+      onroad_s = self.sm.frame * DT_CTRL
+      for s in self.sensor_packets:
+        if self.sm.recv_frame[s] == 0:
+          if onroad_s > 20.:
+            self.events.add(EventName.sensorDataInvalid)
+            break
+        elif (self.sm.frame - self.sm.recv_frame[s]) * DT_CTRL > 10.:
+          self.events.add(EventName.sensorDataInvalid)
+          break
 
     if not REPLAY:
       # Check for mismatch between openpilot and car's PCM
@@ -622,8 +624,7 @@ class SelfdriveD(GapButtonActions):
 
     if not self.initialized:
       all_valid = CS.canValid and self.sm.all_checks()
-      init_timeout_s = 6.0
-      timed_out = self.sm.frame * DT_CTRL > init_timeout_s
+      timed_out = self.sm.frame * DT_CTRL > 6.
       if all_valid or timed_out or (SIMULATION and not REPLAY):
         available_streams = VisionIpcClient.available_streams("camerad", block=False)
         if VisionStreamType.VISION_STREAM_ROAD not in available_streams:
