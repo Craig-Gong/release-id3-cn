@@ -888,7 +888,12 @@ class SteeringLayout(Widget):
     self._aol_settings_button.action_item.set_enabled(ui_state.is_offroad() and self._aol_toggle.action_item.get_state())
     self._nnff_toggle.action_item.set_enabled(ui_state.is_offroad() and steering_supported)
 
-    turn_desire = ui_state.params.get_bool("IQLaneTurnDesire")
+    turn_desire_stored = ui_state.params.get("IQLaneTurnDesire")
+    if turn_desire_stored is None:
+      ui_state.params.put_bool("IQLaneTurnDesire", True)
+      turn_desire = True
+    else:
+      turn_desire = ui_state.params.get_bool("IQLaneTurnDesire")
     live_delay = ui_state.params.get_bool("IQLiveSteerDelay")
     self._lane_turn_desire_toggle.action_item.set_state(turn_desire)
     self._lane_turn_value_control.set_visible(turn_desire)

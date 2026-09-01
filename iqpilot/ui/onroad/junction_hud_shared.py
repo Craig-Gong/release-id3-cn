@@ -11,7 +11,7 @@ _LIGHTS = ("red", "yellow", "green")
 @dataclass(frozen=True)
 class JunctionHudSnapshot:
   active: bool
-  light: str  # "red", "yellow", "green", or "none"
+  light: str  # "red", "yellow", "green", "none", or "miss"
   dist_m: float
   remain_s: float
 
@@ -23,18 +23,36 @@ class JunctionHudSnapshot:
       return "黄灯"
     if self.light == "green":
       return "绿灯"
+    if self.light == "miss":
+      return "信号灯"
     return "前方停车"
 
   @property
   def detail(self) -> str:
+    if self.caption:
+      return self.caption
+    return "  ".join(self.metrics)
+
+  @property
+  def caption(self) -> str:
     if self.light == "green":
       return "可通行"
+    if self.light == "miss":
+      return "未检测到"
+    if self.light == "none":
+      return "注意前方"
+    return ""
+
+  @property
+  def metrics(self) -> tuple[str, ...]:
+    if self.light in ("green", "miss", "none"):
+      return ()
     parts: list[str] = []
     if self.dist_m >= 1.0:
-      parts.append(f"{int(round(self.dist_m))} 米")
+      parts.append(f"{int(round(self.dist_m))}米")
     if self.remain_s >= 1.0:
-      parts.append(f"{int(self.remain_s)} 秒")
-    return " · ".join(parts)
+      parts.append(f"{int(self.remain_s)}秒")
+    return tuple(parts)
 
 
 @dataclass

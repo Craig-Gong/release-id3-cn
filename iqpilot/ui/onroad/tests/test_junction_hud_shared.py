@@ -54,6 +54,12 @@ def test_snapshot_plain_stop():
   assert snap.headline == "前方停车"
 
 
+def test_miss_idle_copy():
+  snap = JunctionHudSnapshot(True, "miss", 0.0, 0.0)
+  assert snap.headline == "信号灯"
+  assert snap.detail == "未检测到"
+
+
 def test_inactive_when_disengaged():
   snap = read_junction_snapshot(_SM(), engaged=False)
   assert not snap.active

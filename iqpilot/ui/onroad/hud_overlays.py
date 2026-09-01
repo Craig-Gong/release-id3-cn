@@ -310,6 +310,9 @@ class IQJunctionHud:
       state=self._green_flash,
       now=time.monotonic(),
     )
+    # C3XL: keep the MAX-column card onroad even when IQ-link has no lamp yet.
+    if not self._snap.active and ui_state.started:
+      self._snap = JunctionHudSnapshot(True, "miss", 0.0, 0.0)
 
   def render_at(self, x: float, y: float, width: float) -> None:
     if not self._snap.active:
@@ -324,7 +327,7 @@ class IQJunctionHud:
     canvas.panel_outline(bar, 0.18, 10, 1.0, canvas.shade(255, 255, 255, 28))
 
     fill = junction_accent_rgb(self._snap.light)
-    if self._snap.light == "none":
+    if self._snap.light in ("none", "miss"):
       fill = (190, 198, 210)
     canvas.panel(canvas.Box(x + 5, y + 16, 3, JUNC_CARD_H - 32), 1.0, 4, canvas.shade(*fill, 220))
 
@@ -334,7 +337,9 @@ class IQJunctionHud:
     for i, (name, rgb) in enumerate(_LIGHTS):
       cy = hy + housing_h * (0.20 + i * 0.30)
       cx = hx + _HOUSING_W / 2
-      if self._snap.light == name:
+      if self._snap.light in ("none", "miss"):
+        lamp = (86, 92, 100, 200)
+      elif self._snap.light == name:
         lamp = (*rgb, 245)
       else:
         lamp = (46, 50, 56, 210)
