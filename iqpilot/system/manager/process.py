@@ -179,7 +179,9 @@ class NativeProcess(ManagerProcess):
   def start(self) -> None:
     # In case we only tried a non blocking stop we need to stop it before restarting
     if self.shutting_down:
-      self.stop()
+      self.stop(block=False)
+      if self.proc is not None and self.proc.is_alive():
+        return
 
     if self.proc is not None:
       return
@@ -267,7 +269,9 @@ class PythonProcess(ManagerProcess):
   def start(self) -> None:
     # In case we only tried a non blocking stop we need to stop it before restarting
     if self.shutting_down:
-      self.stop()
+      self.stop(block=False)
+      if self.proc is not None and self.proc.is_alive():
+        return
 
     if self.proc is not None:
       return
@@ -339,11 +343,20 @@ ONROAD_BOOT_PRIORITY = (
 )
 
 
-def _proc_boot_order(p: ManagerProcess) -> tuple[int, str]:
-  try:
-    return ONROAD_BOOT_PRIORITY.index(p.name), p.name
-  except ValueError:
-    return len(ONROAD_BOOT_PRIORITY), p.name
+def kick_onroad_boot(procs: ValuesView[ManagerProcess], started: bool, params=None, CP: car.CarParams = None,
+                     not_run: list[str] | None = None) -> None:
+  """Start vision/driving daemons immediately on onroad; do not wait for offroad stops."""
+  if not started:
+    return
+  if not_run is None:
+    not_run = []
+  proc_by_name = {p.name: p for p in procs}
+  for name in ONROAD_BOOT_PRIORITY:
+    p = proc_by_name.get(name)
+    if p is None or not p.enabled or name in not_run:
+      continue
+    if p.should_run(started, params, CP):
+      p.start()
 
 
 def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None, CP: car.CarParams=None,
@@ -351,9 +364,12 @@ def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None
   if not_run is None:
     not_run = []
 
+  if started:
+    kick_onroad_boot(procs, started, params, CP, not_run)
+
   running = []
   now = time.monotonic()
-  for p in sorted(procs, key=_proc_boot_order):
+  for p in procs:
     if p.enabled and p.name not in not_run and p.should_run(started, params, CP):
       if p.restart_if_crash and p.proc is not None and p.proc.is_alive():
         p.last_alive_time = now

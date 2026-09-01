@@ -166,7 +166,10 @@ class SelfdriveD(GapButtonActions):
     if HARDWARE.get_device_type() == 'mici':
       self.startup_event = None
     # Skip the full-screen welcome card on repeat drives; first fingerprint still shows it.
-    if self.startup_event in (EventName.startup, EventName.startupMaster) and self.params.get("CarParamsPersistent") is not None:
+    if self.startup_event in (EventName.startup, EventName.startupMaster) and any(
+      self.params.get(k) is not None
+      for k in ("CarParamsPersistent", "CarParams", "CarParamsCache")
+    ):
       self.startup_event = None
     if not car_recognized:
       self.startup_event = EventName.startupNoCar

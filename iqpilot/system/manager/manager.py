@@ -18,7 +18,7 @@ from iqpilot.common.text_window import TextWindow
 from iqpilot.system.hardware import HARDWARE
 from iqpilot.system.loggerd.crash_recovery import recover_unclean_segments
 from iqpilot.system.manager.helpers import unblock_stdout, write_onroad_params, save_bootlog, heal_param_perms, seed_onroad_carparams
-from iqpilot.system.manager.process import ensure_running
+from iqpilot.system.manager.process import ensure_running, kick_onroad_boot
 from iqpilot.system.manager.process_config import managed_processes
 from iqpilot.konn3kt.registration import register, UNREGISTERED_DONGLE_ID
 from iqpilot.common.swaglog import cloudlog, add_file_handler
@@ -26,7 +26,7 @@ from iqpilot.system.version import get_build_metadata
 from iqpilot.system.hardware.hw import Paths
 
 
-MANAGER_POLL_MS = 200  # was 1000; faster onroad/offroad transitions on C3XL
+MANAGER_POLL_MS = 500  # compromise: react within ~0.5s without 5x ensure_running churn
 
 MODELD_WATCHDOG_TIMEOUT = 30.0
 # First publish after tinygrad load on C3XL is often >30s. Killing mid-load
@@ -204,6 +204,7 @@ def manager_thread() -> None:
     started = sm['deviceState'].started
 
     if started and not started_prev:
+      kick_onroad_boot(managed_processes.values(), started, params=params, CP=sm['carParams'], not_run=ignore)
       try:
         HARDWARE.set_power_save(False)
       except Exception:
