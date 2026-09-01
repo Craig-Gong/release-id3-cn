@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from iqpilot.selfdrive.iqmodeld.egpu_helpers import (
-  resolve_backend, resolve_download_url, usbgpu_present,
+  egpu_artifact_prefers_local_policy, resolve_backend, resolve_download_url, usbgpu_present,
 )
 from iqpilot.selfdrive.iqmodeld.egpu_pipeline import (
   EgpuPipeline, EgpuPipelineError, make_big_channel_payload,
@@ -75,6 +75,15 @@ class TestBackendResolution:
 
   def test_present_dock_wins_over_emac(self):
     assert resolve_backend(True, True, True) == "egpu"
+
+
+class TestArtifactPolicy:
+  def test_oob_first_by_default(self):
+    assert not egpu_artifact_prefers_local_policy(FakeParams())
+    assert not egpu_artifact_prefers_local_policy(None)
+
+  def test_opt_in_local_policy(self):
+    assert egpu_artifact_prefers_local_policy(FakeParams(IQEgpuPreferLocalPolicy=True))
 
 
 class TestManagerGating:

@@ -49,6 +49,14 @@ def egpu_selected(params, sysfs_root: str = USB_SYSFS_ROOT) -> bool:
   return usbgpu_present(sysfs_root)
 
 
+def egpu_artifact_prefers_local_policy(params) -> bool:
+  """When True, use a cached policy.pkl before downloading the OOB streamable blob."""
+  try:
+    return params is not None and params.get_bool("IQEgpuPreferLocalPolicy")
+  except Exception:
+    return False
+
+
 def resolve_backend(emac_enabled: bool, egpu_enabled: bool, egpu_present: bool = False) -> str | None:
   if egpu_present:
     return "egpu"
@@ -204,7 +212,7 @@ def restore_tinygrad_fw_cache(*, store: Path | None = None, cache: Path | None =
 
 def throttle_usbgpu_bulk_writes(*, usb3_cls=None, chunk: int = USBGPU_BULK_CHUNK,
                                 pause_s: float = USBGPU_BULK_PAUSE_S) -> bool:
-  """IQ.OS 4.9 xHCI wedges on huge USB3 bulk OUT; chunk + short pause (sunnypilot parity)."""
+  """IQ.OS 4.9 xHCI wedges on huge USB3 bulk OUT; chunk writes with a short pause."""
   import time
 
   if not iqos_linux49():

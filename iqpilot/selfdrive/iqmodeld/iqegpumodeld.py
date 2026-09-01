@@ -39,7 +39,7 @@ from iqpilot.selfdrive.iqmodeld.driving_action import (
   DESIRE_LEN, LAT_SMOOTH_SECONDS, LONG_SMOOTH_SECONDS, get_action_from_model,
 )
 from iqpilot.selfdrive.iqmodeld.egpu_helpers import (
-  download_onnx, download_precompiled, egpu_oob_pkl_path, egpu_pkl_path, egpu_policy_pkl_path, egpu_present_consented, egpu_selected, local_onnx,
+  download_onnx, download_precompiled, egpu_artifact_prefers_local_policy, egpu_oob_pkl_path, egpu_pkl_path, egpu_policy_pkl_path, egpu_present_consented, egpu_selected, local_onnx,
   patch_tinygrad_fetch_fw, prepare_egpu_runtime, quarantine_artifact, resolve_backend, usbgpu_present,
 )
 from iqpilot.selfdrive.iqmodeld.egpu_model import resolve_egpu_model
@@ -119,10 +119,8 @@ def _ensure_artifact(params: Params, meta: dict) -> str:
   params.put_bool("UsbGpuCompiled", False)
   params.put_bool("UsbGpuReady", False)
 
-  # egpu_prefetch may already have fetched the policy artifact offroad; do not
-  # block onroad startup by re-downloading the separate OOB streamable blob first.
-  if os.path.isfile(policy_path):
-    cloudlog.warning(f"iqegpumodeld using cached policy -> {policy_path}")
+  if egpu_artifact_prefers_local_policy(params) and os.path.isfile(policy_path):
+    cloudlog.warning(f"iqegpumodeld using cached policy (IQEgpuPreferLocalPolicy) -> {policy_path}")
     return policy_path
 
   if meta.get("egpu_oob_artifact") and not _precompiled_tried:
@@ -314,6 +312,10 @@ def main(demo: bool = False) -> None:
         cloudlog.error(f"iqegpumodeld giving up after {attempt} setup failures; exiting for a clean restart")
         sys.exit(1)
       if not usbgpu_present():
+        from iqpilot.system.hardware.usb import ensure_host_role
+        if ensure_host_role():
+          cloudlog.warning("iqegpumodeld: Type-C controller was out of host mode; restored")
+          time.sleep(2.0)
         _wait_for_egpu(params)
       time.sleep(min(SETUP_RETRY_MAX_S, SETUP_RETRY_BASE_S * attempt))
 
