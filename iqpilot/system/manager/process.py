@@ -330,6 +330,7 @@ class DaemonProcess(ManagerProcess):
 
 ONROAD_BOOT_PRIORITY = (
   "camerad",
+  "sensord",
   "card",
   "selfdrived",
   "iqmodeld",
@@ -368,6 +369,7 @@ def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None
     kick_onroad_boot(procs, started, params, CP, not_run)
 
   running = []
+  stopping = []
   now = time.monotonic()
   for p in procs:
     if p.enabled and p.name not in not_run and p.should_run(started, params, CP):
@@ -395,9 +397,12 @@ def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None
       p.crash_count = 0
       p.crash_loop_logged = False
       p.last_alive_time = 0.0
-      p.stop(block=False)
+      stopping.append(p)
 
   for p in running:
     p.start()
+
+  for p in stopping:
+    p.stop(block=False)
 
   return running

@@ -203,14 +203,15 @@ def manager_thread() -> None:
 
     started = sm['deviceState'].started
 
-    if started and not started_prev:
+    rising_onroad = started and not started_prev
+    if rising_onroad:
+      # Seed before selfdrived starts; do not block on clear_all before ensure_running.
+      seed_onroad_carparams(params)
       kick_onroad_boot(managed_processes.values(), started, params=params, CP=sm['carParams'], not_run=ignore)
       try:
         HARDWARE.set_power_save(False)
       except Exception:
         cloudlog.exception("failed to leave power save on onroad transition")
-      params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)
-      seed_onroad_carparams(params)
     elif not started and started_prev:
       params.clear_all(ParamKeyFlag.CLEAR_ON_OFFROAD_TRANSITION)
 
@@ -226,6 +227,11 @@ def manager_thread() -> None:
     ignition_prev = ignition
 
     ensure_running(managed_processes.values(), started, params=params, CP=sm['carParams'], not_run=ignore)
+
+    if rising_onroad:
+      params.clear_all(ParamKeyFlag.CLEAR_ON_ONROAD_TRANSITION)
+      seed_onroad_carparams(params)
+
     modeld_deadline = update_modeld_watchdog(
       modeld_deadline, started, sm.updated['modelV2'], managed_processes['iqmodeld'], time.monotonic()
     )

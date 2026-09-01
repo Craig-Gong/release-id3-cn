@@ -520,8 +520,16 @@ class SelfdriveD(GapButtonActions):
         self.events.add(EventName.paramsdTemporaryError)
 
     # conservative HW alert. if the data or frequency are off, locationd will throw an error
-    if any((self.sm.frame - self.sm.recv_frame[s])*DT_CTRL > 10. for s in self.sensor_packets):
-      self.events.add(EventName.sensorDataInvalid)
+    if self.initialized:
+      onroad_s = self.sm.frame * DT_CTRL
+      for s in self.sensor_packets:
+        if self.sm.recv_frame[s] == 0:
+          if onroad_s > 20.:
+            self.events.add(EventName.sensorDataInvalid)
+            break
+        elif (self.sm.frame - self.sm.recv_frame[s]) * DT_CTRL > 10.:
+          self.events.add(EventName.sensorDataInvalid)
+          break
 
     if not REPLAY:
       # Check for mismatch between openpilot and car's PCM
@@ -614,7 +622,7 @@ class SelfdriveD(GapButtonActions):
 
     if not self.initialized:
       all_valid = CS.canValid and self.sm.all_checks()
-      init_timeout_s = 3.0 if HARDWARE.get_device_type() == 'tici' else 6.0
+      init_timeout_s = 6.0
       timed_out = self.sm.frame * DT_CTRL > init_timeout_s
       if all_valid or timed_out or (SIMULATION and not REPLAY):
         available_streams = VisionIpcClient.available_streams("camerad", block=False)
