@@ -200,33 +200,6 @@ def is_default_bundle(bundle) -> bool:
   return bool(bundle is not None and getattr(bundle, "ref", None) == _DEFAULT_BUNDLE_REF)
 
 
-def _coerce_bundle_dict(raw):
-  if not raw:
-    return None
-  if isinstance(raw, str):
-    try:
-      raw = json.loads(raw)
-    except json.JSONDecodeError:
-      return None
-  return raw if isinstance(raw, dict) else None
-
-
-def _iq_bundle_usable(bundle) -> bool:
-  if bundle is None:
-    return False
-  # Only reject leftover sunnypilot USBGPU ActiveBundle rows. Official IQ
-  # catalog Macrostiff is internalName "MM" + a combined pkl; official downloads
-  # may use file_chunker, so do not treat ".chunk" / type "chunked" as unusable.
-  internal = (getattr(bundle, "internalName", "") or "").strip().lower()
-  if internal in ("macrosti", "macrostiff") or internal.startswith("macrosti"):
-    return False
-  for model in _bundle_models(bundle):
-    file_name = (getattr(getattr(model, "artifact", None), "fileName", "") or "").lower()
-    if file_name.startswith("driving_macrosti") or file_name.startswith("driving_lebowski_model_"):
-      return False
-  return True
-
-
 def ensure_default_model_files(bundle_dict: dict = None) -> None:
   bundle_dict = bundle_dict if bundle_dict is not None else _load_default_bundle_dict()
   try:
@@ -267,9 +240,7 @@ def select_default_model(params: Params = None) -> None:
 
 def seed_default_bundle_if_unset(params: Params = None) -> None:
   params = Params() if params is None else params
-  # Leftover sunnypilot / incompatible JSON is truthy but get_active_bundle()
-  # returns None. Treat that as unset so official Default (CD210) can seed.
-  if get_active_bundle(params) is not None:
+  if params.get(_ACTIVE_BUNDLE_KEY):
     return
   queued_download = params.get(_DOWNLOAD_INDEX_KEY)
   try:
@@ -290,7 +261,7 @@ def get_active_bundle(params: Params = None):
   params = Params() if params is None else params
 
   try:
-    active_bundle = _coerce_bundle_dict(params.get(_ACTIVE_BUNDLE_KEY))
+    active_bundle = params.get(_ACTIVE_BUNDLE_KEY) or {}
     if not active_bundle:
       return None
     is_compatible = globals().get("is_bundle_version_compatible")
@@ -298,8 +269,6 @@ def get_active_bundle(params: Params = None):
       return None
     bundle = ModelBundle(**active_bundle)
   except Exception:
-    return None
-  if not _iq_bundle_usable(bundle):
     return None
 
   replacement = _find_runtime_upgrade(bundle, params)
