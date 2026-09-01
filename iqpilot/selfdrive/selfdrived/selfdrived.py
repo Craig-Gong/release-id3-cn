@@ -165,6 +165,9 @@ class SelfdriveD(GapButtonActions):
     self.startup_event = EventName.startup if is_remote and build_metadata.tested_channel else EventName.startupMaster
     if HARDWARE.get_device_type() == 'mici':
       self.startup_event = None
+    # Skip the full-screen welcome card on repeat drives; first fingerprint still shows it.
+    if self.startup_event in (EventName.startup, EventName.startupMaster) and self.params.get("CarParamsPersistent") is not None:
+      self.startup_event = None
     if not car_recognized:
       self.startup_event = EventName.startupNoCar
     elif car_recognized and self.CP.passive:
@@ -608,7 +611,8 @@ class SelfdriveD(GapButtonActions):
 
     if not self.initialized:
       all_valid = CS.canValid and self.sm.all_checks()
-      timed_out = self.sm.frame * DT_CTRL > 6.
+      init_timeout_s = 3.0 if HARDWARE.get_device_type() == 'tici' else 6.0
+      timed_out = self.sm.frame * DT_CTRL > init_timeout_s
       if all_valid or timed_out or (SIMULATION and not REPLAY):
         available_streams = VisionIpcClient.available_streams("camerad", block=False)
         if VisionStreamType.VISION_STREAM_ROAD not in available_streams:

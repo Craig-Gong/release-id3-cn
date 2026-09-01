@@ -84,6 +84,22 @@ class Car:
   CP_IQ: structs.IQCarParams
   CP_IQ_capnp: custom.IQCarParams
 
+  @staticmethod
+  def _seed_live_params_from_cache(params: Params) -> None:
+    """Unblock selfdrived/controls while we wait for the first CAN frame."""
+    if params.get("CarParams") is None:
+      for key in ("CarParamsCache", "CarParamsPersistent"):
+        cached = params.get(key)
+        if cached is not None:
+          params.put("CarParams", cached)
+          break
+    if params.get("IQCarParams") is None:
+      for key in ("IQCarParamsCache", "IQCarParamsPersistentV2"):
+        cached = params.get(key)
+        if cached is not None:
+          params.put("IQCarParams", cached)
+          break
+
   def __init__(self, CI=None, RI=None) -> None:
     self.can_sock = messaging.sub_sock('can', timeout=20)
     self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents', 'testJoystick'] + ['iqCarControl', 'iqPlan'])
@@ -108,6 +124,7 @@ class Car:
     is_release_iq = self.params.get_bool("IsReleaseIqBranch")
 
     if CI is None:
+      self._seed_live_params_from_cache(self.params)
       # wait for one pandaState and one CAN packet
       print("Waiting for CAN messages...")
       while True:

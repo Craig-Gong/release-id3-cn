@@ -5,6 +5,7 @@ from collections.abc import Callable
 from iqpilot.cereal import log
 from iqpilot.selfdrive.ui.ui_state import ui_state
 from iqpilot.selfdrive.ui.lib.wifi_ssid import current_ssid
+from iqpilot.selfdrive.ui.lib.marquee_text import MarqueeState, advance_horizontal_marquee
 from iqpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
 from iqpilot.system.ui.lib.multilang import tr, tr_noop
 from iqpilot.system.ui.lib.text_measure import measure_text_cached
@@ -23,6 +24,13 @@ STATUS_LABEL_SIZE = 26
 STATUS_VALUE_SIZE = 36
 STATUS_LINE_GAP = 2
 NETWORK_RECT = rl.Rectangle(24, 18, 252, 76)
+NETWORK_ICON_PAD = 10
+NETWORK_TEXT_GAP = 12
+NETWORK_TEXT_RIGHT_PAD = 10
+NETWORK_TEXT_SIZE = 38
+NET_MARQUEE_SPEED = 32.0
+NET_MARQUEE_PAUSE_S = 1.5
+NET_MARQUEE_GAP = 28.0
 SETTINGS_BTN = rl.Rectangle(24, 112, 252, 112)
 HOME_BTN = rl.Rectangle(60, 860, 180, 180)
 
@@ -111,6 +119,9 @@ class Sidebar(Widget):
     self._mic_indicator_rect = rl.Rectangle(0, 0, 0, 0)
     self._font_regular = gui_app.font(FontWeight.MEDIUM)
     self._font_bold = gui_app.font(FontWeight.BOLD)
+
+    self._net_marquee = MarqueeState()
+    self._net_marquee_last_ts: float | None = None
 
     # Callbacks
     self._on_settings_click: Callable | None = None
@@ -245,21 +256,50 @@ class Sidebar(Widget):
         rl.draw_texture(img, icon_x, icon_y, rl.WHITE)
       slot_x += slot_w + gap
 
+  def _advance_network_marquee(self, net_text: str, text_w: float, view_w: float) -> float:
+    now = time.monotonic()
+    if self._net_marquee_last_ts is None:
+      self._net_marquee_last_ts = now
+    dt = now - self._net_marquee_last_ts
+    self._net_marquee_last_ts = now
+    return advance_horizontal_marquee(
+      self._net_marquee,
+      net_text,
+      text_w,
+      view_w,
+      dt,
+      speed=NET_MARQUEE_SPEED,
+      pause_s=NET_MARQUEE_PAUSE_S,
+      gap=NET_MARQUEE_GAP,
+    )
+
   def _draw_network_indicator(self, rect: rl.Rectangle):
     on_wifi = self._net_type == NETWORK_TYPES[NetworkType.wifi]
     net_text = current_ssid(on_wifi) or tr(self._net_type)
     icon_list = self._wifi_strength_icons if self._net_type in (NETWORK_TYPES[NetworkType.wifi], NETWORK_TYPES[NetworkType.ethernet]) else self._cell_strength_icons
     signal_icon = icon_list[min(self._net_strength, len(icon_list) - 1)]
-    text_size = measure_text_cached(self._font_regular, net_text, 44)
-    content_w = signal_icon.width + 14 + text_size.x
 
-    icon_x = NETWORK_RECT.x + (NETWORK_RECT.width - content_w) / 2
+    icon_x = NETWORK_RECT.x + NETWORK_ICON_PAD
     icon_y = NETWORK_RECT.y + (NETWORK_RECT.height - signal_icon.height) / 2
     rl.draw_texture(signal_icon, int(icon_x), int(icon_y), Colors.WHITE)
 
-    text_x = icon_x + signal_icon.width + 14
+    text_x = icon_x + signal_icon.width + NETWORK_TEXT_GAP
+    text_area_w = (NETWORK_RECT.x + NETWORK_RECT.width - NETWORK_TEXT_RIGHT_PAD) - text_x
+    text_size = measure_text_cached(self._font_regular, net_text, NETWORK_TEXT_SIZE)
     text_y = NETWORK_RECT.y + (NETWORK_RECT.height - text_size.y) / 2
-    rl.draw_text_ex(self._font_regular, net_text, rl.Vector2(int(text_x), int(text_y)), 44, 0, rl.Color(215, 215, 215, 255))
+    text_color = rl.Color(215, 215, 215, 255)
+    scroll = self._advance_network_marquee(net_text, text_size.x, text_area_w)
+
+    rl.begin_scissor_mode(int(text_x), int(NETWORK_RECT.y), int(text_area_w), int(NETWORK_RECT.height))
+    rl.draw_text_ex(
+      self._font_regular,
+      net_text,
+      rl.Vector2(int(text_x - scroll), int(text_y)),
+      NETWORK_TEXT_SIZE,
+      0,
+      text_color,
+    )
+    rl.end_scissor_mode()
 
   def _draw_metrics(self, rect: rl.Rectangle):
     metric_count = 3

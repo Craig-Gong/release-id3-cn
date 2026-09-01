@@ -93,6 +93,9 @@ class AlertRenderer(Widget):
       # 1. Never received selfdriveState since going onroad
       waiting_for_startup = recv_frame < ui_state.started_frame
       if waiting_for_startup and time_since_onroad > 5:
+        # Camera can be up while selfdrived/modeld are still starting; keep the feed visible.
+        if sm.alive.get('roadCameraState') and sm.valid.get('roadCameraState'):
+          return None
         return ALERT_STARTUP_PENDING
 
       # 2. Lost communication with selfdriveState after receiving it

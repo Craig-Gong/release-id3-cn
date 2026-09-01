@@ -324,6 +324,28 @@ class DaemonProcess(ManagerProcess):
     pass
 
 
+ONROAD_BOOT_PRIORITY = (
+  "camerad",
+  "card",
+  "selfdrived",
+  "iqmodeld",
+  "calibrationd",
+  "locationd",
+  "plannerd",
+  "controlsd",
+  "radard",
+  "estimatord",
+  "iqlocd",
+)
+
+
+def _proc_boot_order(p: ManagerProcess) -> tuple[int, str]:
+  try:
+    return ONROAD_BOOT_PRIORITY.index(p.name), p.name
+  except ValueError:
+    return len(ONROAD_BOOT_PRIORITY), p.name
+
+
 def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None, CP: car.CarParams=None,
                    not_run: list[str] | None=None) -> list[ManagerProcess]:
   if not_run is None:
@@ -331,7 +353,7 @@ def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None
 
   running = []
   now = time.monotonic()
-  for p in procs:
+  for p in sorted(procs, key=_proc_boot_order):
     if p.enabled and p.name not in not_run and p.should_run(started, params, CP):
       if p.restart_if_crash and p.proc is not None and p.proc.is_alive():
         p.last_alive_time = now

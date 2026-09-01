@@ -26,6 +26,8 @@ from iqpilot.system.version import get_build_metadata
 from iqpilot.system.hardware.hw import Paths
 
 
+MANAGER_POLL_MS = 200  # was 1000; faster onroad/offroad transitions on C3XL
+
 MODELD_WATCHDOG_TIMEOUT = 30.0
 # First publish after tinygrad load on C3XL is often >30s. Killing mid-load
 # loops forever and never reaches "models loaded".
@@ -197,7 +199,7 @@ def manager_thread() -> None:
   modeld_deadline = None
 
   while True:
-    sm.update(1000)
+    sm.update(MANAGER_POLL_MS)
 
     started = sm['deviceState'].started
 
