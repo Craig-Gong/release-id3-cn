@@ -290,6 +290,21 @@ def get_runtime_bundle_upgrade(bundle, params: Params = None, available_bundles=
   return _find_runtime_upgrade(bundle, params, available_bundles)
 
 
+def ui_active_bundle(params: Params = None, cereal_active=None):
+  # models_manager is offroad-only and may wait for NTP before publishing.
+  # The settings page must not treat an empty cereal message as Default.
+  if cereal_active is not None and getattr(cereal_active, "ref", None):
+    return cereal_active
+  return get_active_bundle(params)
+
+
+def ui_catalog_bundles(params: Params = None, cereal_bundles=None):
+  bundles = list(cereal_bundles or [])
+  if bundles:
+    return bundles
+  return _load_cached_manifest_bundles(Params() if params is None else params)
+
+
 def get_active_bundle(params: Params = None):
   params = Params() if params is None else params
 

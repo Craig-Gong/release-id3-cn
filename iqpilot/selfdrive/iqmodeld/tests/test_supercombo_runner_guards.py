@@ -230,6 +230,24 @@ def test_official_catalog_is_not_rejected_for_file_chunker_names():
   assert model_helpers._iq_bundle_usable(bundle)
 
 
+def test_ui_falls_back_to_params_when_cereal_model_manager_is_empty(monkeypatch: pytest.MonkeyPatch):
+  monkeypatch.setattr(model_helpers, "_load_cached_manifest_bundles", lambda params=None: [_Bundle("MM", "Macrostiff Model", "driving_combined_d70b1393.pkl")])
+  monkeypatch.setattr(model_helpers, "get_active_bundle", lambda params=None: _Bundle("MM", "Macrostiff Model", "driving_combined_d70b1393.pkl"))
+
+  active = model_helpers.ui_active_bundle(params=None, cereal_active=None)
+  assert active.internalName == "MM"
+  catalog = model_helpers.ui_catalog_bundles(params=None, cereal_bundles=[])
+  assert len(catalog) == 1 and catalog[0].internalName == "MM"
+
+
+def test_ui_prefers_live_cereal_catalog_over_params_cache(monkeypatch: pytest.MonkeyPatch):
+  monkeypatch.setattr(model_helpers, "_load_cached_manifest_bundles", lambda params=None: [_Bundle("C210M", "Default (CD210)", "driving_policy_c210m_tinygrad.pkl")])
+  live = _Bundle("MM", "Macrostiff Model", "driving_combined_d70b1393.pkl")
+  live.ref = "d70b1393"
+  catalog = model_helpers.ui_catalog_bundles(params=None, cereal_bundles=[live])
+  assert catalog[0].internalName == "MM"
+
+
 def test_default_model_is_not_resolved_to_manifest_pop_bundle():
   pop_bundle = type("Bundle", (), {"internalName": "Pop (Default)", "displayName": "Pop (Default)"})()
 

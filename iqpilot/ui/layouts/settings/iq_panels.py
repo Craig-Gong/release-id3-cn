@@ -55,7 +55,12 @@ import time
 from iqpilot.cereal import custom
 from dataclasses import dataclass
 from iqpilot.selfdrive.car.vehicle_catalog import load_catalog
-from iqpilot.selfdrive.iqmodeld.models.helpers import select_default_model, is_default_bundle
+from iqpilot.selfdrive.iqmodeld.models.helpers import (
+  is_default_bundle,
+  select_default_model,
+  ui_active_bundle,
+  ui_catalog_bundles,
+)
 from iqpilot.selfdrive.iqmodeld.models.runners.model_runner import CUSTOM_MODEL_PATH
 from iqpilot.selfdrive.ui.layouts.settings import settings as OP
 from iqpilot.selfdrive.ui.layouts.settings.toggles import TogglesLayout
@@ -1765,13 +1770,11 @@ class ModelsLayout(Widget):
                                             tr("Clear Cache")), callback=_callback)
 
   def _redownload_target_bundle(self):
-    if not self.model_manager:
-      return None
-    selected = self.model_manager.selectedBundle
+    selected = getattr(self.model_manager, "selectedBundle", None) if self.model_manager else None
     if selected and selected.status == custom.IQModelManager.DownloadStatus.failed:
       return selected
-    active = self.model_manager.activeBundle
-    if self._has_active_bundle_param() and active and active.ref:
+    active = self._ui_active_bundle()
+    if active and getattr(active, "ref", None):
       return active
     return None
 
@@ -1784,7 +1787,7 @@ class ModelsLayout(Widget):
     except (TypeError, ValueError):
       pass
 
-    for bundle in self.model_manager.availableBundles:
+    for bundle in self._catalog_bundles():
       if bundle.ref and bundle.ref == target.ref:
         return int(bundle.index)
       if bundle.internalName and bundle.internalName == target.internalName:
@@ -1885,14 +1888,15 @@ class ModelsLayout(Widget):
       return
     selected_ref = self.model_dialog.selection_ref
     if selected_ref == "Default":
-      active = self.model_manager.activeBundle if self.model_manager else None
+      active = self._ui_active_bundle()
       had_custom_model = bool(active and active.ref and not is_default_bundle(active))
       select_default_model(ui_state.params)
       if had_custom_model:
         self._show_reset_params_dialog()
-    elif selected_bundle := next((bundle for bundle in self.model_manager.availableBundles if bundle.ref == selected_ref), None):
+    elif selected_bundle := next((bundle for bundle in self._catalog_bundles() if bundle.ref == selected_ref), None):
       ui_state.params.put(_DOWNLOAD_INDEX_KEY, selected_bundle.index)
-      if self.model_manager.activeBundle and selected_bundle.generation != self.model_manager.activeBundle.generation:
+      active = self._ui_active_bundle()
+      if active and getattr(active, "generation", None) is not None and selected_bundle.generation != active.generation:
         self._show_reset_params_dialog()
     self.model_dialog = None
 
@@ -1900,8 +1904,16 @@ class ModelsLayout(Widget):
   def _bundle_to_node(bundle):
     return PickerItem(bundle.ref, {'display_name': bundle.displayName, 'short_name': bundle.internalName})
 
+  def _catalog_bundles(self):
+    cereal = getattr(self.model_manager, "availableBundles", None) if self.model_manager else None
+    return ui_catalog_bundles(ui_state.params, cereal)
+
+  def _ui_active_bundle(self):
+    cereal = getattr(self.model_manager, "activeBundle", None) if self.model_manager else None
+    return ui_active_bundle(ui_state.params, cereal)
+
   def _get_folders(self, favorites):
-    bundles = self.model_manager.availableBundles
+    bundles = self._catalog_bundles()
     folders = {}
     for bundle in bundles:
       folders.setdefault(next((ov_ride.value for ov_ride in bundle.overrides if ov_ride.key == "folder"), ""), []).append(bundle)
@@ -1921,7 +1933,8 @@ class ModelsLayout(Widget):
     favorites = set(favs.split(';')) if favs else set()
     folders_list = self._get_folders(favorites)
 
-    active_ref = self.model_manager.activeBundle.ref if self._has_active_bundle_param() and self.model_manager.activeBundle else "Default"
+    active = self._ui_active_bundle()
+    active_ref = active.ref if active and getattr(active, "ref", None) else "Default"
     self.model_dialog = PickerDialog(tr("Choose a Model"), folders_list, active_ref, "IQModelFavorites",
                                          get_folders_fn=self._get_folders, on_exit=self._on_model_selected)
     gui_app.set_modal_overlay(self.model_dialog, callback=self._on_model_selected)
@@ -1985,11 +1998,11 @@ class ModelsLayout(Widget):
     self._update_refresh_state()
     self.model_manager = ui_state.sm["iqModelManager"]
     self._handle_bundle_download_progress()
-    active = self.model_manager.activeBundle if self.model_manager else None
+    active = self._ui_active_bundle()
     if is_default_bundle(active):
       active_name = active.displayName or tr("Default (CD210)")
-    elif self._has_active_bundle_param() and active and active.ref:
-      active_name = active.internalName
+    elif active and getattr(active, "ref", None):
+      active_name = active.displayName or active.internalName
     else:
       active_name = tr("Default (CD210)")
     self.current_model_item.action_item.set_value(active_name)
