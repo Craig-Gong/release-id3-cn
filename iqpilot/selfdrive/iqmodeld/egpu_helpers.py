@@ -19,6 +19,8 @@ TINYGRAD_CACHE = Path(os.getenv("XDG_CACHE_HOME", "/data/.cache"))
 TINYGRAD_FW_STORE = Path("/data/amdgpu-fw/tinygrad-cache")
 USBGPU_BULK_CHUNK = 256 * 1024
 USBGPU_BULK_PAUSE_S = 0.002
+USBGPU_LINK_SETTLE_S = 2.0
+USBGPU_LINK_POLL_S = 1.0
 
 COMMA_LFS_BATCH_URL = "https://gitlab.com/commaai/openpilot-lfs.git/info/lfs/objects/batch"
 
@@ -242,11 +244,73 @@ def throttle_usbgpu_bulk_writes(*, usb3_cls=None, chunk: int = USBGPU_BULK_CHUNK
   return True
 
 
+def throttle_usbgpu_bulk_reads(*, usb3_cls=None, chunk: int = USBGPU_BULK_CHUNK,
+                               pause_s: float = USBGPU_BULK_PAUSE_S) -> bool:
+  """IQ.OS 4.9 xHCI wedges on huge USB3 bulk IN during inference readback."""
+  import time
+
+  if not iqos_linux49():
+    return False
+  if usb3_cls is None:
+    try:
+      from tinygrad.runtime.support.usb import USB3
+      usb3_cls = USB3
+    except ImportError:
+      return False
+  orig = usb3_cls.bulk_read
+  if getattr(orig, "_iqos_throttled", False):
+    return True
+
+  def bulk_read(self, length, timeout=1000):
+    if length <= chunk:
+      return orig(self, length, timeout)
+    parts: list[bytes] = []
+    remaining = length
+    while remaining > 0:
+      n = min(chunk, remaining)
+      part = orig(self, n, timeout)
+      blob = bytes(part)
+      parts.append(blob)
+      got = len(blob)
+      remaining -= got
+      if got < n:
+        break
+      if pause_s and remaining > 0:
+        time.sleep(pause_s)
+    return memoryview(b"".join(parts))
+
+  bulk_read._iqos_throttled = True  # type: ignore[attr-defined]
+  usb3_cls.bulk_read = bulk_read
+  return True
+
+
+def wait_for_stable_usb_link(*, settle_s: float = USBGPU_LINK_SETTLE_S,
+                             poll_s: float = USBGPU_LINK_POLL_S) -> bool:
+  """Poll ssusb portli counters; require no growth over settle_s (IQ.OS 4.9.1+)."""
+  import time
+
+  from iqpilot.system.hardware.usb import get_link_error_count
+
+  if not iqos_linux49():
+    time.sleep(settle_s)
+    return True
+  deadline = time.monotonic() + settle_s
+  baseline = get_link_error_count()
+  while time.monotonic() < deadline:
+    time.sleep(poll_s)
+    if get_link_error_count() > baseline:
+      return False
+  return True
+
+
 def prepare_egpu_runtime() -> None:
   """Call before any tinygrad DEV=USB+AMD work on IQ.OS."""
   restore_tinygrad_fw_cache()
   patch_tinygrad_fetch_fw()
   throttle_usbgpu_bulk_writes()
+  throttle_usbgpu_bulk_reads()
+  if not wait_for_stable_usb_link():
+    cloudlog.warning("egpu: USB link errors increased during settle window")
 
 
 def patch_tinygrad_fetch_fw() -> None:

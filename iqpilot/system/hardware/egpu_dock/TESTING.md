@@ -39,6 +39,15 @@ downloads/compiles and the selector reports UsbGpu* status. The runtime gate
 requires the exact bundled firmware product string, so a dock that failed
 step 2 will be treated as absent by design.
 
+Offroad GPU readback self-test (1MB tensor + 8x numpy; EcoFlow 12V recovery):
+
+    sudo python3 -m iqpilot.system.hardware.egpu_dock.egpu_selftest --status
+    sudo python3 -m iqpilot.system.hardware.egpu_dock.egpu_selftest --check
+    sudo python3 -m iqpilot.system.hardware.egpu_dock.egpu_selftest --recover
+
+Hang recovery keeps the USB cable plugged: `--recover` writes host mode,
+USBDEVFS-resets the dock, then cycles EcoFlow 12V (default 60s off).
+
 ## If anything goes wrong
 
 The dock falling back to the ROM bootloader (product "USB 3.2 PCIe

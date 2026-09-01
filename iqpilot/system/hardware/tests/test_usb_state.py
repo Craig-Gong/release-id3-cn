@@ -9,7 +9,7 @@ plumbing are pinned without hardware.
 from iqpilot.cereal import messaging
 from iqpilot.system.hardware.usb import (
   EGPU_DOCK_FW_PRODUCT, EGPU_DOCK_ROM_USB_IDS, EGPU_DOCK_USB_IDS, controller, egpu_dock_present,
-  egpu_dock_ready, get_link_error_count,
+  egpu_dock_ready, ensure_host_role, get_link_error_count,
   get_usb_topology, get_usb_state, link_controller, read_hex_counter, set_usb_state, usb3_lane,
 )
 
@@ -265,3 +265,29 @@ def test_rom_mode_dock_is_neither_present_nor_ready(tmp_path):
   _mkdev(root, "1-1", vid=vid, pid=pid, product="USB 3.2 PCIe TinyEnclosure")
   assert not egpu_dock_present(root / "bus")
   assert not egpu_dock_ready(root / "bus")
+
+
+def test_ensure_host_role_noop_when_already_host(tmp_path, monkeypatch):
+  mode = tmp_path / "a600000.ssusb" / "mode"
+  mode.parent.mkdir(parents=True)
+  mode.write_text("host\n")
+  monkeypatch.setattr("iqpilot.system.hardware.usb.host_role_controller", lambda **_: mode)
+  calls = []
+  monkeypatch.setattr("iqpilot.system.hardware.usb.subprocess.run", lambda *a, **k: calls.append(a) or type("R", (), {"returncode": 0})())
+  assert ensure_host_role()
+  assert calls == []
+
+
+def test_ensure_host_role_writes_host(tmp_path, monkeypatch):
+  mode = tmp_path / "a600000.ssusb" / "mode"
+  mode.parent.mkdir(parents=True)
+  mode.write_text("peripheral\n")
+
+  def _run(cmd, **kwargs):
+    mode.write_text("host\n")
+    return type("R", (), {"returncode": 0})()
+
+  monkeypatch.setattr("iqpilot.system.hardware.usb.host_role_controller", lambda **_: mode)
+  monkeypatch.setattr("iqpilot.system.hardware.usb.subprocess.run", _run)
+  assert ensure_host_role()
+  assert mode.read_text().strip() == "host"
