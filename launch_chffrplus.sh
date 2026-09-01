@@ -28,14 +28,11 @@ function agnos_version_allowed {
 }
 
 function set_lite_hw() {
-  if grep -q "tici" /sys/firmware/devicetree/base/model 2>/dev/null; then
-    output=$(i2cget -y 0 0x10 0x00 2>/dev/null)
-    if [ -z "$output" ]; then
-      echo "C3 Lite hardware detected"
-      export LITE=1
-      echo "1" > /tmp/lite_hw
-    fi
-  fi
+  # Official IQ uses "tici DTB + i2c 0x10 missing" as C3 Lite. This car is a
+  # Mr.One C3XL with the same tici DTB and u-blox GPS; that probe is a false
+  # positive and would disable ubloxd. Never treat this fork as Lite.
+  unset LITE
+  rm -f /tmp/lite_hw
 }
 
 function install_iq_command() {
@@ -242,7 +239,7 @@ function launch {
     fi
   done
 
-  # detect mr.one C3 Lite hardware
+  # C3XL: clear any Lite false positive (do not probe i2c 0x10)
   set_lite_hw
 
   # hardware specific init
