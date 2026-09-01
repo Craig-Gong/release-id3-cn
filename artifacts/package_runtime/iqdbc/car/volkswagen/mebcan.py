@@ -171,6 +171,20 @@ def acc_control_value(main_switch_on, acc_faulted, long_active, override):
   return acc_control
 
 
+def meb_pid_hold_should_start(esp_hold: bool, v_ego: float, accel: float, gas_pressed: bool,
+                             *, v_hold: float = 0.25) -> bool:
+  """pid + ESP-hold RELEASE only when actually launching.
+
+  Keep LongCtrlState.starting as the primary go. Do not treat pid flicker
+  with accel<=0 as takeoff (stop-then-creep). Gas always wins.
+  """
+  if not (esp_hold or v_ego < v_hold):
+    return False
+  if gas_pressed:
+    return True
+  return accel > 0.0
+
+
 def acc_hold_type(main_switch_on, acc_faulted, long_active, starting, stopping, esp_hold, v_ego,
                   prev_acc_hold_type, ramp_counter):
   # warning: car is reacting to hold mechanic even with long control off
