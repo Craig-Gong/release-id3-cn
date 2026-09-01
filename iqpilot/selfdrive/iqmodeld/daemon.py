@@ -229,6 +229,9 @@ class NeuralEngineState(InferenceStateBase):
     self.model_runner = runner
     self.constants = runner.constants
     self.generation = bundle.generation if bundle is not None else None
+    cloudlog.warning(
+      f"iqmodeld runner={type(runner).__name__} opencl_warp={getattr(runner, 'uses_opencl_warp', None)}"
+    )
 
     knob_values = {entry.key: entry.value for entry in bundle.overrides} if bundle is not None else {}
     self.LAT_SMOOTH_SECONDS = float(knob_values.get("lat", ".0"))
@@ -390,20 +393,45 @@ class CameraIngress:
     main_stamp = CaptureStamp()
     wide_stamp = CaptureStamp()
 
+    # C3XL: VisionIpc can return buffers with timestamp_sof=0. The stock
+    # 25 ms sync then spins forever, iqmodeld stays alive, and the manager
+    # watchdog never sees modelV2.
+    main_recvs = 0
     while main_stamp.timestamp_sof < wide_stamp.timestamp_sof + 25000000:
       main_buf = self._primary.recv()
       main_stamp = CaptureStamp.from_vipc(self._primary)
+      main_recvs += 1
       if main_buf is None:
+        return None
+      if main_stamp.timestamp_sof == 0:
+        cloudlog.error("visionipc main timestamp_sof=0; using frame anyway")
+        break
+      if main_recvs >= 200:
+        cloudlog.error(
+          f"visionipc main sync stalled after {main_recvs} recvs "
+          f"sof={main_stamp.timestamp_sof} fid={main_stamp.frame_id}"
+        )
         return None
 
     if not self.layout.dual_camera:
       return main_buf, main_buf, main_stamp, main_stamp
 
+    wide_recvs = 0
     while True:
       wide_buf = self._secondary.recv()
       wide_stamp = CaptureStamp.from_vipc(self._secondary)
+      wide_recvs += 1
       if wide_buf is None or main_stamp.timestamp_sof < wide_stamp.timestamp_sof + 25000000:
         break
+      if wide_stamp.timestamp_sof == 0:
+        cloudlog.error("visionipc extra timestamp_sof=0; using frame anyway")
+        break
+      if wide_recvs >= 200:
+        cloudlog.error(
+          f"visionipc extra sync stalled after {wide_recvs} recvs "
+          f"main_sof={main_stamp.timestamp_sof} extra_sof={wide_stamp.timestamp_sof}"
+        )
+        return None
 
     if wide_buf is None:
       return None
@@ -521,8 +549,8 @@ class InferenceDaemon:
   def _refresh_tunables(self, tick: int) -> None:
     if tick % 60 != 0:
       return
-    from iqpilot.selfdrive.iqmodeld.egpu_helpers import egpu_selected
-    big_enabled = self._params.get_bool("IQEmacEnabled") or egpu_selected(self._params)
+    from iqpilot.selfdrive.iqmodeld.egpu_helpers import egpu_present_consented
+    big_enabled = self._params.get_bool("IQEmacEnabled") or egpu_present_consented(self._params)
     if big_enabled != (self._channel is not None):
       # publish mode is fixed at startup: staying up would fight the selector for modelV2
       cloudlog.warning("iqmodeld: big backend toggled, restarting to switch publish mode")
@@ -639,6 +667,8 @@ class InferenceDaemon:
   def serve(self) -> None:
     tick = 0
     starved_polls = 0
+    first_frame = True
+    cloudlog.warning("iqmodeld entering serve loop")
     while True:
       frame_pair = self._cameras.pull()
       if frame_pair is None:
@@ -652,6 +682,12 @@ class InferenceDaemon:
       if starved_polls:
         cloudlog.warning(f"visionipc recovered after {starved_polls} frameless polls")
         starved_polls = 0
+      if first_frame:
+        _main_buf, _extra_buf, main_stamp, extra_stamp = frame_pair
+        cloudlog.warning(
+          f"iqmodeld first vision frame main_fid={main_stamp.frame_id} "
+          f"main_sof={main_stamp.timestamp_sof} extra_sof={extra_stamp.timestamp_sof}"
+        )
 
       main_buf, extra_buf, main_stamp, extra_stamp = frame_pair
       self._sub.update(0)
@@ -677,8 +713,15 @@ class InferenceDaemon:
       fresh_inputs = self._compose_inputs(vehicle_speed, lat_horizon, long_horizon)
 
       started_at = time.perf_counter()
+      if first_frame:
+        cloudlog.warning("iqmodeld first model run starting")
       outputs = self._runtime.run(vision_bufs, warp_map, fresh_inputs)
       execution_time = time.perf_counter() - started_at
+      if first_frame:
+        cloudlog.warning(
+          f"iqmodeld first model run done outputs={outputs is not None} eval_ms={execution_time * 1000:.1f}"
+        )
+        first_frame = False
       execution_us = int(execution_time * 1_000_000)
 
       sample = PerfSample(

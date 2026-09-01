@@ -112,10 +112,14 @@ class TestManagerGating:
     assert not pc.egpu_enabled(True, off, None)
     assert not pc.emac_enabled(True, off, None)
 
-  def test_selector_runs_for_either_backend(self, pc):
+  def test_selector_runs_for_either_backend(self, pc, monkeypatch):
+    monkeypatch.setattr(pc, "usbgpu_present", lambda: False)
     assert pc.big_model_enabled(True, FakeParams(IQEmacEnabled=True), None)
-    assert pc.big_model_enabled(True, FakeParams(IQEgpuEnabled=True), None)
+    # leftover IQEgpuEnabled without a dock must not steal modelV2
+    assert not pc.big_model_enabled(True, FakeParams(IQEgpuEnabled=True), None)
     assert not pc.big_model_enabled(True, FakeParams(), None)
+    monkeypatch.setattr(pc, "usbgpu_present", lambda: True)
+    assert pc.big_model_enabled(True, FakeParams(), None)
 
   def test_iqegpumodeld_registered(self, pc):
     assert "iqegpumodeld" in pc.managed_processes
