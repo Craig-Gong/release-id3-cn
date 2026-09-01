@@ -212,6 +212,17 @@ def test_sunnypilot_macrosti_leftover_is_not_usable():
   assert not model_helpers._iq_bundle_usable(leftover)
 
 
+def test_sunnypilot_lebowski_chunk_row_is_not_usable():
+  leftover = _Bundle("LM", "Lebowski", "driving_lebowski_model_july_01_2026_tinygrad.pkl.chunk01of38")
+  assert not model_helpers._iq_bundle_usable(leftover)
+
+
+def test_official_catalog_is_not_rejected_for_file_chunker_names():
+  # Official IQ ships large pkls via file_chunker; ActiveBundle still names the pkl.
+  bundle = _Bundle("C210M", "Default (CD210)", "driving_policy_c210m_tinygrad.pkl")
+  assert model_helpers._iq_bundle_usable(bundle)
+
+
 def test_default_model_is_not_resolved_to_manifest_pop_bundle():
   pop_bundle = type("Bundle", (), {"internalName": "Pop (Default)", "displayName": "Pop (Default)"})()
 
