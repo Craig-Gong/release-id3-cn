@@ -207,6 +207,13 @@ def test_official_macrostiff_catalog_row_is_usable():
   assert model_helpers._iq_bundle_usable(bundle)
 
 
+def test_official_macrostiff_internal_name_is_usable():
+  # Do not over-match "macrostiff" inside internalName the way display-name
+  # matching previously snapped the official row back to CD210.
+  bundle = _Bundle("Macrostiff", "Macrostiff Model (January 01, 2026)", "driving_combined_d70b1393.pkl")
+  assert model_helpers._iq_bundle_usable(bundle)
+
+
 def test_sunnypilot_macrosti_leftover_is_not_usable():
   leftover = _Bundle("MACROSTI", "Macrostiff", "driving_macrosti_tinygrad.pkl.chunk01of04")
   assert not model_helpers._iq_bundle_usable(leftover)

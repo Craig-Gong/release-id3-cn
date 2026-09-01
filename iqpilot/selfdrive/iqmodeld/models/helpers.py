@@ -214,11 +214,15 @@ def _coerce_bundle_dict(raw):
 def _iq_bundle_usable(bundle) -> bool:
   if bundle is None:
     return False
-  # Only reject leftover sunnypilot USBGPU ActiveBundle rows. Official IQ
-  # catalog Macrostiff is internalName "MM" + a combined pkl; official downloads
-  # may use file_chunker, so do not treat ".chunk" / type "chunked" as unusable.
+  # Reject leftover sunnypilot USBGPU ActiveBundle rows only. Match exact SP
+  # internalName "MACROSTI" (8-char truncate) and SP USBGPU filenames.
+  # Do not substring-match "macrostiff": official catalog display is
+  # "Macrostiff Model" and internalName is "MM"; if IQ ever uses
+  # internalName "Macrostiff", that must stay selectable.
+  # Official downloads may use file_chunker; do not treat ".chunk" as unusable.
+  # Official eGPU artifacts are egpu_{key}_*_amd_*.pkl, not driving_lebowski_model_*.
   internal = (getattr(bundle, "internalName", "") or "").strip().lower()
-  if internal in ("macrosti", "macrostiff") or internal.startswith("macrosti"):
+  if internal == "macrosti":
     return False
   for model in _bundle_models(bundle):
     file_name = (getattr(getattr(model, "artifact", None), "fileName", "") or "").lower()
