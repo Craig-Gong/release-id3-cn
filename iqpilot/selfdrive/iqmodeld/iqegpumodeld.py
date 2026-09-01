@@ -14,7 +14,7 @@ from iqpilot.system.hardware import TICI
 
 os.environ.setdefault("GMMU", "0")
 if TICI:
-  os.environ.setdefault("DEV", "QCOM")
+  os.environ.setdefault("DEV", "USB+AMD:LLVM")
 else:
   os.environ.setdefault("DEV", "CPU")
 
@@ -40,7 +40,7 @@ from iqpilot.selfdrive.iqmodeld.driving_action import (
 )
 from iqpilot.selfdrive.iqmodeld.egpu_helpers import (
   download_onnx, download_precompiled, egpu_oob_pkl_path, egpu_pkl_path, egpu_policy_pkl_path, egpu_present_consented, egpu_selected, local_onnx,
-  patch_tinygrad_fetch_fw, quarantine_artifact, resolve_backend, usbgpu_present,
+  patch_tinygrad_fetch_fw, prepare_egpu_runtime, quarantine_artifact, resolve_backend, usbgpu_present,
 )
 from iqpilot.selfdrive.iqmodeld.egpu_model import resolve_egpu_model
 from iqpilot.selfdrive.iqmodeld.egpu_pipeline import EgpuPipeline, EgpuPipelineError, make_big_channel_payload
@@ -118,6 +118,12 @@ def _ensure_artifact(params: Params, meta: dict) -> str:
 
   params.put_bool("UsbGpuCompiled", False)
   params.put_bool("UsbGpuReady", False)
+
+  # egpu_prefetch may already have fetched the policy artifact offroad; do not
+  # block onroad startup by re-downloading the separate OOB streamable blob first.
+  if os.path.isfile(policy_path):
+    cloudlog.warning(f"iqegpumodeld using cached policy -> {policy_path}")
+    return policy_path
 
   if meta.get("egpu_oob_artifact") and not _precompiled_tried:
     _precompiled_tried = True
@@ -208,7 +214,7 @@ def _wait_for_memory(need_mb: int) -> None:
 
 
 def _load_infer_fn(pkl_path: str, meta: dict):
-  patch_tinygrad_fetch_fw()
+  prepare_egpu_runtime()
   from tinygrad.tensor import Tensor
 
   _wait_for_memory(MIN_LOAD_AVAIL_MB)
@@ -274,6 +280,8 @@ def main(demo: bool = False) -> None:
   layout = cameras.layout
 
   _wait_for_egpu(params)
+  os.environ["DEV"] = "USB+AMD:LLVM"
+  prepare_egpu_runtime()
   params.put_bool("UsbGpuLoading", True)
   attempt = 0
   while True:
@@ -292,9 +300,15 @@ def main(demo: bool = False) -> None:
     except Exception as e:
       attempt += 1
       subs = "; ".join(f"{type(x).__name__}: {x}" for x in (getattr(e, "exceptions", None) or []))
-      params.put("UsbGpuLastError", (f"{e} [{subs}]" if subs else str(e))[:512])
+      err = f"{e} [{subs}]" if subs else str(e)
+      params.put("UsbGpuLastError", err[:512])
       cloudlog.warning(f"iqegpumodeld setup attempt {attempt} failed: {e}; {subs}; retrying")
+      # A GPU hang wedges the dock; retrying in-process or respawning just loops alerts/UI flicker.
+      if "Device hang detected" in err or "Wait timeout" in err:
+        params.put_bool("UsbGpuLoading", False)
+        park(f"eGPU model load failed ({e}); cycle dock 12V and retry offroad")
       if attempt >= SETUP_EXIT_AFTER:
+        params.put_bool("UsbGpuLoading", False)
         # tinygrad keeps the dock's flock in a failed device init, so a stale process can never
         # reopen it; exit and let the manager respawn a clean one.
         cloudlog.error(f"iqegpumodeld giving up after {attempt} setup failures; exiting for a clean restart")

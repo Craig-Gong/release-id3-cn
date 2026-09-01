@@ -190,23 +190,26 @@ class MiciHomeLayout(Widget):
 
   def _update_dock_status(self):
     p = ui_state.params
-    egpu_present = bool(getattr(ui_state.sm['deviceState'], "egpuDockPresent", False))
-    if not egpu_present:
+    if p.get_bool("IQEgpuDisabled"):
       self._egpu_state = None
-    elif any(p.get_bool(k) for k in ("Offroad_EgpuPcieUnavailable", "Offroad_EgpuOverheated",
-                                     "Offroad_EgpuFansObstructed", "Offroad_EgpuUpdateFailed",
-                                     "Offroad_EgpuNotDetected")):
-      self._egpu_state = "orange"
-    elif p.get_bool("UsbGpuLoading") and not p.get_bool("UsbGpuCompiled"):
-      self._egpu_state = "compiling"
-      try:
-        self._egpu_progress = max(0.0, min(1.0, float(p.get("UsbGpuSetupProgress") or 0.0)))
-      except (TypeError, ValueError):
-        self._egpu_progress = 0.0
-    elif p.get_bool("Offroad_EgpuUsbSlow") or p.get_bool("Offroad_EgpuUncompiled"):
-      self._egpu_state = "grey"
     else:
-      self._egpu_state = "green"
+      egpu_present = bool(getattr(ui_state.sm['deviceState'], "egpuDockPresent", False))
+      if not egpu_present:
+        self._egpu_state = None
+      elif any(p.get_bool(k) for k in ("Offroad_EgpuPcieUnavailable", "Offroad_EgpuOverheated",
+                                       "Offroad_EgpuFansObstructed", "Offroad_EgpuUpdateFailed",
+                                       "Offroad_EgpuNotDetected")):
+        self._egpu_state = "orange"
+      elif p.get_bool("UsbGpuLoading") and not p.get_bool("UsbGpuCompiled"):
+        self._egpu_state = "compiling"
+        try:
+          self._egpu_progress = max(0.0, min(1.0, float(p.get("UsbGpuSetupProgress") or 0.0)))
+        except (TypeError, ValueError):
+          self._egpu_progress = 0.0
+      elif p.get_bool("Offroad_EgpuUsbSlow") or p.get_bool("Offroad_EgpuUncompiled"):
+        self._egpu_state = "grey"
+      else:
+        self._egpu_state = "green"
 
     mac_present = p.get_bool("MacModelPresent") or p.get_bool("MacModelReachable")
     if not mac_present:

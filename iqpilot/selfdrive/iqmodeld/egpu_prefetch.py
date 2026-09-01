@@ -10,7 +10,7 @@ import time
 
 from iqpilot.common.params import Params
 from iqpilot.common.swaglog import cloudlog
-from iqpilot.selfdrive.iqmodeld.egpu_helpers import download_precompiled, egpu_policy_pkl_path, egpu_selected, patch_tinygrad_fetch_fw, usbgpu_present
+from iqpilot.selfdrive.iqmodeld.egpu_helpers import download_precompiled, egpu_policy_pkl_path, egpu_selected, prepare_egpu_runtime, usbgpu_present
 from iqpilot.selfdrive.iqmodeld.egpu_model import resolve_egpu_model
 
 POLL_S = 30.0
@@ -71,7 +71,7 @@ def warm_firmware() -> None:
     return
   os.environ.setdefault("DEV", "USB+AMD:LLVM")
   os.environ.setdefault("GMMU", "0")
-  patch_tinygrad_fetch_fw()
+  prepare_egpu_runtime()
   from tinygrad.device import Device
   Device["AMD"]
   _firmware_warm = True

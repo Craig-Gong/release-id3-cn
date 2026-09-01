@@ -1,6 +1,7 @@
 import importlib
 import os
 import signal
+import sys
 import time
 import subprocess
 from pathlib import Path
@@ -37,7 +38,9 @@ except ModuleNotFoundError:
 
 def launcher(proc: str, name: str) -> None:
   try:
-    # import the process
+    # Manager preimports modules before forking; drop the cached copy so on-device
+    # edits take effect without a full reboot.
+    sys.modules.pop(proc, None)
     mod = importlib.import_module(proc)
 
     # rename the process
@@ -369,7 +372,6 @@ def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None
     kick_onroad_boot(procs, started, params, CP, not_run)
 
   running = []
-  stopping = []
   now = time.monotonic()
   for p in procs:
     if p.enabled and p.name not in not_run and p.should_run(started, params, CP):
@@ -397,12 +399,9 @@ def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params=None
       p.crash_count = 0
       p.crash_loop_logged = False
       p.last_alive_time = 0.0
-      stopping.append(p)
+      p.stop(block=False)
 
   for p in running:
     p.start()
-
-  for p in stopping:
-    p.stop(block=False)
 
   return running

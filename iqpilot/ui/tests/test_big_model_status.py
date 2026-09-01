@@ -33,6 +33,10 @@ def test_egpu_label_is_gpu():
   assert label == "GPU"
 
 
+def test_egpu_disabled_hides_gpu_even_when_present():
+  assert _resolve(UsbGpuPresent=True, IQEgpuDisabled=True) == ("", SourceState.HIDDEN)
+
+
 def test_emac_wins_when_both_enabled():
   label, _ = _resolve(IQEmacEnabled=True, IQEgpuEnabled=True,
                       MacModelReachable=True, UsbGpuPresent=True)

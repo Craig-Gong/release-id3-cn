@@ -15,7 +15,10 @@ from iqpilot.system.hardware.usb import egpu_dock_ready
 
 USB_SYSFS_ROOT = "/sys/bus/usb/devices"
 FIRMWARE_MIRROR = os.getenv("IQ_EGPU_FIRMWARE_MIRROR", "/data/firmware/tinygrad")
-TINYGRAD_CACHE = "/data/.cache"
+TINYGRAD_CACHE = Path(os.getenv("XDG_CACHE_HOME", "/data/.cache"))
+TINYGRAD_FW_STORE = Path("/data/amdgpu-fw/tinygrad-cache")
+USBGPU_BULK_CHUNK = 256 * 1024
+USBGPU_BULK_PAUSE_S = 0.002
 
 COMMA_LFS_BATCH_URL = "https://gitlab.com/commaai/openpilot-lfs.git/info/lfs/objects/batch"
 
@@ -171,6 +174,71 @@ def download_precompiled(meta: dict, progress_cb=None, policy: bool = False, oob
       if not art.get("objects"):
         raise
   return download_lfs_bundle(art["objects"], dest, art["sha256"], int(art.get("size", 0)), progress_cb=progress_cb)
+
+
+def iqos_linux49(release: str | None = None) -> bool:
+  rel = os.uname().release if release is None else release
+  return rel.startswith("4.9")
+
+
+def restore_tinygrad_fw_cache(*, store: Path | None = None, cache: Path | None = None) -> int:
+  """Mirror /data AMD firmware blobs into tinygrad's URL-md5 cache (IQ.OS fetch_fw 403)."""
+  import shutil
+
+  store = store or TINYGRAD_FW_STORE
+  cache = cache or TINYGRAD_CACHE
+  if not store.is_dir():
+    return 0
+  cache.mkdir(parents=True, exist_ok=True)
+  copied = 0
+  for src in store.iterdir():
+    if not src.is_file():
+      continue
+    dest = cache / src.name
+    if dest.is_file() and dest.stat().st_size == src.stat().st_size:
+      continue
+    shutil.copy2(src, dest)
+    copied += 1
+  return copied
+
+
+def throttle_usbgpu_bulk_writes(*, usb3_cls=None, chunk: int = USBGPU_BULK_CHUNK,
+                                pause_s: float = USBGPU_BULK_PAUSE_S) -> bool:
+  """IQ.OS 4.9 xHCI wedges on huge USB3 bulk OUT; chunk + short pause (sunnypilot parity)."""
+  import time
+
+  if not iqos_linux49():
+    return False
+  if usb3_cls is None:
+    try:
+      from tinygrad.runtime.support.usb import USB3
+      usb3_cls = USB3
+    except ImportError:
+      return False
+  orig = usb3_cls.bulk_write
+  if getattr(orig, "_iqos_throttled", False):
+    return True
+
+  def bulk_write(self, payload, timeout=1000):
+    n = len(payload)
+    if n <= chunk:
+      return orig(self, payload, timeout)
+    mv = memoryview(payload)
+    for i in range(0, n, chunk):
+      orig(self, bytes(mv[i:i + chunk]), timeout)
+      if pause_s and i + chunk < n:
+        time.sleep(pause_s)
+
+  bulk_write._iqos_throttled = True  # type: ignore[attr-defined]
+  usb3_cls.bulk_write = bulk_write
+  return True
+
+
+def prepare_egpu_runtime() -> None:
+  """Call before any tinygrad DEV=USB+AMD work on IQ.OS."""
+  restore_tinygrad_fw_cache()
+  patch_tinygrad_fetch_fw()
+  throttle_usbgpu_bulk_writes()
 
 
 def patch_tinygrad_fetch_fw() -> None:

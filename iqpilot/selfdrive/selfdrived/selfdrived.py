@@ -165,6 +165,12 @@ class SelfdriveD(GapButtonActions):
     self.startup_event = EventName.startup if is_remote and build_metadata.tested_channel else EventName.startupMaster
     if HARDWARE.get_device_type() == 'mici':
       self.startup_event = None
+    # Skip the full-screen welcome card on repeat drives; first fingerprint still shows it.
+    if self.startup_event in (EventName.startup, EventName.startupMaster) and any(
+      self.params.get(k) is not None
+      for k in ("CarParamsPersistent", "CarParams", "CarParamsCache")
+    ):
+      self.startup_event = None
     if not car_recognized:
       self.startup_event = EventName.startupNoCar
     elif car_recognized and self.CP.passive:
@@ -263,7 +269,11 @@ class SelfdriveD(GapButtonActions):
       self.events.add(EventName.joystickDebug)
       self.startup_event = None
 
-    if self.sm['deviceState'].egpuDockPresent or self.params.get_bool("IQEgpuEnabled") or self.big_model_active:
+    wants_big = (self.params.get_bool("IQEmacEnabled")
+                 or (self.sm['deviceState'].egpuDockPresent and not self.params.get_bool("IQEgpuDisabled"))
+                 or self.params.get_bool("IQEgpuEnabled")
+                 or self.big_model_active)
+    if wants_big:
       loading = self.params.get_bool("UsbGpuLoading")
       self.big_model_loading = loading
       if self.big_model_loading:
@@ -275,6 +285,10 @@ class SelfdriveD(GapButtonActions):
       model_unavailable = big_active is True and self.sm.seen['modelV2'] and not self.sm.alive['modelV2']
       big_failed = (big_active is False or model_unavailable
                     or (self.big_model_active and not dock_present)) and not mac_active
+      # UsbGpuActive stays false until iqegpumodeld finishes its first load; don't
+      # flash Failed over the Loading banner during that window.
+      if loading:
+        big_failed = False
       if big_failed:
         self.events.add(EventName.bigModelFailed)
       self.big_model_failed = big_failed
@@ -514,16 +528,8 @@ class SelfdriveD(GapButtonActions):
         self.events.add(EventName.paramsdTemporaryError)
 
     # conservative HW alert. if the data or frequency are off, locationd will throw an error
-    if self.initialized:
-      onroad_s = self.sm.frame * DT_CTRL
-      for s in self.sensor_packets:
-        if self.sm.recv_frame[s] == 0:
-          if onroad_s > 20.:
-            self.events.add(EventName.sensorDataInvalid)
-            break
-        elif (self.sm.frame - self.sm.recv_frame[s]) * DT_CTRL > 10.:
-          self.events.add(EventName.sensorDataInvalid)
-          break
+    if any((self.sm.frame - self.sm.recv_frame[s])*DT_CTRL > 10. for s in self.sensor_packets):
+      self.events.add(EventName.sensorDataInvalid)
 
     if not REPLAY:
       # Check for mismatch between openpilot and car's PCM
@@ -616,7 +622,8 @@ class SelfdriveD(GapButtonActions):
 
     if not self.initialized:
       all_valid = CS.canValid and self.sm.all_checks()
-      timed_out = self.sm.frame * DT_CTRL > 6.
+      init_timeout_s = 6.0
+      timed_out = self.sm.frame * DT_CTRL > init_timeout_s
       if all_valid or timed_out or (SIMULATION and not REPLAY):
         available_streams = VisionIpcClient.available_streams("camerad", block=False)
         if VisionStreamType.VISION_STREAM_ROAD not in available_streams:
