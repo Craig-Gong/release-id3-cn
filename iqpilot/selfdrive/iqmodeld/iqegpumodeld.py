@@ -119,8 +119,11 @@ def _ensure_artifact(params: Params, meta: dict) -> str:
   params.put_bool("UsbGpuCompiled", False)
   params.put_bool("UsbGpuReady", False)
 
-  if egpu_artifact_prefers_local_policy(params) and os.path.isfile(policy_path):
-    cloudlog.warning(f"iqegpumodeld using cached policy (IQEgpuPreferLocalPolicy) -> {policy_path}")
+  if os.path.isfile(policy_path):
+    if egpu_artifact_prefers_local_policy(params):
+      cloudlog.warning(f"iqegpumodeld using cached policy (IQEgpuPreferLocalPolicy) -> {policy_path}")
+    else:
+      cloudlog.warning(f"iqegpumodeld using cached policy on disk -> {policy_path}")
     return policy_path
 
   if meta.get("egpu_oob_artifact") and not _precompiled_tried:
