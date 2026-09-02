@@ -13,7 +13,9 @@ import time
 os.environ.setdefault("FLOAT16", "1")
 os.environ.setdefault("JIT_BATCH_SIZE", "0")
 os.environ.setdefault("GMMU", "0")
-os.environ.setdefault("TC_OPT", "2")
+# TC_OPT=2 lets tinygrad pick tensor-core kernels; on some models a TC kernel miscompiles and biases
+# the output (documented on Metal). A parity gate below catches it and re-compiles with TC off.
+os.environ.setdefault("TC_OPT", "0" if ("--tc-off" in sys.argv or os.environ.get("IQ_EGPU_TC_OFF")) else "2")
 
 HOST = "--host" in sys.argv
 if HOST:
@@ -32,6 +34,10 @@ INPUT_SPEC = dict(MODEL_INPUT_SPEC)
 patch_tinygrad_fetch_fw()
 
 SEED = 42
+
+
+class _ParityFail(RuntimeError):
+  pass
 KERNEL_PROGRESS_SCALE = 260.0
 
 
@@ -151,6 +157,25 @@ def _policy_frame(seed: int, input_spec: dict):
   return warped
 
 
+def _tc_off_reference(onnx_path: str, meta: dict):
+  """Compile+run the model with tensor cores OFF in a child process and return the last of 3
+  policy frames. This is the trusted reference: TC-off kernels are the conservative path the
+  eMac gate also trusts. Used to catch a TC kernel miscompile that would bias steering."""
+  import subprocess
+  import tempfile
+  with tempfile.TemporaryDirectory() as td:
+    ref = os.path.join(td, "ref.npy")
+    env = {k: v for k, v in os.environ.items() if k not in ("TC_OPT", "BEAM")}
+    env["TC_OPT"] = "0"
+    env["IQ_EGPU_REFERENCE"] = ref
+    r = subprocess.run([sys.executable, "-m", "iqpilot.selfdrive.iqmodeld.tools.compile_egpu_model",
+                        "--model", meta["key"], "--onnx", onnx_path, "--tc-off"],
+                       env=env, capture_output=True, text=True, timeout=14400)
+    if r.returncode != 0 or not os.path.isfile(ref):
+      raise RuntimeError(f"parity reference compile failed:\n{r.stderr[-2000:]}")
+    return np.load(ref)
+
+
 def compile_policy_model(meta: dict, onnx_path: str, out_path: str) -> str:
   from tinygrad.device import Device
   from tinygrad.engine.jit import TinyJit
@@ -216,6 +241,10 @@ def compile_policy_model(meta: dict, onnx_path: str, out_path: str) -> str:
     flat = out.numpy().reshape(-1)
     packed.views["prev_feat"][:] = flat[meta["output_slices"]["hidden_state"]].reshape(packed.views["prev_feat"].shape)
     outs.append(flat)
+  ref_target = os.environ.get("IQ_EGPU_REFERENCE")
+  if ref_target:
+    np.save(ref_target, outs[-1])
+    return out_path
   if HOST:
     os.replace(tmp, out_path)
     return out_path
@@ -228,6 +257,13 @@ def compile_policy_model(meta: dict, onnx_path: str, out_path: str) -> str:
   from iqpilot.selfdrive.iqmodeld.parser import PhaseParser
   from iqpilot.selfdrive.iqmodeld.tools.compile_supercombo import _slice_outputs, _validate_pose_outputs
   _validate_pose_outputs(PhaseParser().parse_vision_outputs(_slice_outputs(outs[-1], meta["output_slices"])))
+
+  if os.environ.get("TC_OPT") != "0" and not os.environ.get("IQ_EGPU_SKIP_PARITY"):
+    ref = _tc_off_reference(onnx_path, meta)
+    rel = float(np.abs(outs[-1] - ref).mean() / max(1e-3, float(np.abs(ref).mean())))
+    if rel > 0.01:
+      raise _ParityFail(f"PARITY FAIL: TC kernels miscompiled {meta['key']} (rel={rel:.4f} vs TC-off); recompiling with tensor cores disabled")
+    print(f"  parity vs TC-off reference: rel={rel:.6f} OK")
 
   os.replace(tmp, out_path)
   return out_path
@@ -244,6 +280,7 @@ def main() -> None:
   p.add_argument("--format", type=int, default=2, choices=(1, 2))
   p.add_argument("--host", action="store_true", help="compile on a mock dock (no AMD hardware); outputs need a dock parity gate")
   p.add_argument("--arch", default=None, help="target gfx arch for --host")
+  p.add_argument("--tc-off", action="store_true", help="disable tensor-core kernels (conservative; auto-set on parity failure)")
   args = p.parse_args()
   if args.host and args.format != 2:
     raise SystemExit("--host supports format 2 only")
@@ -275,7 +312,15 @@ def main() -> None:
     sampler.start()
   try:
     build = compile_policy_model if args.format == 2 else compile_model
-    out = build(meta, onnx_path, args.output or egpu_pkl_path(meta))
+    try:
+      out = build(meta, onnx_path, args.output or egpu_pkl_path(meta))
+    except _ParityFail as e:
+      if os.environ.get("TC_OPT") == "0" or args.format != 2:
+        raise
+      print(f"{e}\nretrying compile with tensor cores disabled", flush=True)
+      os.environ["TC_OPT"] = "0"
+      os.environ["IQ_EGPU_TC_OFF"] = "1"
+      out = compile_policy_model(meta, onnx_path, args.output or egpu_pkl_path(meta))
   finally:
     if stop is not None:
       stop.set()

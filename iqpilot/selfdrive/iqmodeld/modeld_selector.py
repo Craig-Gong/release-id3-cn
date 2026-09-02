@@ -357,6 +357,7 @@ def main() -> None:
         }))
       if run_count % 100 == 0:
         cloudlog.warning(f"modeld_selector misses: {miss_reasons}")
+        pwriter.put_bool(keys["active"], latch.active)
         cloudlog.warning(f"modeld_selector: big_used={big_used_count}/{run_count} "
                          f"last_big_peek={big_peek} target={target} active={latch.active} "
                          f"max_big_lag={BIG_MAX_LAG_FRAMES}")
