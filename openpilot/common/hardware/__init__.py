@@ -1,3 +1,4 @@
+import glob
 import os
 from typing import cast
 
@@ -14,3 +15,22 @@ if COMMA_HARDWARE:
   HARDWARE = cast(HardwareBase, HardwareComma())
 else:
   HARDWARE = cast(HardwareBase, HardwarePc())
+
+
+def has_cabin_camera() -> bool:
+  """Road+wide only (C3XL) vs comma 3/3X with a cabin camera."""
+  if os.getenv("DISABLE_DRIVER"):
+    return False
+  if os.getenv("USE_WEBCAM"):
+    return True
+  try:
+    count = 0
+    for name_path in glob.glob("/sys/class/video4linux/v4l-subdev*/name"):
+      with open(name_path, encoding="utf-8") as f:
+        if f.read().strip() == "cam-sensor-driver":
+          count += 1
+    if count == 0:
+      return True
+    return count >= 3
+  except OSError:
+    return True

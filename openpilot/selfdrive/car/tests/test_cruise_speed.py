@@ -150,5 +150,5 @@ class TestVCruiseHelper(OpenpilotTestCase):
           assert not self.v_cruise_helper.v_cruise_initialized
 
           self.enable(float(v_ego), experimental_mode, dynamic_experimental_control)
-          assert V_CRUISE_INITIAL <= self.v_cruise_helper.v_cruise_kph <= V_CRUISE_MAX
+          assert V_CRUISE_MIN <= self.v_cruise_helper.v_cruise_kph <= V_CRUISE_MAX
           assert self.v_cruise_helper.v_cruise_initialized

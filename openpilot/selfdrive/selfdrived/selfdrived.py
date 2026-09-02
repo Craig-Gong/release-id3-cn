@@ -24,7 +24,7 @@ from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
 
 from openpilot.common.version import get_build_metadata
-from openpilot.common.hardware import HARDWARE
+from openpilot.common.hardware import HARDWARE, has_cabin_camera
 
 from openpilot.sunnypilot.mads.mads import ModularAssistiveDrivingSystem
 from openpilot.sunnypilot import get_sanitize_int_param
@@ -93,7 +93,9 @@ class SelfdriveD(CruiseHelper):
     self.gps_location_service = get_gps_location_service(self.params)
     self.gps_packets = [self.gps_location_service]
     self.sensor_packets = ["accelerometer", "gyroscope"]
-    self.camera_packets = ["narrowRoadCameraState", "cabinCameraState", "wideRoadCameraState"]
+    self.camera_packets = ["narrowRoadCameraState", "wideRoadCameraState"]
+    if has_cabin_camera():
+      self.camera_packets.append("cabinCameraState")
 
     # TODO: de-couple selfdrived with card/conflate on carState without introducing controls mismatches
     self.car_state_sock = messaging.sub_sock('carState', timeout=20)
@@ -104,6 +106,8 @@ class SelfdriveD(CruiseHelper):
     if REPLAY:
       # no vipc in replay will make them ignored anyways
       ignore += ['narrowRoadCameraState', 'wideRoadCameraState']
+    if not has_cabin_camera():
+      ignore += ['cabinCameraState', 'driverMonitoringState']
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'extrinsicsCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'deviceMotion', 'lateralDelay',
                                    'managerState', 'vehicleParameters', 'radarState', 'lateralTorqueParameters',
@@ -248,7 +252,7 @@ class SelfdriveD(CruiseHelper):
       self.events.add(EventName.resumeBlocked)
 
     # Handle DM
-    if not self.CP.notCar:
+    if not self.CP.notCar and has_cabin_camera():
       # Block engaging until lockout times out or ignition reset
       if self.sm['driverMonitoringState'].lockout and not self.dm_lockout_set:
         self.params.put_bool("DriverTooDistracted", True)

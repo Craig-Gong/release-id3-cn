@@ -12,7 +12,7 @@ import openpilot.system.sentry as sentry
 from openpilot.common.utils import atomic_write
 from openpilot.common.params import Params, ParamKeyFlag
 from openpilot.common.text_window import TextWindow
-from openpilot.common.hardware import HARDWARE, PC
+from openpilot.common.hardware import HARDWARE, PC, has_cabin_camera
 from openpilot.system.manager.helpers import unblock_stdout, save_bootlog
 from openpilot.system.manager.process import ensure_running
 from openpilot.system.manager.process_config import managed_processes
@@ -28,6 +28,9 @@ def manager_init() -> None:
   save_bootlog()
 
   build_metadata = get_build_metadata()
+
+  if not has_cabin_camera():
+    os.environ["DISABLE_DRIVER"] = "1"
 
   params = Params()
   params.clear_all(ParamKeyFlag.CLEAR_ON_MANAGER_START)

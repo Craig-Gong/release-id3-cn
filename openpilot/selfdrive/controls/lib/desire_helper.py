@@ -8,7 +8,7 @@ LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
 TurnDirection = custom.ModelDataV2SP.TurnDirection
 
-LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
+LANE_CHANGE_SPEED_MIN = 45 * CV.KPH_TO_MS
 LANE_CHANGE_TIME_MAX = 10.
 LANE_CHANGE_START_TIME = 0.5
 
@@ -23,6 +23,7 @@ class DesireHelper:
     self.lane_change_state = LaneChangeState.off
     self.lane_change_direction = LaneChangeDirection.none
     self.lane_change_timer = 0.0
+    self.keep_pulse_timer = 0.0
     self.prev_one_blinker = False
     self.desire = log.Desire.none
     self.alc = AutoLaneChangeController(self)
@@ -93,12 +94,27 @@ class DesireHelper:
 
     if self.lane_turn_direction != TurnDirection.none:
       self.desire = TURN_DESIRES[self.lane_turn_direction]
+      self.keep_pulse_timer = 0.0
     else:
       self.desire = log.Desire.none
       if self.lane_change_state == LaneChangeState.laneChangeStarting:
+        self.keep_pulse_timer = 0.0
         if self.lane_change_direction == LaneChangeDirection.left:
           self.desire = log.Desire.laneChangeLeft
         elif self.lane_change_direction == LaneChangeDirection.right:
           self.desire = log.Desire.laneChangeRight
+      elif self.lane_change_state == LaneChangeState.preLaneChange:
+        if self.lane_change_direction == LaneChangeDirection.left:
+          self.desire = log.Desire.keepLeft
+        elif self.lane_change_direction == LaneChangeDirection.right:
+          self.desire = log.Desire.keepRight
+        # ~1 Hz keep pulse so the model does not sit on none while waiting
+        self.keep_pulse_timer += DT_MDL
+        if self.keep_pulse_timer > 1.0:
+          self.keep_pulse_timer = 0.0
+        elif self.desire in (log.Desire.keepLeft, log.Desire.keepRight):
+          self.desire = log.Desire.none
+      else:
+        self.keep_pulse_timer = 0.0
 
     self.alc.update_state()

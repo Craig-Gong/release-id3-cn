@@ -255,8 +255,11 @@ def hardware_thread(end_event, hw_queue) -> None:
 
     if sm.updated['pandaStates'] and len(pandaStates) > 0:
 
-      # Set ignition based on any panda connected
-      onroad_conditions["ignition"] = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
+      # C3XL OBD is always-on (KL30). Onroad follows KL15 on CAN (ZAS_Kl_15), not ignitionLine.
+      if COMMA_HARDWARE:
+        onroad_conditions["ignition"] = any(ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
+      else:
+        onroad_conditions["ignition"] = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
 
       pandaState = pandaStates[0]
 
@@ -359,15 +362,11 @@ def hardware_thread(end_event, hw_queue) -> None:
     startup_conditions["not_always_offroad"] = not offroad_mode
     onroad_conditions["not_always_offroad"] = not offroad_mode
 
-    # if an unsupported device and branch is detected, going onroad is blocked
-    # only allow going onroad when:
-    # - TIZI, or
-    # - TICI and channel_type is "tici"
-    build_metadata = get_build_metadata()
-    is_unsupported_combo = COMMA_HARDWARE and HARDWARE.get_device_type() == "tici" and build_metadata.channel_type != "tici"
+    # This fork runs on C3XL (tici-class). Do not block onroad for a non -tici channel name.
+    is_unsupported_combo = False
     startup_conditions["not_tici"] = not is_unsupported_combo
     onroad_conditions["not_tici"] = not is_unsupported_combo
-    set_offroad_alert("Offroad_TiciSupport", is_unsupported_combo, extra_text=build_metadata.channel)
+    set_offroad_alert("Offroad_TiciSupport", is_unsupported_combo)
 
     # if the temperature enters the danger zone, go offroad to cool down
     onroad_conditions["device_temp_good"] = thermal_status < ThermalStatus.critical
