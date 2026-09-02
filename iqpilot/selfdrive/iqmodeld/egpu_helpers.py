@@ -22,6 +22,8 @@ USBGPU_BULK_PAUSE_S = 0.005
 USBGPU_LINK_SETTLE_S = 3.0
 USBGPU_LINK_POLL_S = 1.0
 USBGPU_HCQ_WAIT_MS = 300_000
+USBGPU_COPYOUT_CHUNK = 64 * 1024
+USBGPU_COPYOUT_PAUSE_S = 0.008
 
 
 def _env_int(name: str, default: int) -> int:
@@ -44,12 +46,15 @@ def _env_float(name: str, default: float) -> float:
     return default
 
 
-def _bulk_tuning() -> tuple[int, float, float, int]:
+def _bulk_tuning() -> tuple[int, float, float, int, int, float]:
   chunk = _env_int("IQ_EGPU_BULK_CHUNK", USBGPU_BULK_CHUNK)
   pause_ms = _env_float("IQ_EGPU_BULK_PAUSE_MS", USBGPU_BULK_PAUSE_S * 1000.0)
   settle_s = _env_float("IQ_EGPU_LINK_SETTLE_S", USBGPU_LINK_SETTLE_S)
   hcq_wait_ms = _env_int("IQ_EGPU_HCQ_WAIT_MS", USBGPU_HCQ_WAIT_MS)
-  return max(chunk, 4096), max(pause_ms, 0.0) / 1000.0, max(settle_s, 0.0), max(hcq_wait_ms, 30_000)
+  copyout_chunk = _env_int("IQ_EGPU_COPYOUT_CHUNK", USBGPU_COPYOUT_CHUNK)
+  copyout_pause_ms = _env_float("IQ_EGPU_COPYOUT_PAUSE_MS", USBGPU_COPYOUT_PAUSE_S * 1000.0)
+  return (max(chunk, 4096), max(pause_ms, 0.0) / 1000.0, max(settle_s, 0.0), max(hcq_wait_ms, 30_000),
+          max(copyout_chunk, 4096), max(copyout_pause_ms, 0.0) / 1000.0)
 
 COMMA_LFS_BATCH_URL = "https://gitlab.com/commaai/openpilot-lfs.git/info/lfs/objects/batch"
 
@@ -314,6 +319,78 @@ def throttle_usbgpu_bulk_reads(*, usb3_cls=None, chunk: int = USBGPU_BULK_CHUNK,
   return True
 
 
+def throttle_amd_usb_copyout(*, copyout_chunk: int = USBGPU_COPYOUT_CHUNK,
+                              pause_s: float = USBGPU_COPYOUT_PAUSE_S) -> bool:
+  """Split USB eGPU VRAM->host copyout into smaller scsi_read_arm slabs (IQ.OS 4.9)."""
+  import time
+
+  if not iqos_linux49():
+    return False
+  try:
+    from tinygrad.runtime.ops_amd import AMDAllocator
+    from tinygrad.runtime.support.hcq import PROFILE, TracingKey, hcq_profile
+  except ImportError:
+    return False
+  orig = AMDAllocator._copyout
+  if getattr(orig, "_iqos_throttled", False):
+    return True
+
+  def _copyout(self, dest, src):
+    if not self.dev.is_usb():
+      return orig(self, dest, src)
+    self.dev.synchronize()
+    with hcq_profile(self.dev, queue_type=self.dev.hw_copy_queue_t,
+                     desc=TracingKey(f"{self.dev.device} -> TINY", ret=dest.nbytes), enabled=PROFILE,
+                     dev_suff="SDMA:0"):
+      cp_max = self.b[0].size
+      for i in range(0, dest.nbytes, cp_max):
+        slab = min(cp_max, dest.nbytes - i)
+        for j in range(0, slab, copyout_chunk):
+          off = i + j
+          lsize = min(copyout_chunk, slab - j)
+          self.dev.iface.pci_dev.usb.scsi_read_arm(lsize)
+          self.dev.hw_copy_queue_t().wait(self.dev.timeline_signal, self.dev.timeline_value - 1) \
+                                    .copy(self.b[0], src.offset(off), lsize) \
+                                    .write(self.dev.iface.cq_buf.offset(12), 0) \
+                                    .signal(self.dev.timeline_signal, self.dev.next_timeline()).submit(self.dev)
+          dest.cast("B")[off:off + lsize] = self.b[0].cpu_view().view(size=lsize, fmt="B")[:]
+          if pause_s and off + lsize < dest.nbytes:
+            time.sleep(pause_s)
+
+  _copyout._iqos_throttled = True  # type: ignore[attr-defined]
+  AMDAllocator._copyout = _copyout
+  return True
+
+
+def patch_amd_usb_synchronize_retry() -> bool:
+  """On USB timeline timeout, try one interrupt drain+reset before surfacing hang."""
+  if not iqos_linux49():
+    return False
+  try:
+    from tinygrad.runtime.ops_amd import AMDDevice
+  except ImportError:
+    return False
+  orig = AMDDevice.synchronize
+  if getattr(orig, "_iqos_patched", False):
+    return True
+
+  def synchronize(self, timeout=None):
+    try:
+      return orig(self, timeout)
+    except RuntimeError as e:
+      if not self.is_usb() or "Wait timeout" not in str(e):
+        raise
+      cloudlog.warning(f"egpu: USB timeline timeout ({e}); retrying after interrupt reset")
+      if hasattr(self.iface, "_collect_interrupts"):
+        self.iface._collect_interrupts(reset=True, drain_only=False)
+      self.error_state = None
+      return orig(self, timeout)
+
+  synchronize._iqos_patched = True  # type: ignore[attr-defined]
+  AMDDevice.synchronize = synchronize
+  return True
+
+
 def wait_for_stable_usb_link(*, settle_s: float = USBGPU_LINK_SETTLE_S,
                              poll_s: float = USBGPU_LINK_POLL_S) -> bool:
   """Poll ssusb portli counters; require no growth over settle_s (IQ.OS 4.9.1+)."""
@@ -335,7 +412,7 @@ def wait_for_stable_usb_link(*, settle_s: float = USBGPU_LINK_SETTLE_S,
 
 def prepare_egpu_runtime() -> None:
   """Call before any tinygrad DEV=USB+AMD work on IQ.OS."""
-  chunk, pause_s, settle_s, hcq_wait_ms = _bulk_tuning()
+  chunk, pause_s, settle_s, hcq_wait_ms, copyout_chunk, copyout_pause_s = _bulk_tuning()
   if iqos_linux49() and os.getenv("HCQDEV_WAIT_TIMEOUT_MS") is None:
     os.environ["HCQDEV_WAIT_TIMEOUT_MS"] = str(hcq_wait_ms)
   try:
@@ -348,6 +425,8 @@ def prepare_egpu_runtime() -> None:
   patch_tinygrad_fetch_fw()
   throttle_usbgpu_bulk_writes(chunk=chunk, pause_s=pause_s)
   throttle_usbgpu_bulk_reads(chunk=chunk, pause_s=pause_s)
+  throttle_amd_usb_copyout(copyout_chunk=copyout_chunk, pause_s=copyout_pause_s)
+  patch_amd_usb_synchronize_retry()
   if not wait_for_stable_usb_link(settle_s=settle_s):
     cloudlog.warning("egpu: USB link errors increased during settle window")
 

@@ -59,8 +59,9 @@ def test_bulk_tuning_env(monkeypatch):
   monkeypatch.setenv("IQ_EGPU_BULK_CHUNK", "65536")
   monkeypatch.setenv("IQ_EGPU_BULK_PAUSE_MS", "10")
   monkeypatch.setenv("IQ_EGPU_HCQ_WAIT_MS", "90000")
-  chunk, pause_s, settle_s, hcq_ms = _bulk_tuning()
+  chunk, pause_s, settle_s, hcq_ms, copyout_chunk, copyout_pause_s = _bulk_tuning()
   assert chunk == 65536
   assert pause_s == 0.01
   assert hcq_ms == 90000
   assert settle_s == 3.0
+  assert copyout_chunk == 65536

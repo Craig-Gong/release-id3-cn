@@ -126,6 +126,31 @@ def _ensure_artifact(params: Params, meta: dict) -> str:
       cloudlog.warning(f"iqegpumodeld using cached policy on disk -> {policy_path}")
     return policy_path
 
+  # IQ.OS 4.9: OOB streamable HF fetch often stalls with no progress; policy pkl is reliable.
+  from iqpilot.selfdrive.iqmodeld.egpu_helpers import iqos_linux49
+  prefer_policy_dl = iqos_linux49() and os.getenv("IQ_EGPU_PREFER_OOB", "").lower() not in ("1", "true", "yes")
+
+  if prefer_policy_dl and meta.get("egpu_policy_artifact") and not _precompiled_tried:
+    _precompiled_tried = True
+    params.put("UsbGpuSetupProgress", "0.0")
+    dl_last = [-1.0]
+
+    def _dl_prog(p: float) -> None:
+      if p - dl_last[0] >= 0.02 or p >= 1.0:
+        dl_last[0] = p
+        params.put("UsbGpuSetupProgress", f"{p:.3f}")
+
+    try:
+      cloudlog.warning(f"iqegpumodeld downloading precompiled {meta['key']} policy "
+                       f"({int(meta['egpu_policy_artifact'].get('size', 0)) / 1e6:.0f}MB)")
+      precompiled = download_precompiled(meta, progress_cb=_dl_prog, policy=True)
+      if precompiled is not None:
+        cloudlog.warning(f"iqegpumodeld precompiled ready -> {precompiled}")
+        return precompiled
+    except Exception as e:
+      cloudlog.warning(f"iqegpumodeld precompiled policy unavailable ({e}); falling back")
+      _precompiled_tried = False
+
   if meta.get("egpu_oob_artifact") and not _precompiled_tried:
     _precompiled_tried = True
     params.put("UsbGpuSetupProgress", "0.0")
