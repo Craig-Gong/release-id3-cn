@@ -22,6 +22,7 @@ class CarState(CarStateBase):
     self.acc_type = 0
     self.travel_assist_available = False
     self.curvature_meas = 0.
+    self.tsk_drive_timer = 0
 
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
@@ -292,6 +293,12 @@ class CarState(CarStateBase):
     ret.cruiseState.nonAdaptive = bool(pt_cp.vl["Motor_51"]["TSK_Limiter_ausgewaehlt"])
 
     tsk_faulted = pt_cp.vl["Motor_51"]["TSK_Status"] in (6, 7)
+    # READY in P/R/N: TSK 6/7 is EPS/EPB init, not a real Cruise Fault
+    if not in_drive:
+      self.tsk_drive_timer = self.frame
+      tsk_faulted = False
+    elif self.frame - self.tsk_drive_timer < 300:  # ~3 s after selecting D
+      tsk_faulted = False
     engine_off = pt_cp.vl["Motor_54"]["Engine_On"] == 0
     long_control_inhibit = pt_cp.vl["VMM_02"]["Long_Control_Inhibit"] == 2
     ret.accFaulted = (self.update_acc_fault(tsk_faulted, engine_off, long_control_inhibit) or

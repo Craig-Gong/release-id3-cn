@@ -72,6 +72,11 @@ class CarInterface(CarInterfaceBase):
       if 0x3DC in fingerprint[0]:  # Gateway_73
         ret.flags |= VolkswagenFlags.ALT_GEAR.value
 
+      # MEB stop-and-go: TSK needs a non-zero starting speed or EPB can fault
+      ret.startingState = True
+      ret.startAccel = 1.8
+      ret.vEgoStarting = 0.5
+
       # only allow gateway harness to escalate Emergency Assist
       ret.dashcamOnly = ret.networkLocation == NetworkLocation.fwdCamera and not docs
 
@@ -140,4 +145,12 @@ class CarInterface(CarInterfaceBase):
       safety_configs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
     ret.safetyConfigs = safety_configs
 
+    return ret
+
+  @staticmethod
+  def _get_params_sp(stock_cp: structs.CarParams, ret: structs.CarParamsSP, candidate, fingerprint: dict[int, dict[int, int]],
+                     car_fw: list[structs.CarParams.CarFw], alpha_long: bool, is_release_sp: bool, docs: bool) -> structs.CarParamsSP:
+    # Gateway MEB: C3XL owns set speed (SET/RES), stock PCM speed is unused
+    if stock_cp.flags & VolkswagenFlags.MEB:
+      ret.pcmCruiseSpeed = False
     return ret
