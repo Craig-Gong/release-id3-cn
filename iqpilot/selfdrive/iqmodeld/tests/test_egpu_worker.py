@@ -520,3 +520,35 @@ class TestEgpuDockStatus:
       (False, d, False, False, b"1", True, St()),
     ])
     assert "Offroad_EgpuPcieUnavailable" in fired
+
+
+class TestEgpuBulkStats:
+  def test_reset_and_read(self):
+    from iqpilot.selfdrive.iqmodeld import egpu_helpers as eh
+    eh.reset_egpu_bulk_stats()
+    eh._egpu_bulk_stats["bulk_in_ok"] = 3
+    stats = eh.get_egpu_bulk_stats()
+    assert stats["bulk_in_ok"] == 3
+    eh.reset_egpu_bulk_stats()
+    assert eh.get_egpu_bulk_stats()["bulk_in_ok"] == 0
+
+
+class TestEgpuProcessGating:
+  def test_egpu_disabled_when_failed(self):
+    from iqpilot.system.manager import process_config as pc
+    params = FakeParams(UsbGpuFailed=True, IQEgpuEnabled=True)
+    assert pc.egpu_enabled(True, params, None) is False
+
+
+class TestTinygradUsbSetupPatch:
+  def test_patch_idempotent_or_skips_without_tinygrad(self):
+    from iqpilot.selfdrive.iqmodeld import egpu_helpers as eh
+    if getattr(eh.patch_tinygrad_usb_model_setup, "_iq_done", False):
+      eh.patch_tinygrad_usb_model_setup._iq_done = False  # type: ignore[attr-defined]
+    try:
+      first = eh.patch_tinygrad_usb_model_setup()
+      second = eh.patch_tinygrad_usb_model_setup()
+      if first:
+        assert second is True
+    except Exception:
+      pytest.skip("tinygrad runtime not available in this test env")

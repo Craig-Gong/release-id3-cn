@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import glob
+import json
 import os
 import subprocess
 import sys
@@ -25,6 +27,9 @@ USBDEVFS_RESET = 0x5514
 USBGPU_CHECK_ATTEMPTS = 2
 USBGPU_CHECK_RETRY_INTERVAL = 1.0
 ONROAD_REFUSED = "onroad (refused)"
+BENCHMARK_MIN_PASS_S = 45.0
+BENCHMARK_MAX_S = 120.0
+DEFAULT_POLICY_GLOB = "/data/media/0/models/egpu_*_amd_policy.pkl"
 
 
 @dataclass
@@ -142,6 +147,94 @@ def check_gpu(*, started: bool | None = None, timeout: float = 15.0) -> str | No
   return None
 
 
+def _find_policy_pkl() -> str | None:
+  env = os.getenv("IQ_EGPU_BENCHMARK_POLICY")
+  if env and os.path.isfile(env):
+    return env
+  matches = sorted(glob.glob(DEFAULT_POLICY_GLOB), key=os.path.getmtime, reverse=True)
+  return matches[0] if matches else None
+
+
+def benchmark_model_load(*, policy_path: str | None = None, timeout_s: float = BENCHMARK_MAX_S,
+                         min_pass_s: float = BENCHMARK_MIN_PASS_S, started: bool | None = None) -> dict:
+  """Offroad load gate: construct + warmup + first infer frame with bulk/F2 counters."""
+  if started if started is not None else _started():
+    return {"ok": False, "error": ONROAD_REFUSED}
+
+  devices = get_usb_state()
+  if (pre := _link_precheck(devices)) is not None:
+    return {"ok": False, "error": pre}
+
+  policy_path = policy_path or _find_policy_pkl()
+  if not policy_path or not os.path.isfile(policy_path):
+    return {"ok": False, "error": "no local policy pkl (set IQ_EGPU_BENCHMARK_POLICY)"}
+
+  os.environ.setdefault("XDG_CACHE_HOME", "/data/.cache")
+  os.environ.setdefault("DEV", "USB+AMD:LLVM")
+  os.environ.setdefault("GMMU", "0")
+
+  from iqpilot.common.params import Params
+  from iqpilot.selfdrive.iqmodeld.egpu_helpers import get_egpu_bulk_stats, prepare_egpu_runtime, reset_egpu_bulk_stats
+  from iqpilot.selfdrive.iqmodeld.egpu_model import resolve_egpu_model
+  from iqpilot.selfdrive.iqmodeld.egpu_policy import POLICY_FORMAT, PolicyRunner, load_bundle
+  import numpy as np
+
+  reset_egpu_bulk_stats()
+  report: dict = {"ok": False, "policy": policy_path, "timeout_s": timeout_s}
+  t0 = time.perf_counter()
+
+  def _elapsed() -> float:
+    return time.perf_counter() - t0
+
+  try:
+    prepare_egpu_runtime()
+    report["prepare_s"] = round(_elapsed(), 3)
+
+    params = Params()
+    meta = resolve_egpu_model(params)
+    if meta is None:
+      return {**report, "error": "no eGPU model selected"}
+
+    bundle = load_bundle(policy_path)
+    report["load_s"] = round(_elapsed(), 3)
+    report["format"] = bundle.get("format")
+    if bundle.get("format") != POLICY_FORMAT:
+      return {**report, "error": f"unsupported bundle format {bundle.get('format')}"}
+
+    runner = PolicyRunner(bundle["run_policy"], bundle["input_spec"], int(bundle["frame_skip"]),
+                          meta["output_slices"]["hidden_state"], bundle.get("input_device", "AMD"))
+    report["construct_s"] = round(_elapsed(), 3)
+
+    img = bundle["input_spec"]["img"][0]
+    desire = bundle["input_spec"]["desire_pulse"][0][2]
+    out = runner.run(np.zeros((2, 6, img[2], img[3]), dtype=np.uint8),
+                     np.zeros(desire, dtype=np.float32),
+                     np.zeros(2, dtype=np.float32), np.zeros(2, dtype=np.float32))
+    report["warmup_s"] = round(_elapsed(), 3)
+    if out.shape[0] != meta["output_len"] or not np.isfinite(out).all():
+      return {**report, "error": f"invalid warmup output len={out.shape[0]}"}
+
+    out2 = runner.run(np.zeros((2, 6, img[2], img[3]), dtype=np.uint8),
+                      np.zeros(desire, dtype=np.float32),
+                      np.zeros(2, dtype=np.float32), np.zeros(2, dtype=np.float32))
+    report["infer_s"] = round(_elapsed(), 3)
+    report["output_len"] = int(out2.shape[0])
+    report["total_s"] = round(_elapsed(), 3)
+    report["bulk"] = get_egpu_bulk_stats()
+    report["ok"] = True
+    report["gate"] = "pass" if report["total_s"] <= timeout_s and report["warmup_s"] <= timeout_s else "slow"
+    if report["total_s"] < min_pass_s:
+      report["gate"] = "fast"
+    return report
+  except Exception as e:
+    report["total_s"] = round(_elapsed(), 3)
+    report["bulk"] = get_egpu_bulk_stats()
+    report["error"] = str(e)[:512]
+    if _elapsed() >= timeout_s:
+      report["gate"] = "timeout"
+    return report
+
+
 def cycle_ecoflow_dc(*, started: bool | None = None, off_s: float = 60.0, on_s: float = 4.0,
                      wait_s: float = 8.0) -> ActionResult:
   """Offroad EcoFlow 12V off→on. Leaves DC on. Does not guarantee USB re-enumeration."""
@@ -221,6 +314,10 @@ def try_recover(*, off_s: float = 60.0) -> ActionResult:
 def main(argv: list[str] | None = None) -> int:
   parser = argparse.ArgumentParser(description="IQ eGPU dock offroad self-test (C3XL + EcoFlow 12V)")
   parser.add_argument("--check", action="store_true", help="1MB tensor + 8x numpy readback")
+  parser.add_argument("--benchmark-load", action="store_true", help="policy load + warmup gate (JSON report)")
+  parser.add_argument("--benchmark-timeout", type=float, default=BENCHMARK_MAX_S, help="load gate timeout (default 120s)")
+  parser.add_argument("--benchmark-policy", default=None, help="override policy pkl path")
+  parser.add_argument("--json", action="store_true", help="print benchmark JSON only")
   parser.add_argument("--recover", action="store_true", help="host + USB reset + EcoFlow 12V cycle")
   parser.add_argument("--cycle-12v", action="store_true", help="EcoFlow DC off→on only")
   parser.add_argument("--host", action="store_true", help="write ssusb mode=host")
@@ -229,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument("--status", action="store_true", help="print USB dock summary")
   args = parser.parse_args(argv)
 
-  if _started() and any((args.check, args.recover, args.cycle_12v, args.host, args.usb_reset)):
+  if _started() and any((args.check, args.benchmark_load, args.recover, args.cycle_12v, args.host, args.usb_reset)):
     print(ONROAD_REFUSED, file=sys.stderr)
     return 2
 
@@ -237,11 +334,11 @@ def main(argv: list[str] | None = None) -> int:
   link = egpu_link_status(devices)
   print(f"link={link} port_errors={get_link_error_count()}")
 
-  if args.status or not any((args.check, args.recover, args.cycle_12v, args.host, args.usb_reset)):
+  if args.status or not any((args.check, args.benchmark_load, args.recover, args.cycle_12v, args.host, args.usb_reset)):
     for d in egpu_dock_entries(devices):
       print(f"  {d['vendorId']:04x}:{d['productId']:04x} speed={d['speedMbps']} "
             f"product={d.get('product')!r} link_err={d.get('linkErrorCount')}")
-    if not any((args.check, args.recover, args.cycle_12v, args.host, args.usb_reset)):
+    if not any((args.check, args.benchmark_load, args.recover, args.cycle_12v, args.host, args.usb_reset)):
       return 0 if link == "ready" else 1
 
   if args.host:
@@ -274,6 +371,17 @@ def main(argv: list[str] | None = None) -> int:
       print(f"check failed: {err}", file=sys.stderr)
       return 1
     print("check passed: 1MB realize + 8x numpy")
+
+  if args.benchmark_load:
+    report = benchmark_model_load(policy_path=args.benchmark_policy, timeout_s=args.benchmark_timeout)
+    if args.json:
+      print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+      print(json.dumps(report, indent=2, sort_keys=True))
+    if not report.get("ok"):
+      return 1
+    if report.get("gate") == "timeout" or report.get("total_s", 0) > args.benchmark_timeout:
+      return 1
 
   return 0
 

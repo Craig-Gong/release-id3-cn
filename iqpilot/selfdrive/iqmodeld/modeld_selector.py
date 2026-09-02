@@ -269,6 +269,11 @@ def main() -> None:
         latch = BigLatch()
         pwriter.put_bool(keys["active"], False)
         pwriter.put_bool(keys["failed"], False)
+      elif params.get_bool(keys["failed"]) and not latch.done:
+        latch.done = True
+        latch.active = False
+        pwriter.put_bool(keys["active"], False)
+        cloudlog.warning("modeld_selector big worker failed; latching small model until offroad")
     target = fid
     t_start = time.perf_counter()
 

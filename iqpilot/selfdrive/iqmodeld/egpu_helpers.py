@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from typing import Any
 
 from iqpilot.common.swaglog import cloudlog
 import urllib.request
@@ -24,6 +25,20 @@ USBGPU_LINK_POLL_S = 1.0
 USBGPU_HCQ_WAIT_MS = 300_000
 USBGPU_COPYOUT_CHUNK = 64 * 1024
 USBGPU_COPYOUT_PAUSE_S = 0.008
+
+_egpu_bulk_stats: dict[str, int] = {
+  "bulk_in_ok": 0, "bulk_in_fail": 0, "bulk_in_bytes": 0,
+  "f2_in": 0, "copyout_ok": 0, "copyout_fail": 0,
+}
+
+
+def reset_egpu_bulk_stats() -> None:
+  for k in _egpu_bulk_stats:
+    _egpu_bulk_stats[k] = 0
+
+
+def get_egpu_bulk_stats() -> dict[str, int]:
+  return dict(_egpu_bulk_stats)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -297,14 +312,27 @@ def throttle_usbgpu_bulk_reads(*, usb3_cls=None, chunk: int = USBGPU_BULK_CHUNK,
 
   def bulk_read(self, length, timeout=1000):
     if length <= chunk:
-      return orig(self, length, timeout)
+      try:
+        part = orig(self, length, timeout)
+        _egpu_bulk_stats["bulk_in_ok"] += 1
+        _egpu_bulk_stats["bulk_in_bytes"] += len(part)
+        return part
+      except Exception:
+        _egpu_bulk_stats["bulk_in_fail"] += 1
+        raise
     req_timeout = max(timeout, 30_000) if iqos_linux49() else timeout
     parts: list[bytes] = []
     remaining = length
     while remaining > 0:
       n = min(chunk, remaining)
-      part = orig(self, n, req_timeout)
-      blob = bytes(part)
+      try:
+        part = orig(self, n, req_timeout)
+        blob = bytes(part)
+        _egpu_bulk_stats["bulk_in_ok"] += 1
+        _egpu_bulk_stats["bulk_in_bytes"] += len(blob)
+      except Exception:
+        _egpu_bulk_stats["bulk_in_fail"] += 1
+        raise
       parts.append(blob)
       got = len(blob)
       remaining -= got
@@ -348,12 +376,18 @@ def throttle_amd_usb_copyout(*, copyout_chunk: int = USBGPU_COPYOUT_CHUNK,
         for j in range(0, slab, copyout_chunk):
           off = i + j
           lsize = min(copyout_chunk, slab - j)
-          self.dev.iface.pci_dev.usb.scsi_read_arm(lsize)
-          self.dev.hw_copy_queue_t().wait(self.dev.timeline_signal, self.dev.timeline_value - 1) \
-                                    .copy(self.b[0], src.offset(off), lsize) \
-                                    .write(self.dev.iface.cq_buf.offset(12), 0) \
-                                    .signal(self.dev.timeline_signal, self.dev.next_timeline()).submit(self.dev)
-          dest.cast("B")[off:off + lsize] = self.b[0].cpu_view().view(size=lsize, fmt="B")[:]
+          try:
+            self.dev.iface.pci_dev.usb.scsi_read_arm(lsize)
+            _egpu_bulk_stats["f2_in"] += 1
+            self.dev.hw_copy_queue_t().wait(self.dev.timeline_signal, self.dev.timeline_value - 1) \
+                                      .copy(self.b[0], src.offset(off), lsize) \
+                                      .write(self.dev.iface.cq_buf.offset(12), 0) \
+                                      .signal(self.dev.timeline_signal, self.dev.next_timeline()).submit(self.dev)
+            dest.cast("B")[off:off + lsize] = self.b[0].cpu_view().view(size=lsize, fmt="B")[:]
+            _egpu_bulk_stats["copyout_ok"] += 1
+          except Exception:
+            _egpu_bulk_stats["copyout_fail"] += 1
+            raise
           if pause_s and off + lsize < dest.nbytes:
             time.sleep(pause_s)
 
@@ -391,6 +425,147 @@ def patch_amd_usb_synchronize_retry() -> bool:
   return True
 
 
+def patch_tinygrad_usb_model_setup() -> bool:
+  """USB AMD model load: PickleBuffer zero-copy + batch PTE (onemiless 2a2594c)."""
+  import array
+  import inspect
+  import pickle
+
+  try:
+    from tinygrad.device import Buffer
+    from tinygrad.dtype import DType
+    from tinygrad.runtime.autogen.am import am
+    from tinygrad.runtime.support.am.amdev import AMPageTableEntry
+    from tinygrad.runtime.support.memory import AddrSpace, MemoryManager, PageTableTraverseContext
+  except ImportError:
+    return False
+
+  if getattr(patch_tinygrad_usb_model_setup, "_iq_done", False):
+    return True
+
+  if not hasattr(AMPageTableEntry, "set_entries"):
+    def _entry_value(self, paddr, table=False, uncached=False, aspace=AddrSpace.PHYS, snooped=False, frag=0, valid=True):
+      is_sys = aspace is AddrSpace.SYS
+      if aspace is AddrSpace.PHYS:
+        paddr = self.adev.paddr2xgmi(paddr)
+      assert paddr & self.adev.gmc.address_space_mask == paddr, f"Invalid physical address {paddr:#x}"
+      return self.adev.gmc.get_pte_flags(self.lv, table, frag, uncached, is_sys, snooped, valid) | (paddr & 0x0000FFFFFFFFF000)
+
+    def set_entry(self, entry_id, paddr, table=False, uncached=False, aspace=AddrSpace.PHYS, snooped=False, frag=0, valid=True):
+      self.entries[entry_id] = _entry_value(self, paddr, table, uncached, aspace, snooped, frag, valid)
+
+    def set_entries(self, entry_id, paddrs, table=False, uncached=False, aspace=AddrSpace.PHYS, snooped=False, frag=0, valid=True):
+      values = array.array("Q", (_entry_value(self, paddr, table, uncached, aspace, snooped, frag, valid) for paddr in paddrs))
+      self.entries[entry_id:entry_id + len(values)] = values
+
+    def _valid_values(self, entry_id, count):
+      if count == 1:
+        return (self.entries[entry_id],)
+      values = self.entries[entry_id:entry_id + count]
+      if isinstance(values, (bytes, bytearray, memoryview)):
+        decoded = array.array("Q")
+        decoded.frombytes(values)
+        values = decoded
+      return values
+
+    def any_valid(self, entry_id, count):
+      return any(value & am.AMDGPU_PTE_VALID for value in _valid_values(self, entry_id, count))
+
+    def all_valid(self, entry_id, count):
+      return all(value & am.AMDGPU_PTE_VALID for value in _valid_values(self, entry_id, count))
+
+    AMPageTableEntry._entry_value = _entry_value  # type: ignore[attr-defined]
+    AMPageTableEntry.set_entry = set_entry
+    AMPageTableEntry.set_entries = set_entries
+    AMPageTableEntry._valid_values = _valid_values  # type: ignore[attr-defined]
+    AMPageTableEntry.any_valid = any_valid
+    AMPageTableEntry.all_valid = all_valid
+
+  if not getattr(MemoryManager.map_range, "_iq_pte_batch", False):
+    def map_range(self, vaddr, size, paddrs, aspace, uncached=False, snooped=False, boot=False):
+      from tinygrad.helpers import getenv
+      if getenv("MM_DEBUG", 0):
+        print(f"mm {self.dev.devfmt}: mapping {vaddr=:#x} ({size=:#x})")
+      assert size == sum(p[1] for p in paddrs), f"Size mismatch {size=} {sum(p[1] for p in paddrs)=}"
+      ctx = PageTableTraverseContext(self.dev, self.root_page_table, vaddr, boot=boot, inspect=True)
+      for _, pt, pte_idx, pte_cnt, _ in ctx.next(size):
+        if hasattr(pt, "any_valid"):
+          assert not pt.any_valid(pte_idx, pte_cnt), f"PTE range already mapped: {pte_idx=} {pte_cnt=}"
+        else:
+          for pte_off in range(pte_cnt):
+            assert not pt.valid(pte_idx + pte_off), f"PTE already mapped: {pt.entry(pte_idx + pte_off):#x}"
+      ctx = PageTableTraverseContext(self.dev, self.root_page_table, vaddr, create_pts=True, boot=boot)
+      for paddr, psize in paddrs:
+        for off, pt, pte_idx, pte_cnt, pte_covers in ctx.next(psize, paddr=paddr):
+          frag = self._frag_size(ctx.vaddr + off, pte_cnt * pte_covers)
+          if hasattr(pt, "set_entries"):
+            pt.set_entries(pte_idx, (paddr + off + pte_off * pte_covers for pte_off in range(pte_cnt)),
+                           uncached=uncached, aspace=aspace, snooped=snooped, frag=frag, valid=True)
+          else:
+            for pte_off in range(pte_cnt):
+              pt.set_entry(pte_idx + pte_off, paddr + off + pte_off * pte_covers, uncached=uncached, aspace=aspace,
+                           snooped=snooped, frag=frag, valid=True)
+      self.on_range_mapped()
+      from tinygrad.runtime.support.memory import VirtMapping
+      return VirtMapping(vaddr, size, paddrs, aspace=aspace, uncached=uncached, snooped=snooped)
+
+    def unmap_range(self, vaddr, size):
+      from tinygrad.helpers import getenv
+      if getenv("MM_DEBUG", 0):
+        print(f"mm {self.dev.devfmt}: unmapping {vaddr=:#x} ({size=:#x})")
+      ctx = PageTableTraverseContext(self.dev, self.root_page_table, vaddr, free_pts=True)
+      for _, pt, pte_idx, pte_cnt, _ in ctx.next(size):
+        if hasattr(pt, "all_valid") and hasattr(pt, "set_entries"):
+          assert pt.all_valid(pte_idx, pte_cnt), f"PTE range not mapped: {pte_idx=} {pte_cnt=}"
+          pt.set_entries(pte_idx, (0 for _ in range(pte_cnt)), valid=False)
+        else:
+          for pte_id in range(pte_idx, pte_idx + pte_cnt):
+            assert pt.valid(pte_id), f"PTE not mapped: {pt.entry(pte_id):#x}"
+            pt.set_entry(pte_id, paddr=0x0, valid=False)
+
+    map_range._iq_pte_batch = True  # type: ignore[attr-defined]
+    unmap_range._iq_pte_batch = True  # type: ignore[attr-defined]
+    MemoryManager.map_range = map_range
+    MemoryManager.unmap_range = unmap_range
+
+  try:
+    src = inspect.getsource(Buffer.__init__)
+  except (OSError, TypeError):
+    src = ""
+  if "zero_copy_pickle" not in src and not getattr(Buffer.__init__, "_iq_usb_setup", False):
+    def __init__(self, device: str, size: int, dtype, opaque=None, options=None,
+                 initial_value=None, uop_refcount=0, base=None, offset=0, preallocate=False):
+      assert isinstance(dtype, DType)
+      self.device, self.size, self.dtype, self.options, self.offset, self.allocated_views = device, size, dtype, options, offset, 0
+      self._bufs: dict[str, Any] = {}
+      if base is None:
+        assert offset == 0, "base buffers can't have offset"
+        self._base = None
+        self._uop_refcount = uop_refcount
+        if opaque is not None:
+          self.allocate(opaque)
+        if initial_value is not None:
+          self.allocate()
+          zero_copy_pickle = isinstance(initial_value, pickle.PickleBuffer) and \
+            hasattr(self.allocator, "dev") and getattr(self.allocator.dev, "is_usb", lambda: False)()
+          source = initial_value.raw() if zero_copy_pickle else memoryview(bytearray(initial_value))
+          self.copy_from(Buffer("PYTHON", self.size, self.dtype, opaque=source))
+          if isinstance(initial_value, pickle.PickleBuffer):
+            initial_value.release()
+      else:
+        assert base._base is None, "base can't have a base"
+        assert device == base.device, "base must have the same device"
+        self._base = base
+      if preallocate:
+        self.allocate()
+
+    __init__._iq_usb_setup = True  # type: ignore[attr-defined]
+    Buffer.__init__ = __init__  # type: ignore[method-assign]
+
+  patch_tinygrad_usb_model_setup._iq_done = True  # type: ignore[attr-defined]
+  return True
+
+
 def wait_for_stable_usb_link(*, settle_s: float = USBGPU_LINK_SETTLE_S,
                              poll_s: float = USBGPU_LINK_POLL_S) -> bool:
   """Poll ssusb portli counters; require no growth over settle_s (IQ.OS 4.9.1+)."""
@@ -423,6 +598,7 @@ def prepare_egpu_runtime() -> None:
     cloudlog.warning(f"egpu: ensure_host_role failed ({e})")
   restore_tinygrad_fw_cache()
   patch_tinygrad_fetch_fw()
+  patch_tinygrad_usb_model_setup()
   throttle_usbgpu_bulk_writes(chunk=chunk, pause_s=pause_s)
   throttle_usbgpu_bulk_reads(chunk=chunk, pause_s=pause_s)
   throttle_amd_usb_copyout(copyout_chunk=copyout_chunk, pause_s=copyout_pause_s)

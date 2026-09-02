@@ -58,19 +58,23 @@ PRESENCE_POLL_S = 5.0
 COMPILE_TIMEOUT_S = 3600
 LINK_UP_TIMEOUT_S = 10.0
 SETUP_EXIT_AFTER = 3
+LOAD_TIMEOUT_S = float(os.getenv("IQ_EGPU_LOAD_TIMEOUT_S", "120"))
 MIN_LOAD_AVAIL_MB = 350
 MEMORY_WAIT_S = 90.0
 SETUP_RETRY_BASE_S = 3.0
 SETUP_RETRY_MAX_S = 30.0
 
 
-def park(reason: str) -> None:
-  cloudlog.warning(f"iqegpumodeld parked: {reason}")
+def fail_and_exit(reason: str) -> None:
+  """Release the big channel worker; selector keeps publishing the small model."""
+  cloudlog.warning(f"iqegpumodeld exiting: {reason}")
   params = Params()
   params.put_bool("UsbGpuFailed", True)
+  params.put_bool("UsbGpuLoading", False)
+  params.put_bool("UsbGpuReady", False)
+  params.put_bool("UsbGpuCompiled", False)
   params.put("UsbGpuLastError", reason[:512])
-  while True:
-    time.sleep(1)
+  sys.exit(0)
 
 
 def _wait_for_egpu(params: Params) -> None:
@@ -297,7 +301,7 @@ def main(demo: bool = False) -> None:
   params = Params()
   backend = resolve_backend(params.get_bool("IQEmacEnabled"), egpu_selected(params), egpu_present_consented(params))
   if backend != "egpu":
-    park(f"backend resolution is {backend!r}, not egpu; refusing to own the big channel")
+    fail_and_exit(f"backend resolution is {backend!r}, not egpu; refusing to own the big channel")
 
   channel = ModelChannel(BIG_CHANNEL, create=True)
 
@@ -309,15 +313,20 @@ def main(demo: bool = False) -> None:
   os.environ["DEV"] = "USB+AMD:LLVM"
   prepare_egpu_runtime()
   params.put_bool("UsbGpuLoading", True)
+  params.put_bool("UsbGpuFailed", False)
+  load_deadline = time.monotonic() + LOAD_TIMEOUT_S
   attempt = 0
   while True:
+    if time.monotonic() > load_deadline:
+      params.put_bool("UsbGpuLoading", False)
+      fail_and_exit(f"eGPU model load timed out after {LOAD_TIMEOUT_S:.0f}s; small model active")
     try:
       meta = resolve_egpu_model(params)
       if meta is None:
         raise RuntimeError("selected big model is not in the catalog; check connectivity or pick another model")
       if meta.get("split"):
         params.put_bool("UsbGpuLoading", False)
-        park(f"model {meta['key']} needs the Mac backend; the eGPU runs fused models only")
+        fail_and_exit(f"model {meta['key']} needs the Mac backend; the eGPU runs fused models only")
       warp = FrameWarp(cameras._primary.width, cameras._primary.height, meta["frame_skip"])
       pkl_path = _ensure_artifact(params, meta)
       infer_fn, input_spec = _load_infer_fn(pkl_path, meta)
@@ -329,16 +338,12 @@ def main(demo: bool = False) -> None:
       err = f"{e} [{subs}]" if subs else str(e)
       params.put("UsbGpuLastError", err[:512])
       cloudlog.warning(f"iqegpumodeld setup attempt {attempt} failed: {e}; {subs}; retrying")
-      # A GPU hang wedges the dock; retrying in-process or respawning just loops alerts/UI flicker.
       if "Device hang detected" in err or "Wait timeout" in err:
         params.put_bool("UsbGpuLoading", False)
-        park(f"eGPU model load failed ({e}); cycle dock 12V and retry offroad")
+        fail_and_exit(f"eGPU model load failed ({e}); cycle dock 12V and retry offroad")
       if attempt >= SETUP_EXIT_AFTER:
         params.put_bool("UsbGpuLoading", False)
-        # tinygrad keeps the dock's flock in a failed device init, so a stale process can never
-        # reopen it; exit and let the manager respawn a clean one.
-        cloudlog.error(f"iqegpumodeld giving up after {attempt} setup failures; exiting for a clean restart")
-        sys.exit(1)
+        fail_and_exit(f"eGPU model load failed after {attempt} attempts: {err}")
       if not usbgpu_present():
         from iqpilot.system.hardware.usb import ensure_host_role
         if ensure_host_role():
@@ -437,16 +442,16 @@ def main(demo: bool = False) -> None:
     try:
       warped = warp.run(main_buf, extra_buf, main_tfm, extra_tfm)
     except Exception as e:
-      park(f"warp run failed: {e}")
+      fail_and_exit(f"warp run failed: {e}")
     t_warp = time.perf_counter()
     stats["warp"].append(t_warp - started_at)
 
     try:
       output = pipeline.run(warped, desire_vec, traffic, action_t)
     except EgpuPipelineError as e:
-      park(str(e))
+      fail_and_exit(str(e))
     except Exception as e:
-      park(f"eGPU inference failed: {e}")
+      fail_and_exit(f"eGPU inference failed: {e}")
     t_infer = time.perf_counter()
     stats["infer"].append(t_infer - t_warp)
 
@@ -516,5 +521,5 @@ if __name__ == "__main__":
   except Exception:
     import traceback
     sentry.capture_exception()
-    cloudlog.exception("iqegpumodeld crashed, parking")
-    park(f"crashed: {traceback.format_exc(limit=8)}")
+    cloudlog.exception("iqegpumodeld crashed")
+    fail_and_exit(f"crashed: {traceback.format_exc(limit=8)}")

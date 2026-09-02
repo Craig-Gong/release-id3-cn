@@ -81,6 +81,8 @@ def warm_firmware() -> None:
 def main() -> None:
   params = Params()
   while True:
+    if not params.get_bool("IsOnroad"):
+      params.put_bool("UsbGpuFailed", False)
     try:
       warm_firmware()
     except Exception as e:

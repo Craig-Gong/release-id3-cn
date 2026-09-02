@@ -158,6 +158,8 @@ def emac_enabled(started, params, CP: car.CarParams) -> bool:
   return resolve_backend(params.get_bool("IQEmacEnabled"), egpu_selected(params), _egpu_present(params)) == "emac"
 
 def egpu_enabled(started, params, CP: car.CarParams) -> bool:
+  if params.get_bool("UsbGpuFailed"):
+    return False
   return (resolve_backend(params.get_bool("IQEmacEnabled"), egpu_selected(params), _egpu_present(params)) == "egpu"
           and _egpu_present(params))
 
