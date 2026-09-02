@@ -347,8 +347,11 @@ class SelfdriveD(GapButtonActions):
           # body always wants to enable
           self.events.add(EventName.pcmEnable)
 
-      # Disable on rising edge of accelerator or brake. Also disable on brake when speed > 0
-      if (CS.gasPressed and not self.CS_prev.gasPressed and self.disengage_on_accelerator) or \
+      # Disable on rising edge of accelerator or brake. Also disable on brake when speed > 0.
+      # While fully disabled, hold brake blocks SET every frame (edge-only used to miss creep).
+      if CS.brakePressed and self.state_machine.state == State.disabled:
+        self.events.add(EventName.pedalPressed)
+      elif (CS.gasPressed and not self.CS_prev.gasPressed and self.disengage_on_accelerator) or \
         (CS.brakePressed and (not self.CS_prev.brakePressed or not CS.standstill)) or \
         (CS.regenBraking and (not self.CS_prev.regenBraking or not CS.standstill)):
         self.events.add(EventName.pedalPressed)
@@ -440,9 +443,10 @@ class SelfdriveD(GapButtonActions):
         safety_mismatch = pandaState.safetyModel not in IGNORED_SAFETY_MODES
 
       # safety mismatch allows some time for pandad to set the safety mode and publish it back from panda
-      if (safety_mismatch and self.sm.frame*DT_CTRL > 10.) or \
-         pandaState.safetyRxChecksInvalid or \
-         self.mismatch_counter >= 200:
+      # MEB often withholds controlsAllowed while the brake is pressed; show Pedal Pressed instead.
+      if ((safety_mismatch and self.sm.frame*DT_CTRL > 10.) or \
+          pandaState.safetyRxChecksInvalid or \
+          self.mismatch_counter >= 200) and not CS.brakePressed:
         self.events.add(EventName.controlsMismatch)
 
       if log.PandaState.FaultType.relayMalfunction in pandaState.faults:

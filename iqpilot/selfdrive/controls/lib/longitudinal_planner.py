@@ -29,8 +29,8 @@ ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
 
 LAUNCH_DISARM_SPEED = 2.0
-LAUNCH_COMMIT_T = 3.5
-LAUNCH_MOVING_SPEED = 1.2
+LAUNCH_COMMIT_T = 2.5
+LAUNCH_MOVING_SPEED = 1.0
 LAUNCH_MAX_ACCEL = 2.0
 
 E2E_CRUISE_CONVERGENCE_TAU = 15.0
@@ -70,7 +70,8 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
     max_accel = min(max_accel, coast_limit)
 
   target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, max_accel)
-  target_accel = float(np.clip(target_accel, a_cruise_prev - J_CRUISE * dt, a_cruise_prev + J_CRUISE * dt))
+  if not e2e:
+    target_accel = float(np.clip(target_accel, a_cruise_prev - J_CRUISE * dt, a_cruise_prev + J_CRUISE * dt))
 
   cruise_should_stop = v_cruise == 0.0
   return target_accel, cruise_should_stop
@@ -117,7 +118,7 @@ class LongitudinalPlanner(LongitudinalPlannerIQ):
 
     self.a_desired = init_a
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
-    self.a_cruise = init_a
+    self.a_cruise = 0.0
     self.output_a_target = 0.0
     self.output_should_stop = False
     self.launch_armed = False
@@ -176,7 +177,6 @@ class LongitudinalPlanner(LongitudinalPlannerIQ):
     if reset_state:
       self.v_desired_filter.x = v_ego
       self.a_desired = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
-      self.a_cruise = self.a_desired
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
@@ -184,8 +184,8 @@ class LongitudinalPlanner(LongitudinalPlannerIQ):
     # Don't clip at low speeds since throttle_prob doesn't account for creep
     self.allow_throttle = throttle_prob > ALLOW_THROTTLE_THRESHOLD or v_ego <= MIN_ALLOW_THROTTLE_SPEED
 
-    # Get new v_cruise from Smart Cruise Control and Speed Limit Assist
-    v_cruise = LongitudinalPlannerIQ.update_targets(self, sm, self.v_desired_filter.x, v_cruise)
+    # Get new v_cruise and a_desired from Smart Cruise Control and Speed Limit Assist
+    v_cruise, self.a_desired = LongitudinalPlannerIQ.update_targets(self, sm, self.v_desired_filter.x, self.a_desired, v_cruise)
 
     if sm['controlsState'].forceDecel:
       v_cruise = 0.0
@@ -253,9 +253,9 @@ class LongitudinalPlanner(LongitudinalPlannerIQ):
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
 
     self.output_should_stop = self.output_should_stop or self.forcing_stop
+    self.output_should_stop, output_a_target = self.apply_standstill_hold(
+      self.output_should_stop, output_a_target, v_ego, sm)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
-    self.output_should_stop, self.output_a_target = self.apply_standstill_hold(
-      bool(self.output_should_stop), float(self.output_a_target), v_ego, sm)
 
     self.a_desired = float(self.output_a_target)
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
@@ -285,7 +285,7 @@ class LongitudinalPlanner(LongitudinalPlannerIQ):
     longitudinalPlan.accels = self.a_desired_trajectory.tolist()
     longitudinalPlan.jerks = self.j_desired_trajectory.tolist()
 
-    longitudinalPlan.hasLead = sm['radarState'].leadOne.status
+    longitudinalPlan.hasLead = (sm['modelV2'].leadsV3[0].prob > 0.5) if self.mpc.new_lead_mpc else sm['radarState'].leadOne.status
     longitudinalPlan.leadDistance = get_lead_distance(sm['radarState'])
     longitudinalPlan.longitudinalPlanSource = self.mpc.source
     longitudinalPlan.fcw = self.fcw

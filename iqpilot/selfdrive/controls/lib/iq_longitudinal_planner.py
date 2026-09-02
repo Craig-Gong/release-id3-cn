@@ -132,12 +132,7 @@ class LongitudinalPlannerIQ:
     except Exception:
       return 0.0
 
-  def update_targets(self, sm: messaging.SubMaster, v_ego: float, v_cruise: float) -> float:
-    a_ego = float(getattr(sm['carState'], 'aEgo', 0.0) or 0.0)
-    v, _a = self._update_targets_id3(sm, v_ego, a_ego, v_cruise)
-    return v
-
-  def _update_targets_id3(self, sm: messaging.SubMaster, v_ego: float, a_ego: float, v_cruise: float) -> tuple[float, float]:
+  def update_targets(self, sm: messaging.SubMaster, v_ego: float, a_ego: float, v_cruise: float) -> tuple[float, float]:
     CS = sm['carState']
     v_cruise_cluster_kph = min(CS.vCruiseCluster, V_CRUISE_MAX)
     v_cruise_cluster = v_cruise_cluster_kph * CV.KPH_TO_MS
