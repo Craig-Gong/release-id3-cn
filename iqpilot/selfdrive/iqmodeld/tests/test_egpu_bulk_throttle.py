@@ -2,6 +2,7 @@
 Copyright © IQ.Lvbs, apart of Project Teal Lvbs, All Rights Reserved, licensed under https://konn3kt.com/tos/
 """
 from iqpilot.selfdrive.iqmodeld.egpu_helpers import (
+  _bulk_tuning,
   throttle_usbgpu_bulk_reads,
   throttle_usbgpu_bulk_writes,
   wait_for_stable_usb_link,
@@ -52,3 +53,14 @@ def test_throttle_skips_non_linux49(monkeypatch):
 def test_wait_for_stable_link_non_linux49(monkeypatch):
   monkeypatch.setattr("iqpilot.selfdrive.iqmodeld.egpu_helpers.iqos_linux49", lambda: False)
   assert wait_for_stable_usb_link(settle_s=0.0, poll_s=0.0) is True
+
+
+def test_bulk_tuning_env(monkeypatch):
+  monkeypatch.setenv("IQ_EGPU_BULK_CHUNK", "65536")
+  monkeypatch.setenv("IQ_EGPU_BULK_PAUSE_MS", "10")
+  monkeypatch.setenv("IQ_EGPU_HCQ_WAIT_MS", "90000")
+  chunk, pause_s, settle_s, hcq_ms = _bulk_tuning()
+  assert chunk == 65536
+  assert pause_s == 0.01
+  assert hcq_ms == 90000
+  assert settle_s == 3.0

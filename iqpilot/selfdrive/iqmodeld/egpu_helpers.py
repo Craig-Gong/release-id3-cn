@@ -17,10 +17,39 @@ USB_SYSFS_ROOT = "/sys/bus/usb/devices"
 FIRMWARE_MIRROR = os.getenv("IQ_EGPU_FIRMWARE_MIRROR", "/data/firmware/tinygrad")
 TINYGRAD_CACHE = Path(os.getenv("XDG_CACHE_HOME", "/data/.cache"))
 TINYGRAD_FW_STORE = Path("/data/amdgpu-fw/tinygrad-cache")
-USBGPU_BULK_CHUNK = 256 * 1024
-USBGPU_BULK_PAUSE_S = 0.002
-USBGPU_LINK_SETTLE_S = 2.0
+USBGPU_BULK_CHUNK = 128 * 1024
+USBGPU_BULK_PAUSE_S = 0.005
+USBGPU_LINK_SETTLE_S = 3.0
 USBGPU_LINK_POLL_S = 1.0
+USBGPU_HCQ_WAIT_MS = 120_000
+
+
+def _env_int(name: str, default: int) -> int:
+  raw = os.getenv(name)
+  if raw is None or raw == "":
+    return default
+  try:
+    return int(raw)
+  except ValueError:
+    return default
+
+
+def _env_float(name: str, default: float) -> float:
+  raw = os.getenv(name)
+  if raw is None or raw == "":
+    return default
+  try:
+    return float(raw)
+  except ValueError:
+    return default
+
+
+def _bulk_tuning() -> tuple[int, float, float, int]:
+  chunk = _env_int("IQ_EGPU_BULK_CHUNK", USBGPU_BULK_CHUNK)
+  pause_ms = _env_float("IQ_EGPU_BULK_PAUSE_MS", USBGPU_BULK_PAUSE_S * 1000.0)
+  settle_s = _env_float("IQ_EGPU_LINK_SETTLE_S", USBGPU_LINK_SETTLE_S)
+  hcq_wait_ms = _env_int("IQ_EGPU_HCQ_WAIT_MS", USBGPU_HCQ_WAIT_MS)
+  return max(chunk, 4096), max(pause_ms, 0.0) / 1000.0, max(settle_s, 0.0), max(hcq_wait_ms, 30_000)
 
 COMMA_LFS_BATCH_URL = "https://gitlab.com/commaai/openpilot-lfs.git/info/lfs/objects/batch"
 
@@ -264,11 +293,12 @@ def throttle_usbgpu_bulk_reads(*, usb3_cls=None, chunk: int = USBGPU_BULK_CHUNK,
   def bulk_read(self, length, timeout=1000):
     if length <= chunk:
       return orig(self, length, timeout)
+    req_timeout = max(timeout, 30_000) if iqos_linux49() else timeout
     parts: list[bytes] = []
     remaining = length
     while remaining > 0:
       n = min(chunk, remaining)
-      part = orig(self, n, timeout)
+      part = orig(self, n, req_timeout)
       blob = bytes(part)
       parts.append(blob)
       got = len(blob)
@@ -305,11 +335,20 @@ def wait_for_stable_usb_link(*, settle_s: float = USBGPU_LINK_SETTLE_S,
 
 def prepare_egpu_runtime() -> None:
   """Call before any tinygrad DEV=USB+AMD work on IQ.OS."""
+  chunk, pause_s, settle_s, hcq_wait_ms = _bulk_tuning()
+  if iqos_linux49() and os.getenv("HCQDEV_WAIT_TIMEOUT_MS") is None:
+    os.environ["HCQDEV_WAIT_TIMEOUT_MS"] = str(hcq_wait_ms)
+  try:
+    from iqpilot.system.hardware.usb import ensure_host_role
+    if not ensure_host_role():
+      cloudlog.warning("egpu: ssusb mode is not host; dock may not enumerate")
+  except Exception as e:
+    cloudlog.warning(f"egpu: ensure_host_role failed ({e})")
   restore_tinygrad_fw_cache()
   patch_tinygrad_fetch_fw()
-  throttle_usbgpu_bulk_writes()
-  throttle_usbgpu_bulk_reads()
-  if not wait_for_stable_usb_link():
+  throttle_usbgpu_bulk_writes(chunk=chunk, pause_s=pause_s)
+  throttle_usbgpu_bulk_reads(chunk=chunk, pause_s=pause_s)
+  if not wait_for_stable_usb_link(settle_s=settle_s):
     cloudlog.warning("egpu: USB link errors increased during settle window")
 
 
