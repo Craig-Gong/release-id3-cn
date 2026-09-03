@@ -1,0 +1,28 @@
+"""
+Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
+
+This file is part of sunnypilot and is licensed under the MIT License.
+See the LICENSE.md file in the root directory for more details.
+"""
+from opendbc.car.common.conversions import Conversions as CV
+from opendbc.car.volkswagen.values import VolkswagenFlags
+from opendbc.sunnypilot.car.volkswagen.vze_speed_limit_hold import VzeSpeedLimitHold
+
+
+class CarStateExt:
+  def __init__(self, CP, CP_SP):
+    self.CP = CP
+    self.CP_SP = CP_SP
+    self._vze_hold = VzeSpeedLimitHold()
+
+  def update_vze_speed_limit(self, ret_sp, cam_cp, v_ego: float) -> None:
+    if not (self.CP.flags & VolkswagenFlags.MEB):
+      return
+    # Must index vl[...] so CANParser keeps the subscription live.
+    vze = cam_cp.vl["VZE_04"]
+    raw = vze["VZE_Verkehrszeichen_1"]
+    display_mode = vze["VZE_Anzeigemodus"]
+    # 0=EU km/h, 1=USA mph, 2=Canada, 3=China km/h
+    kph = raw * CV.MPH_TO_KPH if display_mode == 1 else raw
+    accepted_kph = self._vze_hold.update(float(kph or 0.0), v_ego)
+    ret_sp.speedLimit = accepted_kph * CV.KPH_TO_MS if accepted_kph > 0 else 0.0
