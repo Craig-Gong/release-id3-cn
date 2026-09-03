@@ -26,6 +26,7 @@ from openpilot.system.loggerd.config import get_available_percent
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.system.statsd import statlog
 from openpilot.system.hardware.power_monitoring import PowerMonitoring
+from openpilot.sunnypilot.hardware.profile import power_down_requested
 from openpilot.system.hardware.fan_controller import FanController
 from openpilot.common.version import terms_version, training_version, get_build_metadata, terms_version_sp, CHESTNUT_BRANCHES
 
@@ -441,8 +442,10 @@ def hardware_thread(end_event, hw_queue) -> None:
     statlog.sample("som_power_draw", som_power_draw)
     msg.deviceState.somPowerDrawW = som_power_draw
 
-    # Check if we need to shut down
-    if power_monitor.should_shutdown(onroad_conditions["ignition"], in_car, off_ts, started_seen):
+    # Check if we need to shut down. C3XL is OBD-always-on with an internal panda
+    # that cannot bootkick from 0x3C0; automatic DoShutdown is disabled there.
+    if power_down_requested(automatic=power_monitor.should_shutdown(
+        onroad_conditions["ignition"], in_car, off_ts, started_seen), manual=False):
       cloudlog.warning(f"shutting device down, offroad since {off_ts}")
       params.put_bool("DoShutdown", True, block=True)
 

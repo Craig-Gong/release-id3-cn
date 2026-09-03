@@ -147,7 +147,10 @@ class NativeProcess(ManagerProcess):
       self.stop()
 
     if self.proc is not None:
-      return
+      if self.proc.is_alive():
+        return
+      cloudlog.info(f"{self.name} died, restarting")
+      self.proc = None
 
     cwd = os.path.join(BASEDIR, self.cwd)
     cloudlog.info(f"starting process {self.name}")
@@ -171,7 +174,10 @@ class PythonProcess(ManagerProcess):
       self.stop()
 
     if self.proc is not None:
-      return
+      if self.proc.is_alive():
+        return
+      cloudlog.info(f"{self.name} died, restarting")
+      self.proc = None
 
     cloudlog.info(f"starting python {self.module}")
     self.proc = Process(name=self.name, target=self.launcher, args=(self.module, self.name))
@@ -222,10 +228,45 @@ class DaemonProcess(ManagerProcess):
     pass
 
 
+# Start vision / driving daemons before offroad stops on the first onroad cycle.
+# IQ.OS sensord is often late; stopping offroad procs first delays it further.
+ONROAD_BOOT_PRIORITY = (
+  "camerad",
+  "sensord",
+  "card",
+  "selfdrived",
+  "modeld",
+  "modeld_tinygrad",
+  "calibrationd",
+  "locationd",
+  "plannerd",
+  "controlsd",
+  "radard",
+)
+
+
+def kick_onroad_boot(procs: ValuesView[ManagerProcess], started: bool, params: Params, CP: car.CarParams,
+                     not_run: list[str] | None = None) -> None:
+  if not started:
+    return
+  if not_run is None:
+    not_run = []
+  proc_by_name = {p.name: p for p in procs}
+  for name in ONROAD_BOOT_PRIORITY:
+    p = proc_by_name.get(name)
+    if p is None or not p.enabled or name in not_run:
+      continue
+    if p.should_run(started, params, CP):
+      p.start()
+
+
 def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params: Params, CP: car.CarParams,
                    not_run: list[str] | None=None) -> list[ManagerProcess]:
   if not_run is None:
     not_run = []
+
+  if started:
+    kick_onroad_boot(procs, started, params, CP, not_run)
 
   running = []
   for p in procs:

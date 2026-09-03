@@ -465,9 +465,18 @@ class SelfdriveD(CruiseHelper):
           not TESTING_CLOSET and (not SIMULATION or REPLAY)):
         self.events.add(EventName.paramsdTemporaryError)
 
-    # conservative HW alert. if the data or frequency are off, locationd will throw an error
-    if any((self.sm.frame - self.sm.recv_frame[s])*DT_CTRL > 10. for s in self.sensor_packets):
-      self.events.add(EventName.sensorDataInvalid)
+    # conservative HW alert. if the data or frequency are off, locationd will throw an error.
+    # IQ.OS sensord is often late on first READY; never-received waits 20 s after init.
+    if self.initialized:
+      onroad_s = self.sm.frame * DT_CTRL
+      for s in self.sensor_packets:
+        if self.sm.recv_frame[s] < 1:
+          if onroad_s > 20.:
+            self.events.add(EventName.sensorDataInvalid)
+            break
+        elif (self.sm.frame - self.sm.recv_frame[s]) * DT_CTRL > 10.:
+          self.events.add(EventName.sensorDataInvalid)
+          break
 
     if not REPLAY:
       # Check for mismatch between openpilot and car's PCM

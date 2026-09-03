@@ -76,16 +76,30 @@ class CruiseLayout(Widget):
       min_value=1, max_value=3, value_change_step=1,
       inline=True)
 
+    self.dec_toggle = toggle_item_sp(
+      title=tr("Enable Dynamic Experimental Control"),
+      description=tr("Enable toggle to allow the model to determine when to use sunnypilot ACC or sunnypilot End to End Longitudinal."),
+      param="DynamicExperimentalControl")
+
     self.sla_settings_button = simple_button_item_sp(
       button_text=lambda: tr("Speed Limit"),
       button_width=800,
       callback=lambda: self._set_current_panel(PanelType.SLA)
     )
 
-    self.dec_toggle = toggle_item_sp(
-      title=tr("Enable Dynamic Experimental Control"),
-      description=tr("Enable toggle to allow the model to determine when to use sunnypilot ACC or sunnypilot End to End Longitudinal."),
-      param="DynamicExperimentalControl")
+    self.gas_sync_toggle = toggle_item_sp(
+      title=tr("Gas Sync Set Speed"),
+      description=tr("While engaged, hold the accelerator about 0.4 s above MAX to raise set speed to current speed. Only raises, never lowers."),
+      param="AutoGasSyncSpeed")
+
+    self.traffic_stop_offset = option_item_sp(
+      title=tr("Traffic Stop Offset"),
+      description=tr("Brake this far short of the model's stop point at a red light or stop. Does not change follow gap. 0 disables."),
+      param="TrafficStopOffset",
+      min_value=0, max_value=600, value_change_step=50,
+      use_float_scaling=True,
+      label_callback=lambda x: f"{x / 100:.1f} m",
+      inline=True)
 
     items = [
       self.icbm_toggle,
@@ -95,6 +109,8 @@ class CruiseLayout(Widget):
       self.custom_acc_toggle,
       self.custom_acc_short_increment,
       self.custom_acc_long_increment,
+      self.gas_sync_toggle,
+      self.traffic_stop_offset,
       self.sla_settings_button,
     ]
     return items
@@ -147,6 +163,8 @@ class CruiseLayout(Widget):
         self.dec_toggle.action_item.set_enabled(has_long)
         self.scc_v_toggle.action_item.set_enabled(True)
         self.scc_m_toggle.action_item.set_enabled(True)
+        self.gas_sync_toggle.action_item.set_enabled(has_long and not ui_state.CP.pcmCruise)
+        self.traffic_stop_offset.action_item.set_enabled(has_long)
       else:
         ui_state.params.remove("CustomAccIncrementsEnabled")
         ui_state.params.remove("DynamicExperimentalControl")
@@ -156,6 +174,8 @@ class CruiseLayout(Widget):
         self.dec_toggle.action_item.set_enabled(False)
         self.scc_v_toggle.action_item.set_enabled(False)
         self.scc_m_toggle.action_item.set_enabled(False)
+        self.gas_sync_toggle.action_item.set_enabled(False)
+        self.traffic_stop_offset.action_item.set_enabled(False)
 
     else:
       has_icbm = has_long = False

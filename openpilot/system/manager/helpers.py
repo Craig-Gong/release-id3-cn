@@ -12,6 +12,23 @@ import threading
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 
+
+def seed_onroad_carparams(params: Params) -> None:
+  """Restore live CarParams after onroad-transition clears.
+
+  manager clears CLEAR_ON_ONROAD_TRANSITION as soon as hardwared sets
+  started=True. selfdrived blocks on CarParams while card waits for the first
+  CAN frame, which on C3XL leaves Sensor Data Invalid / Waiting to start.
+  """
+  if params.get("CarParams") is None:
+    persistent = params.get("CarParamsPersistent")
+    if persistent is not None:
+      params.put("CarParams", persistent)
+  if params.get("CarParamsSP") is None:
+    persistent_sp = params.get("CarParamsSPPersistent")
+    if persistent_sp is not None:
+      params.put("CarParamsSP", persistent_sp)
+
 def unblock_stdout() -> None:
   # get a non-blocking stdout
   child_pid, child_pty = os.forkpty()

@@ -243,6 +243,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LagdValueCache", {PERSISTENT, FLOAT, "0.2"}},
     {"LaneTurnDesire", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"LaneTurnValue", {PERSISTENT | BACKUP, FLOAT, "28.0"}},
+    {"AutoGasSyncSpeed", {PERSISTENT | BACKUP, BOOL, "1"}},
+    {"TrafficStopOffset", {PERSISTENT | BACKUP, FLOAT, "3.0"}},
     {"PlanplusControl", {PERSISTENT | BACKUP, FLOAT, "1.0"}},
 
     // mapd

@@ -91,6 +91,16 @@ class Car:
     is_release_sp = self.params.get_bool("IsReleaseSpBranch")
 
     if CI is None:
+      # Unblock selfdrived while we wait for the first CAN frame (C3XL first READY).
+      if self.params.get("CarParams") is None:
+        persistent = self.params.get("CarParamsPersistent")
+        if persistent is not None:
+          self.params.put("CarParams", persistent)
+      if self.params.get("CarParamsSP") is None:
+        persistent_sp = self.params.get("CarParamsSPPersistent")
+        if persistent_sp is not None:
+          self.params.put("CarParamsSP", persistent_sp)
+
       # wait for one pandaState and one CAN packet
       print("Waiting for CAN messages...")
       while True:
@@ -102,6 +112,8 @@ class Car:
 
       cached_params = None
       cached_params_raw = self.params.get("CarParamsCache")
+      if cached_params_raw is None:
+        cached_params_raw = self.params.get("CarParamsPersistent")
       if cached_params_raw is not None:
         with car.CarParams.from_bytes(cached_params_raw) as _cached_params:
           cached_params = _cached_params
