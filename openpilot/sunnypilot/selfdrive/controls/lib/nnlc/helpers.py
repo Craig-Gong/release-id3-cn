@@ -21,6 +21,12 @@ def similarity(s1: str, s2: str) -> float:
 
 
 def get_nn_model_path(CP: structs.CarParams) -> tuple[str, str, bool]:
+  # Angle cars (MEB ID.3) never use NNLC; missing weights must not block fingerprinting.
+  if CP.steerControlType == structs.CarParams.SteerControlType.angle:
+    return MOCK_MODEL_PATH, "MOCK", False
+  if not os.path.isdir(TORQUE_NN_MODEL_PATH):
+    return MOCK_MODEL_PATH, "MOCK", False
+
   car_fingerprint = CP.carFingerprint
   eps_fw = str(next((fw.fwVersion for fw in CP.carFw if fw.ecu == "eps"), ""))
 

@@ -58,6 +58,11 @@ def nativelauncher(pargs: list[str], cwd: str, name: str) -> None:
 
   # exec the process
   os.chdir(cwd)
+  # locationd_llk is often built with a host RUNPATH that does not match /data/openpilot.
+  gen_dir = os.path.join(cwd, "models", "generated")
+  if os.path.isdir(gen_dir):
+    prev = os.environ.get("LD_LIBRARY_PATH", "")
+    os.environ["LD_LIBRARY_PATH"] = gen_dir if not prev else f"{gen_dir}:{prev}"
   os.execvp(pargs[0], pargs)
 
 

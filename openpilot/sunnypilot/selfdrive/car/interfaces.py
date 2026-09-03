@@ -65,6 +65,9 @@ def _initialize_intelligent_cruise_button_management(CP: structs.CarParams, CP_S
 
 
 def _initialize_torque_lateral_control(CI: CarInterfaceBase, CP: structs.CarParams, enforce_torque: bool, nnlc_enabled: bool) -> None:
+  if CP.steerControlType in (structs.CarParams.SteerControlType.angle,
+                             structs.CarParams.SteerControlType.curvature):
+    return
   if nnlc_enabled or enforce_torque:
     CI.configure_torque_tune(CP.carFingerprint, CP.lateralTuning)
 
@@ -78,8 +81,9 @@ def _cleanup_unsupported_params(CP: structs.CarParams, CP_SP: structs.CarParamsS
     params.put_bool("LateralJerkTorqueController", False, block=True)
     params.put_bool("NeuralNetworkLateralControl", False, block=True)
 
-  if CP.steerControlType == structs.CarParams.SteerControlType.angle:
-    cloudlog.warning("SteerControlType is angle, cleaning up params")
+  if CP.steerControlType in (structs.CarParams.SteerControlType.angle,
+                             structs.CarParams.SteerControlType.curvature):
+    cloudlog.warning("SteerControlType is angle/curvature, cleaning up torque-tune params")
     params.remove("NeuralNetworkLateralControl")
     params.remove("EnforceTorqueControl")
     params.remove("LateralJerkTorqueController")
