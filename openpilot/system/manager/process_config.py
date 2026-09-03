@@ -103,6 +103,18 @@ def uploader_ready(started: bool, params: Params, CP: car.CarParams) -> bool:
 
   return always_run(started, params, CP)
 
+def _param_flag(params: Params, key: str, default: bool = False) -> bool:
+  try:
+    return bool(params.get_bool(key))
+  except Exception:
+    return default
+
+def iqlink_needed(started, params: Params, CP: car.CarParams) -> bool:
+  return _param_flag(params, "IqlinkEnabled", True)
+
+def ecoflow_needed(started, params: Params, CP: car.CarParams) -> bool:
+  return _param_flag(params, "EcoflowEnabled", False)
+
 def or_(*fns):
   return lambda *args: operator.or_(*(fn(*args) for fn in fns))
 
@@ -183,6 +195,10 @@ procs += [
 
   # locationd
   NativeProcess("locationd_llk", "openpilot/sunnypilot/selfdrive/locationd", ["./locationd"], only_onroad),
+
+  # IQ-link BLE + EcoFlow 12V (not in modeld; chestnut SuperSpeed is never cycled here)
+  PythonProcess("iqlinkd", "openpilot.sunnypilot.nav.iqlinkd", iqlink_needed),
+  PythonProcess("ecoflowd", "openpilot.sunnypilot.system.ecoflow.daemon", ecoflow_needed),
 ]
 
 if os.path.exists("../../sunnypilot/sunnylink/uploader.py"):

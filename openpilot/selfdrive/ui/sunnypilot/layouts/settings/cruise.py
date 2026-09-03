@@ -101,6 +101,16 @@ class CruiseLayout(Widget):
       label_callback=lambda x: f"{x / 100:.1f} m",
       inline=True)
 
+    self.iqlink_toggle = toggle_item_sp(
+      title=tr("IQ-link"),
+      description=tr("Phone BLE nav (amapauto / IQ-link). Pair once, PSK 999999. Green at a light waits for the lead to move when one is close."),
+      param="IqlinkEnabled")
+
+    self.ecoflow_toggle = toggle_item_sp(
+      title=tr("EcoFlow 12V"),
+      description=tr("Delta 3 12V DC follows KL15. Delayed off after ignition. Never pulses 12V while chestnut is SuperSpeed. Credentials in /data/ecoflow_params/."),
+      param="EcoflowEnabled")
+
     items = [
       self.icbm_toggle,
       self.dec_toggle,
@@ -111,6 +121,8 @@ class CruiseLayout(Widget):
       self.custom_acc_long_increment,
       self.gas_sync_toggle,
       self.traffic_stop_offset,
+      self.iqlink_toggle,
+      self.ecoflow_toggle,
       self.sla_settings_button,
     ]
     return items

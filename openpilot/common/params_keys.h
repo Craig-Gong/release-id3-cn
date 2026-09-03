@@ -245,6 +245,11 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LaneTurnValue", {PERSISTENT | BACKUP, FLOAT, "28.0"}},
     {"AutoGasSyncSpeed", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"TrafficStopOffset", {PERSISTENT | BACKUP, FLOAT, "3.0"}},
+    {"IqlinkEnabled", {PERSISTENT | BACKUP, BOOL, "1"}},
+    {"IqlinkBlePsk", {PERSISTENT | BACKUP | DONT_LOG, STRING, "999999"}},
+    {"IqlinkBleLinkState", {CLEAR_ON_MANAGER_START, INT, "0"}},
+    {"IqlinkBleConnected", {CLEAR_ON_MANAGER_START, BOOL, "0"}},
+    {"EcoflowEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"PlanplusControl", {PERSISTENT | BACKUP, FLOAT, "1.0"}},
 
     // mapd
