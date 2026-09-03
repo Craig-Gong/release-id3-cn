@@ -88,11 +88,17 @@ def use_sunnylink_uploader_shim(started, params, CP: car.CarParams) -> bool:
 
 def is_tinygrad_model(started, params, CP: car.CarParams) -> bool:
   """Check if the active model runner is tinygrad."""
-  return bool(get_active_model_runner(params, not started) == custom.ModelManagerSP.Runner.tinygrad)
+  try:
+    return bool(get_active_model_runner(params, not started) == custom.ModelManagerSP.Runner.tinygrad)
+  except Exception:
+    return False
 
 def is_stock_model(started, params, CP: car.CarParams) -> bool:
-  """Check if the active model runner is stock."""
-  return bool(get_active_model_runner(params, not started) == custom.ModelManagerSP.Runner.stock)
+  """Check if the active model runner is stock. Always the fallback so one modeld starts."""
+  try:
+    return not is_tinygrad_model(started, params, CP)
+  except Exception:
+    return True
 
 def mapd_ready(started: bool, params: Params, CP: car.CarParams) -> bool:
   return bool(os.path.exists(Paths.mapd_root()))
@@ -116,10 +122,22 @@ def ecoflow_needed(started, params: Params, CP: car.CarParams) -> bool:
   return _param_flag(params, "EcoflowEnabled", False)
 
 def or_(*fns):
-  return lambda *args: operator.or_(*(fn(*args) for fn in fns))
+  def _or(*args):
+    for fn in fns:
+      if fn(*args):
+        return True
+    return False
+  return _or
 
 def and_(*fns):
-  return lambda *args: operator.and_(*(fn(*args) for fn in fns))
+  # operator.and_ evaluates every operand. Offroad that still ran is_stock_model
+  # (USB/params) before ui in the process list and left IQ.OS on the boot logo.
+  def _and(*args):
+    for fn in fns:
+      if not fn(*args):
+        return False
+    return True
+  return _and
 
 procs = [
   DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid"),

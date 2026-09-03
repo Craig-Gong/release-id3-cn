@@ -185,6 +185,29 @@ def load_iqos_native_raylib() -> bool:
   return True
 
 
+def _close_inherited_params_lock() -> None:
+  try:
+    names = os.listdir("/proc/self/fd")
+  except OSError:
+    return
+  for name in names:
+    try:
+      fd = int(name)
+    except ValueError:
+      continue
+    if fd < 3:
+      continue
+    try:
+      target = os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
+      continue
+    if target.endswith("/params/.lock"):
+      try:
+        os.close(fd)
+      except OSError:
+        pass
+
+
 def reexec_if_needed() -> None:
   """Clean process: drop the ABGR shim before IQ.OS raylib loads Adreno."""
   if not is_iqos():
@@ -198,4 +221,5 @@ def reexec_if_needed() -> None:
   if want_native:
     _strip_abgr_shim()
   os.environ["IQOS_EGL_REEXEC"] = "1"
+  _close_inherited_params_lock()
   os.execvpe(sys.executable, [sys.executable, "-m", _UI_MODULE], os.environ)

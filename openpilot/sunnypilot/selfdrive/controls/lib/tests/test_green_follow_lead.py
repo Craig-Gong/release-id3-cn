@@ -10,7 +10,8 @@ DT_MDL = 0.05
 
 
 def _sm(d_rel=0.0, v_lead=0.0, radar=True, vision=None):
-  lead = SimpleNamespace(status=bool(radar and d_rel > 0), dRel=d_rel, vLead=v_lead)
+  on = bool(radar and d_rel > 0)
+  lead = SimpleNamespace(present=on, status=on, dRel=d_rel, vLead=v_lead)
   radar_state = SimpleNamespace(leadOne=lead)
   if vision is None:
     model = SimpleNamespace(leadsV3=[SimpleNamespace(prob=0.0, x=[0.0], v=[0.0])])
@@ -67,3 +68,14 @@ def test_vision_fallback_close_lead():
   lead = read_follow_lead(sm)
   assert lead.present
   assert lead.close_queue
+
+
+def test_radar_present_field_without_status():
+  lead = SimpleNamespace(present=True, dRel=6.0, vLead=0.0)
+  sm = {
+    "radarState": SimpleNamespace(leadOne=lead),
+    "modelV2": SimpleNamespace(leadsV3=[SimpleNamespace(prob=0.0, x=[0.0], v=[0.0])]),
+  }
+  got = read_follow_lead(sm)
+  assert got.present
+  assert got.close_queue

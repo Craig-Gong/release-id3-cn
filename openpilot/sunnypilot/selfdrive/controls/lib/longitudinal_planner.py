@@ -15,6 +15,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.dec.dec import DynamicExperimen
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import junction_stop_active
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_soft_curve import nav_soft_curve_ms
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import follow_lead_present
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import StandstillHold, apply_follow_launch
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
@@ -132,7 +133,7 @@ class LongitudinalPlannerSP:
       lead = sm['radarState'].leadOne
     except Exception:
       return a_target, should_stop
-    has_lead = bool(getattr(lead, "status", False))
+    has_lead = follow_lead_present(sm) or bool(getattr(lead, "present", False))
     model_stop = bool(getattr(model.action, "shouldStop", False))
     self.traffic_stop_offset.update()
     a_target, should_stop = self.traffic_stop_offset.adjust(

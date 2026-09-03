@@ -29,7 +29,8 @@ def _enforce_torque_lateral_control(CP: structs.CarParams, params: Params | None
   if params is None:
     params = Params()
 
-  if CP.steerControlType != structs.CarParams.SteerControlType.angle:
+  if CP.steerControlType not in (structs.CarParams.SteerControlType.angle,
+                                 structs.CarParams.SteerControlType.curvature):
     enabled = params.get_bool("EnforceTorqueControl")
 
   return enabled
@@ -45,7 +46,8 @@ def _initialize_neural_network_lateral_control(CP: structs.CarParams, CP_SP: str
   if nnlc_model_name == "MOCK":
     cloudlog.error({"nnlc event": "car doesn't match any Neural Network model"})
 
-  if nnlc_model_name != "MOCK" and CP.steerControlType != structs.CarParams.SteerControlType.angle:
+  if nnlc_model_name != "MOCK" and CP.steerControlType not in (structs.CarParams.SteerControlType.angle,
+                                                              structs.CarParams.SteerControlType.curvature):
     enabled = params.get_bool("NeuralNetworkLateralControl")
 
   CP_SP.neuralNetworkLateralControl.model.path = nnlc_model_path

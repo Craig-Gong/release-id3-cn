@@ -38,10 +38,17 @@ def _sm_get(sm: Any, key: str) -> Any:
   return sm[key]
 
 
+def radar_lead_present(lead: Any) -> bool:
+  try:
+    return bool(getattr(lead, "present", False) or getattr(lead, "status", False))
+  except Exception:
+    return False
+
+
 def _from_radar(sm: Any) -> LeadSnapshot | None:
   try:
     lead = _sm_get(sm, "radarState").leadOne
-    if not bool(getattr(lead, "status", False)):
+    if not radar_lead_present(lead):
       return None
     d_rel = float(getattr(lead, "dRel", 0.0) or 0.0)
     v_lead = float(getattr(lead, "vLead", 0.0) or 0.0)

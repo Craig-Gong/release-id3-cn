@@ -1,6 +1,7 @@
 #include "common/params.h"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/file.h>
 
 #include <algorithm>
@@ -77,7 +78,7 @@ std::string ensure_params_path(const std::string &prefix, const std::string &pat
 class FileLock {
 public:
   FileLock(const std::string &fn) {
-    fd_ = HANDLE_EINTR(open(fn.c_str(), O_CREAT, 0775));
+    fd_ = HANDLE_EINTR(open(fn.c_str(), O_CREAT | O_CLOEXEC, 0775));
     if (fd_ < 0 || HANDLE_EINTR(flock(fd_, LOCK_EX)) < 0) {
       LOGE("Failed to lock file %s, errno=%d", fn.c_str(), errno);
     }

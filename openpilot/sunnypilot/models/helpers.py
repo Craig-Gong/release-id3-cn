@@ -123,7 +123,10 @@ def _parse_active_bundle(raw_bundle) -> "custom.ModelManagerSP.ModelBundle | Non
 
 def get_selected_bundle(params: Params | None = None, source: str = "qcom") -> "custom.ModelManagerSP.ModelBundle | None":
   params = params or Params()
-  return _parse_active_bundle(params.get(ACTIVE_BUNDLE_KEYS[source]))
+  try:
+    return _parse_active_bundle(params.get(ACTIVE_BUNDLE_KEYS[source]))
+  except Exception:
+    return None
 
 
 def get_active_source(chestnut: bool | None = None, chestnut_active: bool | None = None,
@@ -181,15 +184,18 @@ def validate_active_bundles(params: Params, source_bundles: dict[str, list[custo
 
 def get_active_model_runner(params: Params | None = None, force_check: bool = False) -> int:
   params = params or Params()
-  cached_runner_type = params.get("ModelRunnerTypeCache")
+  try:
+    cached_runner_type = params.get("ModelRunnerTypeCache")
+  except Exception:
+    cached_runner_type = None
   if cached_runner_type is not None and not force_check:
     return cached_runner_type
   runner_type = custom.ModelManagerSP.Runner.stock
-  if active_bundle := get_active_bundle(params):
+  # Manager calls this on every process tick. Do not USB-scan chestnut, and do
+  # not params.put() here: nested flock on /data/params/.lock deadlocks manager
+  # and leaves IQ.OS on the boot logo (UI waits for the same lock).
+  if active_bundle := get_selected_bundle(params, "qcom"):
     runner_type = active_bundle.runner.raw
-
-  if cached_runner_type != runner_type:
-    params.put("ModelRunnerTypeCache", int(runner_type), block=True)
 
   return runner_type
 

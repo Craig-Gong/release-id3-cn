@@ -105,6 +105,14 @@ NOTO_FONTS = {
 }
 
 
+def _overlay_font_chars() -> str:
+  try:
+    from openpilot.sunnypilot.nav.hud_copy import overlay_font_chars
+    return overlay_font_chars()
+  except Exception:
+    return ""
+
+
 class FontWeight(StrEnum):
   NORMAL = "Inter-Regular.ttf" if BIG_UI else "Inter-Medium.ttf"
   MEDIUM = "Inter-Medium.ttf"
@@ -119,8 +127,18 @@ class FontWeight(StrEnum):
   DISPLAY = "Inter-Bold.ttf"
 
 
-def font_fallback(font: rl.Font) -> rl.Font:
-  """Use a Noto fallback for languages not covered by Inter."""
+def _text_needs_unifont(text: str) -> bool:
+  # CJK / wide scripts are not in Inter; missing atlas glyphs render as '?'.
+  return any(ord(c) >= 0x250 for c in text)
+
+
+def font_fallback(font: rl.Font, text: str | None = None) -> rl.Font:
+  """Use unifont for CJK overlay copy; Noto when the UI language needs it."""
+  if text and _text_needs_unifont(text):
+    try:
+      return gui_app.font(FontWeight.UNIFONT)
+    except Exception:
+      pass
   if multilang.requires_font_fallback():
     return gui_app.fallback_font()
   return font
@@ -725,6 +743,7 @@ class GuiApplication(GuiApplicationExt):
     language = multilang.language
     if language not in self._fallback_fonts:
       chars = set(map(chr, range(32, 127))) | set(EXTRA_FONT_CHARS)
+      chars.update(_overlay_font_chars())
       chars.update(TRANSLATIONS_DIR.joinpath(f"app_{language}.po").read_text(encoding="utf-8"))
       codepoints = sorted(map(ord, chars))
       codepoint_buffer = rl.ffi.new("int[]", codepoints)
@@ -747,6 +766,7 @@ class GuiApplication(GuiApplicationExt):
   def _load_fonts(self):
     base_chars = set(map(chr, range(32, 127))) | set(EXTRA_FONT_CHARS)
     unifont_chars = set(base_chars)
+    unifont_chars.update(_overlay_font_chars())
     for language, code in multilang.languages.items():
       unifont_chars.update(language)
       if code not in FONT_FALLBACK_LANGUAGES:
@@ -781,7 +801,7 @@ class GuiApplication(GuiApplicationExt):
       rl._orig_draw_text_ex = rl.draw_text_ex
 
     def _draw_text_ex_scaled(font, text, position, font_size, spacing, tint):
-      font = font_fallback(font)
+      font = font_fallback(font, text)
       return rl._orig_draw_text_ex(font, text, position, font_size * FONT_SCALE, spacing, tint)
 
     rl.draw_text_ex = _draw_text_ex_scaled

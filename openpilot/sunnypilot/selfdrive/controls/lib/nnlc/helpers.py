@@ -21,8 +21,10 @@ def similarity(s1: str, s2: str) -> float:
 
 
 def get_nn_model_path(CP: structs.CarParams) -> tuple[str, str, bool]:
-  # Angle cars (MEB ID.3) never use NNLC; missing weights must not block fingerprinting.
-  if CP.steerControlType == structs.CarParams.SteerControlType.angle:
+  # Angle / curvature cars (MEB ID.3) never use NNLC; missing weights must not
+  # block fingerprinting, and a fuzzy VW substitute must not look like a match.
+  if CP.steerControlType in (structs.CarParams.SteerControlType.angle,
+                             structs.CarParams.SteerControlType.curvature):
     return MOCK_MODEL_PATH, "MOCK", False
   if not os.path.isdir(TORQUE_NN_MODEL_PATH):
     return MOCK_MODEL_PATH, "MOCK", False
@@ -66,7 +68,8 @@ def get_nn_model_path(CP: structs.CarParams) -> tuple[str, str, bool]:
 
       exact_match = False
 
-  if CP.steerControlType == structs.CarParams.SteerControlType.angle:
+  if CP.steerControlType in (structs.CarParams.SteerControlType.angle,
+                             structs.CarParams.SteerControlType.curvature):
     model_path = MOCK_MODEL_PATH
 
   model_name = os.path.splitext(os.path.basename(model_path))[0]

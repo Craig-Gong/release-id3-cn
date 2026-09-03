@@ -90,18 +90,19 @@ class Controls(ControlsExt):
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
-    # Update Torque Params (torque racks only; MEB curvature has no LaC.extension)
-    if self.CP.lateralTuning.which() == 'torque' and hasattr(self.LaC, 'extension'):
+    # NNLC lives on LatControlTorque.extension. MEB is LatControlCurvature:
+    # CarParams can still say torque (stale/NNLC) while LaC has no extension.
+    # Gate on the live controller, not lateralTuning.which().
+    ext = getattr(self.LaC, "extension", None)
+    if ext is not None:
       torque_params = self.sm['lateralTorqueParameters']
       if self.sm.all_checks(['lateralTorqueParameters']) and torque_params.useParams:
         self.LaC.update_torque_parameters(torque_params.latAccelFactorFiltered, torque_params.latAccelOffsetFiltered,
                                            torque_params.frictionCoefficientFiltered)
-
-        self.LaC.extension.update_limits()
-
-      self.LaC.extension.update_model_v2(self.sm['modelV2'])
-
-      self.LaC.extension.update_lateral_lag(self.lat_delay)
+        ext.update_limits()
+      ext.update_model_v2(self.sm['modelV2'])
+      if hasattr(self, "lat_delay"):
+        ext.update_lateral_lag(self.lat_delay)
 
     long_plan = self.sm['longitudinalPlan']
     model_v2 = self.sm['modelV2']

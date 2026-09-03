@@ -64,7 +64,8 @@ class JunctionHudRenderer(Widget):
     model_stop = False
     hold = False
     try:
-      has_lead = bool(getattr(ui_state.sm["radarState"].leadOne, "status", False))
+      lead = ui_state.sm["radarState"].leadOne
+      has_lead = bool(getattr(lead, "present", False) or getattr(lead, "status", False))
     except Exception:
       pass
     try:

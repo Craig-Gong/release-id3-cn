@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from openpilot.sunnypilot.nav.hud_copy import LANE_LEFT, LANE_RIGHT, TURN_LEFT, TURN_RIGHT
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot
 
 _TURN_LEFT = {1, 12, 16, 17, 18}
@@ -153,11 +154,11 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
 def lane_hint(snap: NavSnapshot) -> str:
   rec = (snap.lane_recommend or "none").lower()
   if rec == "left":
-    return "靠左车道"
+    return LANE_LEFT
   if rec == "right":
-    return "靠右车道"
+    return LANE_RIGHT
   if snap.send_turn and snap.maneuver_dir == "left":
-    return "前方左转"
+    return TURN_LEFT
   if snap.send_turn and snap.maneuver_dir == "right":
-    return "前方右转"
+    return TURN_RIGHT
   return ""
