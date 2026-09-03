@@ -23,6 +23,17 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 BIG_UI = gui_app.big_ui()
 
 
+def _log_ui_crash(exc: BaseException) -> None:
+  try:
+    import traceback
+    with open("/tmp/ui_crash.log", "a", encoding="utf-8") as f:
+      f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + type(exc).__name__ + "\n")
+      f.write(traceback.format_exc())
+      f.write("\n")
+  except OSError:
+    pass
+
+
 def main():
   try:
     from setproctitle import setproctitle
@@ -63,6 +74,16 @@ def main():
       msg.uiDebug.frameTimeMillis = frame_time * 1000
       pm.send('uiDebug', msg)
 
+  try:
+    with open("/tmp/ui_crash.log", "a", encoding="utf-8") as f:
+      f.write(time.strftime("%Y-%m-%d %H:%M:%S render loop exited\n"))
+  except OSError:
+    pass
+
 
 if __name__ == "__main__":
-  main()
+  try:
+    main()
+  except Exception as exc:
+    _log_ui_crash(exc)
+    raise

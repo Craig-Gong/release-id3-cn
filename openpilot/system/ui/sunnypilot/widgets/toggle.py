@@ -7,7 +7,7 @@ See the LICENSE.md file in the root directory for more details.
 from collections.abc import Callable
 
 import pyray as rl
-from openpilot.common.params import Params
+from openpilot.common.params import Params, UnknownKeyName
 from openpilot.system.ui.lib.application import MousePos
 from openpilot.system.ui.widgets.toggle import Toggle
 from openpilot.system.ui.sunnypilot.lib.styles import style
@@ -21,7 +21,10 @@ class ToggleSP(Toggle):
     self.param_key = param
     self.params = Params()
     if self.param_key:
-      initial_state = self.params.get_bool(self.param_key)
+      try:
+        initial_state = self.params.get_bool(self.param_key)
+      except UnknownKeyName:
+        pass
     Toggle.__init__(self, initial_state, callback)
 
   def set_rect(self, rect: rl.Rectangle):
@@ -30,7 +33,10 @@ class ToggleSP(Toggle):
   def _handle_mouse_release(self, mouse_pos: MousePos):
     super()._handle_mouse_release(mouse_pos)
     if self._enabled and self.param_key:
-      self.params.put_bool(self.param_key, self._state)
+      try:
+        self.params.put_bool(self.param_key, self._state)
+      except UnknownKeyName:
+        pass
 
   def _render(self, rect: rl.Rectangle):
     self.update()

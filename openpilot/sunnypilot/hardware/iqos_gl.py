@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import socket
 import sys
+from array import array
 from pathlib import Path
 
 # magic.py is smooth because IQ.OS /usr/local/venv raylib dlopens
@@ -48,6 +50,42 @@ def gl_renderer() -> str:
     return ""
 
 
+def take_magic_drm_fd() -> None:
+  """Borrow /dev/dri/card0 from IQ.OS magic.py so InitWindow is not a second GBM master."""
+  if os.environ.get("DRM_FD"):
+    try:
+      os.fstat(int(os.environ["DRM_FD"]))
+      return
+    except (OSError, ValueError):
+      os.environ.pop("DRM_FD", None)
+  sock_path = "/tmp/drmfd.sock"
+  if not os.path.exists(sock_path):
+    return
+  client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+  client.settimeout(2.0)
+  try:
+    client.connect(sock_path)
+    _data, anc, _flags, _addr = client.recvmsg(1, socket.CMSG_LEN(array("i").itemsize))
+    fds = array("i")
+    for level, typ, data in anc:
+      if level == socket.SOL_SOCKET and typ == socket.SCM_RIGHTS:
+        fds.frombytes(data[:array("i").itemsize])
+    if not fds:
+      return
+    try:
+      client.send(b"x")
+    except OSError:
+      pass
+    os.environ["DRM_FD"] = str(int(fds[0]))
+  except OSError:
+    pass
+  finally:
+    try:
+      client.close()
+    except OSError:
+      pass
+
+
 def _strip_abgr_shim() -> None:
   preload = os.environ.get("LD_PRELOAD", "")
   if not preload:
@@ -69,7 +107,10 @@ def _mark_fail(path: Path, text: str) -> None:
 def should_use_native_raylib() -> bool:
   if not is_iqos() or os.getenv("IQOS_NATIVE_RAYLIB") == "0":
     return False
-  if _NATIVE_FAIL.exists() or not _IQOS_RAYLIB_SO.is_file():
+  # A leftover fail stamp from a colliding UI start must not pin us to
+  # Mesa: that path cannot take IQ.OS magic.py's DRM master and leaves
+  # the boot logo up. Retry native unless explicitly disabled.
+  if not _IQOS_RAYLIB_SO.is_file():
     return False
   return True
 
@@ -80,6 +121,8 @@ def apply_iqos_gl_env() -> None:
     return
 
   os.environ["LIBGL_ALWAYS_SOFTWARE"] = "0"
+  if os.environ.get("IQOS_EGL_REEXEC") == "1":
+    take_magic_drm_fd()
   if os.getenv("IQOS_EGL_ADRENO") != "1" or _FAIL.exists():
     return
 
@@ -120,13 +163,6 @@ def load_iqos_native_raylib() -> bool:
   if not should_use_native_raylib():
     return False
   if os.environ.get("IQOS_EGL_REEXEC") != "1":
-    return False
-  if _NATIVE_TRYING.exists():
-    _mark_fail(_NATIVE_FAIL, "IQ.OS raylib InitWindow died; using comma Mesa\n")
-    try:
-      _NATIVE_TRYING.unlink(missing_ok=True)
-    except OSError:
-      pass
     return False
 
   site = str(_IQOS_SITE)
