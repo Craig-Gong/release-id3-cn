@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+# IQ.OS: load the Adreno raylib from /usr/local/venv before pyray/application.
+try:
+  from openpilot.sunnypilot.hardware.iqos_gl import (
+    apply_iqos_gl_env, load_iqos_native_raylib, reexec_if_needed)
+  apply_iqos_gl_env()
+  reexec_if_needed()
+  load_iqos_native_raylib()
+except Exception:
+  pass
+
 import os
 import time
 
@@ -14,6 +24,16 @@ BIG_UI = gui_app.big_ui()
 
 
 def main():
+  try:
+    from setproctitle import setproctitle
+    setproctitle("openpilot.selfdrive.ui.ui")
+  except Exception:
+    pass
+  try:
+    messaging.reset_context()
+  except Exception:
+    pass
+
   cores = {5, }
   # above plannerd and radard
   config_realtime_process(0, Priority.CTRL_HIGH)

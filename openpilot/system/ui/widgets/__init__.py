@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import time
 import pyray as rl
 from enum import IntEnum
 from typing import Protocol, TypeVar
@@ -53,6 +54,10 @@ class Widget(abc.ABC):
     self._click_callback: Callable[[], None] | None = None
     self._multi_touch = False
     self.__was_awake = True
+    # Ignore touch events that started before this widget became visible.
+    # At low FPS a tap can contain press+release in one frame; opening
+    # settings would otherwise hit the overlapping close button immediately.
+    self._input_gate_t: float = 0.0
 
   @property
   def rect(self) -> rl.Rectangle:
@@ -152,6 +157,8 @@ class Widget(abc.ABC):
     touch_valid = self._touch_valid()
 
     for mouse_event in gui_app.mouse_events:
+      if self._input_gate_t and mouse_event.t <= self._input_gate_t:
+        continue
       if not self._multi_touch and mouse_event.slot != 0:
         continue
 
@@ -229,6 +236,7 @@ class Widget(abc.ABC):
 
   def show_event(self):
     """Called when widget becomes visible. Propagates to registered children."""
+    self._input_gate_t = time.monotonic()
     if DEBUG:
       print(f"{'  ' * Widget._show_hide_depth}show_event: {type(self).__name__}")
       Widget._show_hide_depth += 1

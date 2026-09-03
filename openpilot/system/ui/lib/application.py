@@ -23,6 +23,7 @@ from openpilot.system.ui.lib.multilang import FONT_FALLBACK_LANGUAGES, TRANSLATI
 from openpilot.common.realtime import Ratekeeper
 
 from openpilot.system.ui.sunnypilot.lib.application import GuiApplicationExt
+from openpilot.sunnypilot.hardware.iqos_gl import gl_renderer, is_iqos, note_init_window_ok
 
 _DEFAULT_FPS = int(os.getenv("FPS", {'tizi': 20}.get(HARDWARE.get_device_type(), 60)))
 FPS_LOG_INTERVAL = 5  # Seconds between logging FPS drops
@@ -223,6 +224,10 @@ class GuiApplication(GuiApplicationExt):
     self._scaled_height = int(self._height * self._scale)
     self._scaled_width += self._scaled_width % 2
     self._scaled_height += self._scaled_height % 2
+    # _draw_scale may drop below _scale on IQ.OS llvmpipe (half-res RT, native window).
+    self._draw_scale = self._scale
+    self._rt_width = self._scaled_width
+    self._rt_height = self._scaled_height
 
     self._render_texture: rl.RenderTexture | None = None
     self._burn_in_shader: rl.Shader | None = None
@@ -285,18 +290,31 @@ class GuiApplication(GuiApplicationExt):
       signal.signal(signal.SIGINT, _close)
       atexit.register(self.close)
 
-      flags = rl.ConfigFlags.FLAG_MSAA_4X_HINT
+      # 4x MSAA at 2160x1080 on IQ.OS software fallback (or a630) stalls the UI.
+      flags = 0 if is_iqos() else rl.ConfigFlags.FLAG_MSAA_4X_HINT
       if ENABLE_VSYNC:
         flags |= rl.ConfigFlags.FLAG_VSYNC_HINT
       rl.set_config_flags(flags)
 
       rl.init_window(self._scaled_width, self._scaled_height, title)
+      note_init_window_ok()
 
-      needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD
+      if is_iqos():
+        renderer = gl_renderer()
+        cloudlog.info(f"GL_RENDERER {renderer}")
+        # Native DRM window stays 2160x1080; draw UI at half res and blit.
+        if "llvmpipe" in renderer.lower() or "softpipe" in renderer.lower():
+          self._draw_scale = 0.5
+          self._rt_width = int(self._scaled_width * self._draw_scale)
+          self._rt_height = int(self._scaled_height * self._draw_scale)
+          self._rt_width += self._rt_width % 2
+          self._rt_height += self._rt_height % 2
+
+      needs_render_texture = self._draw_scale != 1.0 or BURN_IN_MODE or RECORD
       if self._scale != 1.0:
         rl.set_mouse_scale(1 / self._scale, 1 / self._scale)
       if needs_render_texture:
-        self._render_texture = rl.load_render_texture(self._scaled_width, self._scaled_height)
+        self._render_texture = rl.load_render_texture(self._rt_width, self._rt_height)
         rl.set_texture_filter(self._render_texture.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
 
       if RECORD:
@@ -477,7 +495,8 @@ class GuiApplication(GuiApplicationExt):
       return self._textures[cache_key]
 
     with as_file(ASSETS_DIR.joinpath(asset_path)) as fspath:
-      image_obj = self._load_image_from_path(fspath.as_posix(), width, height, alpha_premultiply, keep_aspect_ratio, flip_x)
+      image_path = Path(fspath).resolve().as_posix()
+      image_obj = self._load_image_from_path(image_path, width, height, alpha_premultiply, keep_aspect_ratio, flip_x)
       texture_obj = self._load_texture_from_image(image_obj)
 
     # Set logical size so widget layout math stays at 1x coordinates
@@ -492,6 +511,13 @@ class GuiApplication(GuiApplicationExt):
                             alpha_premultiply: bool = False, keep_aspect_ratio: bool = True, flip_x: bool = False) -> rl.Image:
     """Load and resize an image, storing it for later automatic unloading."""
     image = rl.load_image(image_path)
+
+    if image.width <= 0 or image.height <= 0:
+      cloudlog.error(f"failed to load image {image_path} ({image.width}x{image.height})")
+      w = max(int(width or 1), 1)
+      h = max(int(height or 1), 1)
+      rl.unload_image(image)
+      image = rl.gen_image_color(w, h, rl.BLANK)
 
     if alpha_premultiply:
       rl.image_alpha_premultiply(image)
@@ -629,9 +655,9 @@ class GuiApplication(GuiApplicationExt):
           rl.begin_drawing()
           rl.clear_background(rl.BLACK)
 
-        if self._scale != 1.0:
+        if self._draw_scale != 1.0:
           rl.rl_push_matrix()
-          rl.rl_scalef(self._scale, self._scale, 1.0)
+          rl.rl_scalef(self._draw_scale, self._draw_scale, 1.0)
 
         # Allow a Widget to still run a function regardless of the stack depth
         for tick in self._nav_stack_ticks:
@@ -645,14 +671,14 @@ class GuiApplication(GuiApplicationExt):
         cpu_time = time.monotonic() - frame_start
         yield True, frame_time, cpu_time
 
-        if self._scale != 1.0:
+        if self._draw_scale != 1.0:
           rl.rl_pop_matrix()
 
         if self._render_texture:
           rl.end_texture_mode()
           rl.begin_drawing()
           rl.clear_background(rl.BLACK)
-          src_rect = rl.Rectangle(0, 0, float(self._scaled_width), -float(self._scaled_height))
+          src_rect = rl.Rectangle(0, 0, float(self._rt_width), -float(self._rt_height))
           dst_rect = rl.Rectangle(0, 0, float(self._scaled_width), float(self._scaled_height))
           texture = self._render_texture.texture
           if texture:
@@ -731,9 +757,10 @@ class GuiApplication(GuiApplicationExt):
         unifont = font_weight_file == FontWeight.UNIFONT
         codepoints = sorted(map(ord, unifont_chars if unifont else base_chars))
         codepoint_buffer = rl.ffi.new("int[]", codepoints)
-        font = rl.load_font_ex((fspath / font_weight_file).as_posix(), 16 if unifont else 200,
+        raster = 16 if unifont else (80 if is_iqos() else 200)
+        font = rl.load_font_ex((fspath / font_weight_file).as_posix(), raster,
                                rl.ffi.cast("int *", codepoint_buffer), len(codepoints))
-        if font_weight_file != FontWeight.UNIFONT:
+        if font_weight_file != FontWeight.UNIFONT and not is_iqos():
           rl.gen_texture_mipmaps(font.texture)
           rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
         self._fonts[font_weight_file] = font
@@ -760,7 +787,7 @@ class GuiApplication(GuiApplicationExt):
     rl.draw_text_ex = _draw_text_ex_scaled
 
   def _patch_scissor_mode(self):
-    if self._scale == 1.0:
+    if self._draw_scale == 1.0:
       return
 
     if not hasattr(rl, "_orig_begin_scissor_mode"):
@@ -768,8 +795,8 @@ class GuiApplication(GuiApplicationExt):
 
     def _begin_scissor_mode_scaled(x, y, width, height):
       return rl._orig_begin_scissor_mode(
-        int(x * self._scale), int(y * self._scale),
-        int(math.ceil(width * self._scale)), int(math.ceil(height * self._scale)))
+        int(x * self._draw_scale), int(y * self._draw_scale),
+        int(math.ceil(width * self._draw_scale)), int(math.ceil(height * self._draw_scale)))
 
     rl.begin_scissor_mode = _begin_scissor_mode_scaled
 

@@ -20,6 +20,15 @@ from openpilot.common.swaglog import cloudlog
 
 def launcher(proc: str, name: str) -> None:
   try:
+    # UI child must set EGL env and re-exec before pyray loads libEGL (IQ.OS).
+    if name == "ui":
+      try:
+        from openpilot.sunnypilot.hardware.iqos_gl import apply_iqos_gl_env, reexec_if_needed
+        apply_iqos_gl_env()
+        reexec_if_needed()
+      except Exception:
+        pass
+
     # import the process
     mod = importlib.import_module(proc)
 

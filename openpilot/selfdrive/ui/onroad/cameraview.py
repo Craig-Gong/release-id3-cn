@@ -95,15 +95,16 @@ class CameraView(Widget):
 
     self._placeholder_color: rl.Color | None = None
 
-    # Initialize EGL for zero-copy rendering on COMMA_HARDWARE
+    # Initialize EGL for zero-copy rendering on COMMA_HARDWARE.
+    # IQ.OS 4.9 may not expose eglGetCurrentDisplay to a second libEGL load;
+    # fail soft so offroad UI can still take the screen.
     if COMMA_HARDWARE:
-      if not init_egl():
-        raise RuntimeError("Failed to initialize EGL")
-
-      # Create a 1x1 pixel placeholder texture for EGL image binding
-      temp_image = rl.gen_image_color(1, 1, rl.BLACK)
-      self.egl_texture = rl.load_texture_from_image(temp_image)
-      rl.unload_image(temp_image)
+      if init_egl():
+        temp_image = rl.gen_image_color(1, 1, rl.BLACK)
+        self.egl_texture = rl.load_texture_from_image(temp_image)
+        rl.unload_image(temp_image)
+      else:
+        cloudlog.error("EGL zero-copy unavailable; onroad camera view disabled")
 
     ui_state.add_offroad_transition_callback(self._offroad_transition)
 

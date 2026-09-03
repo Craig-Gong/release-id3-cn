@@ -24,6 +24,12 @@ def has_cabin_camera() -> bool:
   if os.getenv("USE_WEBCAM"):
     return True
   try:
+    with open("/data/hardware_profile", encoding="utf-8") as f:
+      if f.read().strip() == "c3xl":
+        return False
+  except OSError:
+    pass
+  try:
     count = 0
     for name_path in glob.glob("/sys/class/video4linux/v4l-subdev*/name"):
       with open(name_path, encoding="utf-8") as f:

@@ -9,7 +9,6 @@ import subprocess
 from panda import Panda, PandaDFU, PandaProtocolMismatch, McuType, FW_PATH
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
-from openpilot.common.hardware import HARDWARE
 from openpilot.common.swaglog import cloudlog
 
 from openpilot.sunnypilot.selfdrive.pandad.rivian_long_flasher import flash_rivian_long
@@ -43,9 +42,11 @@ def flash_panda(panda_serial: str):
   if panda.bootstub:
     bootstub_version = panda.get_version()
     cloudlog.info(f"Flashed firmware not booting, flashing development bootloader. {bootstub_version=}, {internal_panda=}")
+    # C3XL: recover() pulls BOOT0 and erases sectors 0+1. Do not DFU the internal panda.
     if internal_panda:
-      HARDWARE.recover_internal_panda()
-    panda.recover(reset=(not internal_panda))
+      cloudlog.warning("internal panda still bootstub; skip DFU recover")
+    else:
+      panda.recover(reset=True)
     cloudlog.info("Done flashing bootstub")
 
   if panda.bootstub:
@@ -104,17 +105,15 @@ def main() -> None:
   while not do_exit:
     try:
       cloudlog.event("pandad.flash_and_connect", count=count)
-      if (count % 2) == 0:
-        HARDWARE.reset_internal_panda()
-      else:
-        HARDWARE.recover_internal_panda()
+      # C3XL: never BOOT0/DFU (erases a working stub). GPIO-reset only if nobody answers.
+      if not Panda.list():
+        # empty-list GPIO reset every 2s wedges C3XL clock_init; wait instead
+        time.sleep(5)
       count += 1
 
-      # Flash all Pandas in DFU mode
+      # Flash all Pandas in DFU mode (external only). Internal recover wipes flash.
       for serial in PandaDFU.list():
-        cloudlog.info(f"Panda in DFU mode found, flashing recovery {serial}")
-        PandaDFU(serial).recover()
-        time.sleep(1)
+        cloudlog.info(f"Panda in DFU mode found, skip recover on C3XL {serial}")
 
       panda_serials = Panda.list()
       if len(panda_serials):
@@ -127,7 +126,9 @@ def main() -> None:
         cloudlog.info(f"{len(panda_serials)} panda found, connecting - {panda_serials}")
         flash_panda(panda_serials[0])
 
-        # run real pandad
+        # IQ panda FW does not set ignitionCan from MEB 0x3C0. C++ pandad then
+        # treats the car as off and forces NO_OUTPUT. STARTED spoofs ignition_line.
+        os.environ['STARTED'] = '1'
         os.environ['MANAGER_DAEMON'] = 'pandad'
         process = subprocess.Popen(["./pandad"], cwd=os.path.join(BASEDIR, "openpilot/selfdrive/pandad"))
         process.wait()

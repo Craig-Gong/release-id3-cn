@@ -185,6 +185,10 @@ if arch == "comma_arm64":
   arch_flags = ["-D__COMMA_HARDWARE__", "-mcpu=cortex-a57"]
   env.Append(CCFLAGS=arch_flags)
   env.Append(CXXFLAGS=arch_flags)
+  # IQ.OS lacks AGNOS sysroot camera UAPI; evo/mr-one vendors them here.
+  _linux_inc = os.path.join(Dir("#").abspath, "third_party/linux/include")
+  if os.path.isdir(_linux_inc):
+    env.Prepend(CPPPATH=[_linux_inc])
 elif arch == "Darwin":
   env.Append(LIBPATH=[
     "/System/Library/Frameworks/OpenGL.framework/Libraries",

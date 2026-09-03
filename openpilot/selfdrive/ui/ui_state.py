@@ -11,6 +11,7 @@ from openpilot.common.realtime import drop_realtime
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
 from openpilot.system.ui.lib.application import gui_app
+from openpilot.sunnypilot.hardware.iqos_gl import is_iqos
 from openpilot.common.hardware import HARDWARE, PC
 from openpilot.selfdrive.modeld.helpers import chestnut_compiled
 
@@ -293,7 +294,13 @@ class Device(DeviceSP):
       return ui_state.custom_interactive_timeout
 
     ignition_timeout = 10 if gui_app.big_ui() else 5
-    return ignition_timeout if ui_state.ignition else 30
+    offroad_timeout = 30
+    # IQ.OS currently falls back to CPU llvmpipe (~2 FPS). The stock 10s
+    # ignition timeout closes settings before touch events catch up.
+    if is_iqos():
+      ignition_timeout = 60
+      offroad_timeout = 120
+    return ignition_timeout if ui_state.ignition else offroad_timeout
 
   def _reset_interactive_timeout(self) -> None:
     self._interaction_time = time.monotonic() + self.interactive_timeout

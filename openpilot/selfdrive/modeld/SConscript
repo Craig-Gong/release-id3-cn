@@ -10,6 +10,15 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.modeld.helpers import TG_INPUT_DEVICES_PATH, chestnut_present, modeld_pkl_path
 
 
+def skip_dmonitoring() -> bool:
+  # IQ.OS enumerates unused CSI slots as cam-sensor-driver, so count>=3 is wrong.
+  try:
+    with open("/data/hardware_profile", encoding="utf-8") as f:
+      return f.read().strip() == "c3xl"
+  except OSError:
+    return False
+
+
 CAMERA_CONFIGS = [
   (_ar_ox_fisheye.width, _ar_ox_fisheye.height),  # tici: 1928x1208
   (_os_fisheye.width, _os_fisheye.height),        # mici: 1344x760
@@ -80,8 +89,15 @@ if not os.getenv('SKIP_TINYGRAD_COMPILE'):
     file_prefix, cmd_flags = ('big_', chestnut_tg_flags) if chestnut else ('big_' if os.getenv('BIG_INTO_SMALL') else '', tg_flags)
     driving_onnx_deps = get_existing_chunks(File(f"models/{file_prefix}driving_supercombo.onnx").abspath)
     camera_res_args = ' '.join(f'{cw}x{ch}' for cw, ch in CAMERA_CONFIGS)
-    # CPU 7 is isolated with isolcpus on AGNOS, so explicitly pin the compiler to it.
-    taskset = 'taskset -c 7 ' if arch == 'comma_arm64' else ''
+    # CPU 7 is isolated with isolcpus on AGNOS. IQ.OS ssh/scons cpuset is 0-3, so
+    # taskset -c 7 fails with Invalid argument.
+    taskset = ''
+    if arch == 'comma_arm64':
+      try:
+        if 7 in os.sched_getaffinity(0):
+          taskset = 'taskset -c 7 '
+      except (OSError, AttributeError):
+        pass
     cmd = (f'{cmd_flags} {mac_brew_string} {taskset}python3 {modeld_dir}/compile_modeld.py '
           f'--model-size {model_w}x{model_h} '
           f'--camera-resolutions {camera_res_args} '
@@ -113,20 +129,22 @@ if not os.getenv('SKIP_TINYGRAD_COMPILE'):
     if chestnut:
       lenv.SideEffect(chestnut_lock, node)
 
-# get model metadata
-fn = File(f"models/dmonitoring_model").abspath
-script_files = [File(Dir("#openpilot/selfdrive/modeld").File("get_model_metadata.py").abspath)]
-cmd = f'{tg_flags} {mac_brew_string} python3 {Dir("#openpilot/selfdrive/modeld").abspath}/get_model_metadata.py {fn}.onnx'
-lenv.Command(fn + "_metadata.pkl", [fn + ".onnx"] + tinygrad_files + script_files + [tg_devices_node], cmd)
+# C3XL has no cabin camera; skip dmonitoring ONNX parse/compile.
+if not skip_dmonitoring():
+  # get model metadata
+  fn = File(f"models/dmonitoring_model").abspath
+  script_files = [File(Dir("#openpilot/selfdrive/modeld").File("get_model_metadata.py").abspath)]
+  cmd = f'{tg_flags} {mac_brew_string} python3 {Dir("#openpilot/selfdrive/modeld").abspath}/get_model_metadata.py {fn}.onnx'
+  lenv.Command(fn + "_metadata.pkl", [fn + ".onnx"] + tinygrad_files + script_files + [tg_devices_node], cmd)
 
-dm_w, dm_h = DM_INPUT_SIZE
-compile_dm_warp_script = [File(f"{modeld_dir}/compile_dm_warp.py")]
-for cam_w, cam_h in CAMERA_CONFIGS:
-  dm_pkl_path = File(f"models/dm_warp_{cam_w}x{cam_h}_tinygrad.pkl").abspath
-  cmd = (f'{tg_flags} {mac_brew_string} python3 {modeld_dir}/compile_dm_warp.py '
-         f'--camera-resolution {cam_w}x{cam_h} --warp-to {dm_w}x{dm_h} '
-         f'--output {dm_pkl_path}')
-  lenv.Command(dm_pkl_path, tinygrad_files + compile_dm_warp_script + compile_modeld_script + [tg_devices_node], cmd)
+  dm_w, dm_h = DM_INPUT_SIZE
+  compile_dm_warp_script = [File(f"{modeld_dir}/compile_dm_warp.py")]
+  for cam_w, cam_h in CAMERA_CONFIGS:
+    dm_pkl_path = File(f"models/dm_warp_{cam_w}x{cam_h}_tinygrad.pkl").abspath
+    cmd = (f'{tg_flags} {mac_brew_string} python3 {modeld_dir}/compile_dm_warp.py '
+           f'--camera-resolution {cam_w}x{cam_h} --warp-to {dm_w}x{dm_h} '
+           f'--output {dm_pkl_path}')
+    lenv.Command(dm_pkl_path, tinygrad_files + compile_dm_warp_script + compile_modeld_script + [tg_devices_node], cmd)
 
 def tg_compile(flags, model_name):
   pythonpath_string = 'PYTHONPATH="${PYTHONPATH}:' + env.Dir("#tinygrad_repo").abspath + '"'
@@ -143,5 +161,5 @@ def tg_compile(flags, model_name):
      Action(do_chunk, "  [CHUNK] $TARGET")],
   )
 
-if not os.getenv('SKIP_TINYGRAD_COMPILE'):
+if not skip_dmonitoring() and not os.getenv('SKIP_TINYGRAD_COMPILE'):
   tg_compile(tg_flags, 'dmonitoring_model')

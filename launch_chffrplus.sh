@@ -17,6 +17,13 @@ function agnos_init {
   sudo chgrp gpu /dev/adsprpc-smd /dev/ion /dev/kgsl-3d0
   sudo chmod 660 /dev/adsprpc-smd /dev/ion /dev/kgsl-3d0
 
+  # IQ.OS 4.9.x /VERSION is not "19.6". Skip the boot-time updater loop so a
+  # missing network cannot hang launch. The hybrid manifest (15.1 ABL + C3XL
+  # kernel + 19.6 system) is C3XL-safe; run agnos.py --swap after SSH is back.
+  if grep -q '^IQ.OS' /VERSION 2>/dev/null; then
+    return
+  fi
+
   # Check if AGNOS update is required
   if [ $(< /VERSION) != "$AGNOS_VERSION" ]; then
     AGNOS_PY="$DIR/openpilot/common/hardware/comma/agnos.py"
@@ -71,6 +78,19 @@ function launch {
   # handle pythonpath
   ln -sfn $(pwd) /data/pythonpath
   export PYTHONPATH="$PWD"
+
+  # Official AGNOS 19.6 ships comma-deps (including acados) in /usr/local/venv.
+  # IQ.OS 4.9 often has that path without acados; prefer the project uv venv there.
+  if grep -q '^IQ.OS' /VERSION 2>/dev/null && [ -x "$DIR/.venv/bin/python" ]; then
+    export VIRTUAL_ENV="$DIR/.venv"
+    export PATH="$VIRTUAL_ENV/bin:$PATH"
+  elif [ -x /usr/local/venv/bin/python ]; then
+    export VIRTUAL_ENV="/usr/local/venv"
+    export PATH="$VIRTUAL_ENV/bin:$PATH"
+  elif [ -x "$DIR/.venv/bin/python" ]; then
+    export VIRTUAL_ENV="$DIR/.venv"
+    export PATH="$VIRTUAL_ENV/bin:$PATH"
+  fi
 
   # submodule package symlinks for PYTHONPATH imports on device.
   # on PC these come from editable installs via pyproject.toml / uv.
