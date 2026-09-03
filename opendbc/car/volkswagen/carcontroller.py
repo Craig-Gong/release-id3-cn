@@ -48,6 +48,8 @@ class CarController(CarControllerBase):
       self.CCS = pqcan
     elif CP.flags & VolkswagenFlags.MLB:
       self.CCS = mlbcan
+    elif CP.flags & VolkswagenFlags.MEB:
+      self.CCS = mebcan
     else:
       self.CCS = mqbcan
 

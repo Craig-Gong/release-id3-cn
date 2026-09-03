@@ -72,11 +72,6 @@ class CarInterface(CarInterfaceBase):
       if 0x3DC in fingerprint[0]:  # Gateway_73
         ret.flags |= VolkswagenFlags.ALT_GEAR.value
 
-      # MEB stop-and-go: TSK needs a non-zero starting speed or EPB can fault
-      ret.startingState = True
-      ret.startAccel = 1.8
-      ret.vEgoStarting = 0.5
-
       # only allow gateway harness to escalate Emergency Assist
       ret.dashcamOnly = ret.networkLocation == NetworkLocation.fwdCamera and not docs
 
