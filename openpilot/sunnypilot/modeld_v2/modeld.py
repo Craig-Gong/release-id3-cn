@@ -8,15 +8,19 @@ See the LICENSE.md file in the root directory for more details.
 
 import os
 os.environ['GMMU'] = '0'
+from openpilot.common.hardware import COMMA_HARDWARE
+from openpilot.selfdrive.modeld.helpers import chestnut_present, load_oob
+from openpilot.sunnypilot.modeld_v2.egpu_loader import C3XL_MODEL_LOAD_TIMEOUT, configure_default_device, load_with_timeout
+from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
+configure_default_device(COMMA_HARDWARE, c3xl=get_hardware_profile() == HardwareProfile.C3XL)
+
 import numpy as np
-import threading
 import time
 from setproctitle import setproctitle
+from tinygrad.helpers import Context
 from tinygrad.tensor import Tensor
 
 import openpilot.cereal.messaging as messaging
-from openpilot.common.hardware import COMMA_HARDWARE
-from openpilot.selfdrive.modeld.helpers import chestnut_present, load_oob
 from openpilot.cereal import log
 from opendbc.car.structs import car
 from openpilot.cereal.services import SERVICE_LIST
@@ -48,7 +52,7 @@ from openpilot.sunnypilot.models.helpers import get_active_bundle
 from openpilot.sunnypilot.selfdrive.controls.lib.relc import RoadEdgeLaneChangeController
 
 PROCESS_NAME = "openpilot.selfdrive.modeld.modeld_tinygrad"
-BIG_MODEL_TIMEOUT = 60
+BIG_MODEL_TIMEOUT = C3XL_MODEL_LOAD_TIMEOUT
 
 
 def _pkl_exists(path):
@@ -108,7 +112,11 @@ class ModelState(ModelStateBase):
 
   def _init_combined(self, pkl_path, cam_w, cam_h, bundle):
     cloudlog.warning(f"loading combined pkl: {pkl_path}")
-    jits = load_oob(open_file_chunked(pkl_path))
+    if self.chestnut:
+      with Context(DEV="USB+AMD:LLVM"):
+        jits = load_oob(open_file_chunked(pkl_path))
+    else:
+      jits = load_oob(open_file_chunked(pkl_path))
 
     self.WARP_DEV = 'QCOM' if COMMA_HARDWARE else 'CPU'
     self.DEV = 'AMD' if self.chestnut else self.WARP_DEV
@@ -360,19 +368,14 @@ def main(demo=False):
 
   model = None
   if CHESTNUT:
-    big_model = None
     def load_big():
-      nonlocal big_model
-      try:
-        m = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=True)
-        m.warmup()
-        big_model = m
-      except Exception:
-        cloudlog.exception("chestnut load failed")
-    loader = threading.Thread(target=load_big, daemon=True)
-    loader.start()
-    loader.join(BIG_MODEL_TIMEOUT)
-    model = big_model
+      m = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=True)
+      m.warmup()
+      return m
+    try:
+      model = load_with_timeout(load_big, BIG_MODEL_TIMEOUT)
+    except Exception:
+      cloudlog.exception("chestnut load failed")
     params.put_bool("ChestnutActive", model is not None)
 
   small_model = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=False) if model is None or CHESTNUT else None
