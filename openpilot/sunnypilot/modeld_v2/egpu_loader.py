@@ -8,9 +8,9 @@ from collections.abc import Callable, MutableMapping
 # Keep a bounded 44.42 s margin for cold starts and USB scheduling variance.
 C3XL_MODEL_LOAD_TIMEOUT = 120
 C3XL_TINYGRAD_CACHE_HOME = "/data/cache"
-# Suggested PPT for ~126 W car rails (comma chestnut ≈100 W). NOT applied by default:
-# AM_POWER_LIMIT also changes tinygrad clocks (level=None vs max). Match onemiless
-# eGPU boot unless the operator exports AM_POWER_LIMIT explicitly (e.g. 100).
+# C3XL-only PPT trial for ~126 W car rails (comma chestnut ≈100 W). tinygrad
+# getenv("AM_POWER_LIMIT", 0.0) > 0 → SMU SetPptLimit + clocks level=None.
+# Other devices stay onemiless-default (unset → max clocks). Export wins.
 C3XL_AM_POWER_LIMIT_W = "100"
 
 
@@ -26,7 +26,7 @@ def configure_default_device(comma_hardware: bool, environment: MutableMapping[s
     # /home is an ephemeral overlay on C3XL. Keep AMD firmware and compiler
     # caches across reboots so model startup never depends on a live download.
     environment.setdefault("XDG_CACHE_HOME", C3XL_TINYGRAD_CACHE_HOME)
-    # Do not setdefault AM_POWER_LIMIT — keep identical to onemiless/dev-sp-egpu.
+    environment.setdefault("AM_POWER_LIMIT", C3XL_AM_POWER_LIMIT_W)
 
 
 def load_with_timeout[T](load: Callable[[], T], timeout: float) -> T:
