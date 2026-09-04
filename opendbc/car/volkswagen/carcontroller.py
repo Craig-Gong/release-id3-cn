@@ -178,9 +178,22 @@ class CarController(CarControllerBase):
         lead_distance = 0
         if hud_control.leadVisible and self.frame * DT_CTRL > 1.0:
           lead_distance = 8
+        acc_event = 0
+        acc_text = 0
+        try:
+          import json
+          with open("/dev/shm/sp_cluster_hud.json", encoding="utf-8") as _hud:
+            _obj = json.load(_hud)
+          if bool(_obj.get("approaching")):
+            acc_event = 9  # Kreuzung / crossing, never 44/45 or 33/35
+            acc_text = 30
+          elif bool(_obj.get("standstill")):
+            acc_event = 3
+        except Exception:
+          pass
         can_sends.append(mebcan.create_acc_hud_control(self.packer_pt, self.CAN.pt, self.meb_long_state.acc_status, hud_control.setSpeed * CV.MS_TO_KPH,
                                                        hud_control.leadVisible, hud_control.leadDistanceBars, show_distance_bars,
-                                                       lead_distance, fcw_alert))
+                                                       lead_distance, fcw_alert, acc_event, acc_text))
 
       else:
         lead_distance = 0

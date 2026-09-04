@@ -206,7 +206,7 @@ def create_acc_accel_control(packer, bus, CCP, acc_type, acc_enabled, accel, acc
   return commands
 
 
-def create_acc_hud_control(packer, bus, acc_status, set_speed, lead_visible, distance_bars, show_distance_bars, distance, fcw_alert):
+def create_acc_hud_control(packer, bus, acc_status, set_speed, lead_visible, distance_bars, show_distance_bars, distance, fcw_alert, acc_event=0, acc_primary_text=0):
   values = {
     "ACC_Status_ACC":                acc_status,
     "ACC_Tempolimit":                0,
@@ -226,6 +226,8 @@ def create_acc_hud_control(packer, bus, acc_status, set_speed, lead_visible, dis
     "ACC_Standby_Override":          1 if acc_status != ACC_HUD_ACTIVE else 0,
     "Street_Color":                  1 if acc_status in (ACC_HUD_ACTIVE, ACC_HUD_OVERRIDE) else 0, # light grey (1) or dark (0) street
     "Lead_Brightness":               3 if acc_status == ACC_HUD_ACTIVE else 0, # object shows in color
+    "ACC_Events":                    acc_event if not fcw_alert else 0,
+    "ACC_Texte_Primaeranz_02":       acc_primary_text if acc_status in (ACC_HUD_ACTIVE, ACC_HUD_OVERRIDE) and not fcw_alert else 0,
     # TODO: a nice speed dependent bar distance
     "Zeitluecke_1":                  0, # desired distance to lead object for distance bar 1
     "Zeitluecke_2":                  0, # desired distance to lead object for distance bar 2
