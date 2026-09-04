@@ -102,7 +102,18 @@ def test_gpio_edges_use_persistent_fd_without_subprocess(monkeypatch):
   assert write.call_args_list == [call(42, b"1"), call(42, b"0")]
 
 
-def test_standard_profile_never_probes_gpio42(monkeypatch):
+def test_c3xl_muted_buzzer_never_probes_gpio42(monkeypatch):
+  run = Mock()
+  monkeypatch.setattr("openpilot.sunnypilot.system.alert_output.get_hardware_profile",
+                      lambda: HardwareProfile.C3XL)
+  monkeypatch.setattr("openpilot.sunnypilot.system.alert_output.subprocess.run", run)
+  monkeypatch.setattr("openpilot.sunnypilot.system.alert_output.threading.Thread.start", lambda _: None)
+
+  beep = Beepd()
+
+  assert beep.gpio_fd is None
+  run.assert_not_called()
+
   run = Mock()
   monkeypatch.setattr("openpilot.sunnypilot.system.alert_output.get_hardware_profile",
                       lambda: HardwareProfile.STANDARD)
@@ -115,14 +126,13 @@ def test_standard_profile_never_probes_gpio42(monkeypatch):
   run.assert_not_called()
 
 
-def test_c3xl_buzzer_process_is_always_on_without_enable_param(monkeypatch):
+def test_c3xl_buzzer_process_stays_off(monkeypatch):
   params = Mock()
   monkeypatch.setattr(process_config, "PC", False)
   monkeypatch.setattr(process_config, "get_hardware_profile", lambda: HardwareProfile.C3XL, raising=False)
 
-  assert process_config.use_external_buzzer(False, params, Mock())
-  assert process_config.use_external_buzzer(True, params, Mock())
-  params.get_bool.assert_not_called()
+  assert not process_config.use_external_buzzer(False, params, Mock())
+  assert not process_config.use_external_buzzer(True, params, Mock())
 
   monkeypatch.setattr(process_config, "get_hardware_profile", lambda: HardwareProfile.STANDARD)
   assert not process_config.use_external_buzzer(False, params, Mock())

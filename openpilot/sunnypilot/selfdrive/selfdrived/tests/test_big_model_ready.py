@@ -86,7 +86,7 @@ def test_big_model_ready_fires_once_on_loading_completion():
 
 @pytest.mark.parametrize("profile, expected_sound", (
   (HardwareProfile.STANDARD, car.CarControl.HUDControl.AudibleAlert.prompt),
-  (HardwareProfile.C3XL, car.CarControl.HUDControl.AudibleAlert.promptRepeat),
+  (HardwareProfile.C3XL, car.CarControl.HUDControl.AudibleAlert.none),
 ))
 def test_big_model_ready_uses_available_audio_output(monkeypatch, profile, expected_sound):
   monkeypatch.setattr(events_sp_module, "get_hardware_profile", lambda: profile)

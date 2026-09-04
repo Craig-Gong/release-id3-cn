@@ -10,6 +10,8 @@ from openpilot.common.realtime import Ratekeeper
 from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
 
 AudibleAlert = car.CarControl.HUDControl.AudibleAlert
+# C3XL piezo is off. Dispatch stays no-op even if alert_output is started by hand.
+C3XL_BUZZER_ENABLED = False
 BEEP_PULSE_SECONDS = 0.010
 BEEP_GAP_SECONDS = 0.02
 GPIO_PIN = 42
@@ -28,7 +30,7 @@ class Beepd:
     self.worker.start()
     # Never probe an unknown device's GPIO. The manager parameter is only an
     # enable switch; the hardware profile is the compatibility authority.
-    if get_hardware_profile() == HardwareProfile.C3XL:
+    if C3XL_BUZZER_ENABLED and get_hardware_profile() == HardwareProfile.C3XL:
       self.enable_gpio()
 
   def enable_gpio(self):
@@ -91,6 +93,8 @@ class Beepd:
     #self._beep(False)
 
   def dispatch_beep(self, func):
+    if not C3XL_BUZZER_ENABLED:
+      return
     try:
       self.beep_queue.put_nowait(func)
     except queue.Full:

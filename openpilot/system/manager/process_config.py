@@ -87,7 +87,9 @@ def use_copyparty(started, params, CP: car.CarParams) -> bool:
   return bool(params.get_bool("EnableCopyparty"))
 
 def use_external_buzzer(started: bool, params: Params, CP: car.CarParams) -> bool:
-  return not PC and get_hardware_profile() == HardwareProfile.C3XL
+  # C3XL GPIO buzzer is muted (2026-09-04). Keep the process off so GPIO 42
+  # is never exported. Cluster FCW still uses the car speaker.
+  return False
 
 def _param_flag(params: Params, key: str, default: bool = False) -> bool:
   try:

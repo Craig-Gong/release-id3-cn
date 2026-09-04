@@ -80,9 +80,8 @@ def speed_limit_pre_active_alert(CP: car.CarParams, CS: car.CarState, sm: messag
 
 def big_model_ready_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster,
                           metric: bool, soft_disable_time: int, personality) -> Alert:
-  # C3XL has no amplifier. Route this edge notification through its existing
-  # GPIO buzzer while leaving the official audible prompt unchanged elsewhere.
-  audible_alert = AudibleAlert.promptRepeat if get_hardware_profile() == HardwareProfile.C3XL else AudibleAlert.prompt
+  # C3XL GPIO buzzer is muted. Keep the HUD text; do not request promptRepeat.
+  audible_alert = AudibleAlert.none if get_hardware_profile() == HardwareProfile.C3XL else AudibleAlert.prompt
   return Alert(
     "Big Model Ready",
     "",
