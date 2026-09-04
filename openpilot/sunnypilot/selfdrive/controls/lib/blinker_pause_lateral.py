@@ -19,15 +19,22 @@ class BlinkerPauseLateral:
     self.min_speed = 0
     self.reengage_delay = 0
     self.blinker_off_timer = 0.0
+    self.lane_turn_desire = False
 
   def get_params(self) -> None:
     self.enabled = self.params.get_bool("BlinkerPauseLateralControl")
     self.is_metric = self.params.get_bool("IsMetric")
     self.min_speed = self.params.get("BlinkerMinLateralControlSpeed", return_default=True)
     self.reengage_delay = self.params.get("BlinkerLateralReengageDelay", return_default=True)
+    self.lane_turn_desire = self.params.get_bool("LaneTurnDesire")
 
   def update(self, CS: car.CarState, DT_CTRL: float = 0.01) -> bool:
     if not self.enabled:
+      return False
+
+    # Low-speed intersection turns need lateral; don't pause in the turn-desire window
+    if self.lane_turn_desire and CS.vEgo < 45 * CV.KPH_TO_MS:
+      self.blinker_off_timer = 0.0
       return False
 
     one_blinker = CS.leftBlinker != CS.rightBlinker

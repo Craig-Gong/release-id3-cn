@@ -18,8 +18,38 @@ from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 
 
+def close_inherited_params_lock() -> None:
+  """Drop forked /data/params/.lock fds.
+
+  manager may fork while FileLock is held. flock is not recursive across
+  a second fd, so the child then deadlocks on Params() — IQ.OS stays on
+  the boot logo.
+  """
+  try:
+    names = os.listdir("/proc/self/fd")
+  except OSError:
+    return
+  for name in names:
+    try:
+      fd = int(name)
+    except ValueError:
+      continue
+    if fd < 3:
+      continue
+    try:
+      target = os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
+      continue
+    if target.endswith("/params/.lock"):
+      try:
+        os.close(fd)
+      except OSError:
+        pass
+
+
 def launcher(proc: str, name: str) -> None:
   try:
+    close_inherited_params_lock()
     # import the process
     mod = importlib.import_module(proc)
 
@@ -46,6 +76,7 @@ def launcher(proc: str, name: str) -> None:
 
 def nativelauncher(pargs: list[str], cwd: str, name: str) -> None:
   os.environ['MANAGER_DAEMON'] = name
+  close_inherited_params_lock()
 
   # exec the process
   os.chdir(cwd)

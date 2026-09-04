@@ -70,8 +70,12 @@ def c3xl_local_diagnostics(started: bool, params: Params, CP: car.CarParams) -> 
   return started and get_hardware_profile() == HardwareProfile.C3XL
 
 def record_route_video(started: bool, params: Params, CP: car.CarParams) -> bool:
-  return (get_hardware_profile() != HardwareProfile.C3XL and
-          started and params.get_bool("RecordRoadVideo"))
+  if get_hardware_profile() == HardwareProfile.C3XL:
+    return False
+  try:
+    return started and params.get_bool("RecordRoadVideo")
+  except Exception:
+    return started
 
 def only_offroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return not started
@@ -82,11 +86,20 @@ def livestream(started: bool, params: Params, CP: car.CarParams) -> bool:
 def use_copyparty(started, params, CP: car.CarParams) -> bool:
   return bool(params.get_bool("EnableCopyparty"))
 
-def use_device_console(started: bool, params: Params, CP: car.CarParams) -> bool:
-  return not PC
-
 def use_external_buzzer(started: bool, params: Params, CP: car.CarParams) -> bool:
   return not PC and get_hardware_profile() == HardwareProfile.C3XL
+
+def _param_flag(params: Params, key: str, default: bool = False) -> bool:
+  try:
+    return bool(params.get_bool(key))
+  except Exception:
+    return default
+
+def iqlink_needed(started, params: Params, CP: car.CarParams) -> bool:
+  return _param_flag(params, "IqlinkEnabled", True)
+
+def ecoflow_needed(started, params: Params, CP: car.CarParams) -> bool:
+  return _param_flag(params, "EcoflowEnabled", False)
 
 def sunnylink_ready_shim(started, params, CP: car.CarParams) -> bool:
   """Shim for sunnylink_ready to match the process manager signature."""
@@ -118,10 +131,22 @@ def uploader_ready(started: bool, params: Params, CP: car.CarParams) -> bool:
   return always_run(started, params, CP)
 
 def or_(*fns):
-  return lambda *args: operator.or_(*(fn(*args) for fn in fns))
+  def _or(*args):
+    for fn in fns:
+      if fn(*args):
+        return True
+    return False
+  return _or
 
 def and_(*fns):
-  return lambda *args: operator.and_(*(fn(*args) for fn in fns))
+  # operator.and_ evaluates every operand. Offroad that still ran is_stock_model
+  # (USB/params) before ui in the process list and left IQ.OS on the boot logo.
+  def _and(*args):
+    for fn in fns:
+      if not fn(*args):
+        return False
+    return True
+  return _and
 
 def not_(*fns):
   return lambda *args: operator.not_(*(fn(*args) for fn in fns))
@@ -167,7 +192,6 @@ procs = [
   PythonProcess("ubloxd", "openpilot.system.ubloxd.ubloxd", ublox, enabled=COMMA_HARDWARE),
   PythonProcess("pigeond", "openpilot.system.ubloxd.pigeond", ublox, enabled=COMMA_HARDWARE),
   PythonProcess("plannerd", "openpilot.selfdrive.controls.plannerd", not_long_maneuver),
-  PythonProcess("trafficcontrold", "openpilot.sunnypilot.selfdrive.traffic_control.trafficcontrold", only_onroad),
   PythonProcess("maneuversd", "openpilot.tools.longitudinal_maneuvers.maneuversd", long_maneuver),
   PythonProcess("lateral_maneuversd", "openpilot.tools.lateral_maneuvers.lateral_maneuversd", lat_maneuver),
   PythonProcess("radard", "openpilot.selfdrive.controls.radard", only_onroad),
@@ -193,7 +217,6 @@ procs = [
 procs += [
   # Optional C3XL integrations are isolated processes; disabling them restores
   # the upstream process graph and control behavior.
-  PythonProcess("device_console", "openpilot.selfdrive.debug.device_console", use_device_console),
   PythonProcess("alert_output", "openpilot.sunnypilot.system.alert_output", use_external_buzzer),
   PythonProcess("chestnut_statusd", "openpilot.system.hardware.chestnut.statusd", only_offroad),
 
@@ -210,6 +233,10 @@ procs += [
 
   # locationd
   NativeProcess("locationd_llk", "openpilot/sunnypilot/selfdrive/locationd", ["./locationd"], only_onroad),
+
+  # IQ-link BLE + EcoFlow 12V (never cycle 12V while chestnut SuperSpeed)
+  PythonProcess("iqlinkd", "openpilot.sunnypilot.nav.iqlinkd", iqlink_needed),
+  PythonProcess("ecoflowd", "openpilot.sunnypilot.system.ecoflow.daemon", ecoflow_needed),
 ]
 
 if os.path.exists("../../sunnypilot/sunnylink/uploader.py"):

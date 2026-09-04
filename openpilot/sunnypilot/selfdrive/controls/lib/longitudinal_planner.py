@@ -5,12 +5,21 @@ This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
 
+import time
+
 from openpilot.cereal import messaging, custom
 from opendbc.car import structs
 from openpilot.common.constants import CV
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX
 from openpilot.sunnypilot.selfdrive.controls.lib.dec.dec import DynamicExperimentalController
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import junction_stop_active
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_soft_curve import nav_soft_curve_ms
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import follow_lead_present
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import StandstillHold, apply_follow_launch
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
+from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable, write_cluster_hud
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_resolver import SpeedLimitResolver
@@ -32,13 +41,16 @@ class LongitudinalPlannerSP:
     self.generation = int(model_bundle.generation) if (model_bundle := get_active_bundle()) else None
     self.source = LongitudinalPlanSource.cruise
     self.e2e_alerts_helper = E2EAlertsHelper()
+    self.turn_prep = UrbanTurnPrep()
+    self.traffic_stop_offset = TrafficStopOffset()
+    self.standstill_hold = StandstillHold()
 
     self.output_v_target = 0.
     self.output_a_target = 0.
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
     experimental_mode = sm['selfdriveState'].experimentalMode
-    if not self.dec.active():
+    if self.dec is None or not self.dec.active():
       return experimental_mode
 
     return experimental_mode and self.dec.mode() == "blended"
@@ -71,7 +83,81 @@ class LongitudinalPlannerSP:
 
     self.source = min(targets, key=lambda k: targets[k][0])
     self.output_v_target, self.output_a_target = targets[self.source]
+    prep_v = self._turn_prep_speed(sm, v_ego, long_enabled)
+    if prep_v is not None:
+      self.output_v_target = min(float(self.output_v_target), float(prep_v))
+    snap = read_snapshot()
+    if snapshot_executable(snap):
+      curve = nav_soft_curve_ms(snap, v_ego)
+      if curve is not None:
+        self.output_v_target = min(float(self.output_v_target), float(curve))
+      if snap.stop_for_light:
+        self.output_v_target = min(float(self.output_v_target), float(snap.speed_target))
+        self.output_a_target = min(float(self.output_a_target), float(snap.accel_target))
     return self.output_v_target, self.output_a_target
+
+  def _turn_prep_speed(self, sm: messaging.SubMaster, v_ego: float, enabled: bool) -> float | None:
+    try:
+      CS = sm['carState']
+      model = sm['modelV2']
+    except Exception:
+      return None
+    posted = float(self.resolver.speed_limit or 0.0)
+    try:
+      path_x = model.position.x
+      path_y = model.position.y
+    except Exception:
+      path_x, path_y = None, None
+    try:
+      lane_change_state = model.meta.laneChangeState
+    except Exception:
+      lane_change_state = 0
+    return self.turn_prep.update(
+      v_ego=float(v_ego),
+      enabled=bool(enabled),
+      left_blinker=bool(CS.leftBlinker),
+      right_blinker=bool(CS.rightBlinker),
+      gas_pressed=bool(CS.gasPressed),
+      steering_angle_deg=float(CS.steeringAngleDeg or 0.0),
+      posted_limit_ms=posted,
+      lane_change_state=lane_change_state,
+      path_x=path_x,
+      path_y=path_y,
+    )
+
+  def apply_stop_helpers(self, sm: messaging.SubMaster, v_ego: float, a_target: float,
+                         should_stop: bool) -> tuple[float, bool]:
+    try:
+      CS = sm['carState']
+      model = sm['modelV2']
+      lead = sm['radarState'].leadOne
+    except Exception:
+      return a_target, should_stop
+    has_lead = follow_lead_present(sm) or bool(getattr(lead, "present", False))
+    model_stop = bool(getattr(model.action, "shouldStop", False))
+    self.traffic_stop_offset.update()
+    a_target, should_stop = self.traffic_stop_offset.adjust(
+      a_target, should_stop, v_ego, model,
+      stop_light=model_stop, has_lead=has_lead, right_blinker=bool(CS.rightBlinker),
+    )
+    snap = read_snapshot()
+    if snapshot_executable(snap) and snap.stop_for_light:
+      a_target = min(float(a_target), float(snap.accel_target))
+      if snap.speed_target <= 0.05:
+        should_stop = True
+    should_stop, a_target = self.standstill_hold.apply(
+      should_stop, a_target, v_ego,
+      standstill=bool(CS.standstill), gas=bool(CS.gasPressed), model_stop=model_stop,
+      sm=sm, now=time.monotonic(),
+    )
+    a_target = apply_follow_launch(sm, v_ego, a_target)
+    approaching = junction_stop_active(
+      has_lead=has_lead, nav_red=bool(snap.stop_for_light), model_stop=model_stop,
+      standstill_hold=self.standstill_hold.hold, light=snap.light_token,
+    )
+    write_cluster_hud(approaching=approaching and not bool(CS.standstill),
+                      standstill=bool(CS.standstill) and approaching)
+    return a_target, should_stop
 
   def update(self, sm: messaging.SubMaster) -> None:
     self.events_sp.clear()
@@ -80,10 +166,13 @@ class LongitudinalPlannerSP:
 
   def _update_backend(self, sm: messaging.SubMaster) -> None:
     """Backend extension point; the upstream provider keeps DEC unchanged."""
-    self.dec.update(sm)
+    if self.dec is not None:
+      self.dec.update(sm)
 
   def _publish_backend_state(self, longitudinal_plan_sp) -> None:
     """Publish backend-specific diagnostics without forking the common plan."""
+    if self.dec is None:
+      return
     dec = longitudinal_plan_sp.dec
     dec.state = DecState.blended if self.dec.mode() == 'blended' else DecState.acc
     dec.enabled = self.dec.enabled()

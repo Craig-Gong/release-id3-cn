@@ -10,7 +10,7 @@ from openpilot.cereal import log
 import openpilot.cereal.messaging as messaging
 import openpilot.system.sentry as sentry
 from openpilot.common.utils import atomic_write
-from openpilot.common.params import Params, ParamKeyFlag
+from openpilot.common.params import Params, ParamKeyFlag, UnknownKeyName
 from openpilot.common.text_window import TextWindow
 from openpilot.common.hardware import HARDWARE, PC
 from openpilot.system.manager.helpers import unblock_stdout, save_bootlog
@@ -27,8 +27,13 @@ from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_
 
 def apply_local_recording_policy(params: Params) -> None:
   """C3XL records structured route logs but never continuous road video."""
-  if get_hardware_profile() == HardwareProfile.C3XL:
+  if get_hardware_profile() != HardwareProfile.C3XL:
+    return
+  try:
     params.put_bool("RecordRoadVideo", False, block=True)
+  except UnknownKeyName:
+    # IQ.OS prebuilt libparams does not include this key yet.
+    cloudlog.warning("RecordRoadVideo missing in prebuilt params; skip")
 
 
 def manager_init() -> None:

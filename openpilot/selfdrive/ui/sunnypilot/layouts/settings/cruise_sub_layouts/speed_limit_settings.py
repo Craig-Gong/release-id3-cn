@@ -122,7 +122,11 @@ class SpeedLimitSettingsLayout(Widget):
 
   @staticmethod
   def _get_offset_label(value):
-    offset_type = int(ui_state.params.get("SpeedLimitOffsetType", return_default=True))
+    offset_type_raw = ui_state.params.get("SpeedLimitOffsetType", return_default=True)
+    try:
+      offset_type = int(offset_type_raw) if offset_type_raw is not None else 0
+    except (TypeError, ValueError):
+      offset_type = 0
     unit = tr("km/h") if ui_state.is_metric else tr("mph")
 
     if offset_type == int(SpeedLimitOffsetType.percentage):

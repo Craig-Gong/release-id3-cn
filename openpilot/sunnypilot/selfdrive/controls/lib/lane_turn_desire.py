@@ -11,7 +11,7 @@ from openpilot.common.params import Params
 
 TurnDirection = custom.ModelDataV2SP.TurnDirection
 
-LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
+LANE_CHANGE_SPEED_MIN = 45 * CV.KPH_TO_MS
 
 
 class LaneTurnController:
@@ -34,9 +34,11 @@ class LaneTurnController:
     self.param_read_counter += 1
 
   def update_lane_turn(self, blindspot_left: bool, blindspot_right: bool, left_blinker: bool, right_blinker: bool, v_ego: float) -> None:
-    if left_blinker and not right_blinker and v_ego < self.lane_turn_value and not blindspot_left:
+    # Turn vs lane-change split is fixed at 45 km/h (same as DesireHelper). Do not let LaneTurnValue open a 40–45 gap.
+    below_turn_speed = v_ego < LANE_CHANGE_SPEED_MIN
+    if left_blinker and not right_blinker and below_turn_speed and not blindspot_left:
       self.turn_direction = TurnDirection.turnLeft
-    elif right_blinker and not left_blinker and v_ego < self.lane_turn_value and not blindspot_right:
+    elif right_blinker and not left_blinker and below_turn_speed and not blindspot_right:
       self.turn_direction = TurnDirection.turnRight
     else:
       self.turn_direction = TurnDirection.none

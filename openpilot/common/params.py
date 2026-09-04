@@ -153,7 +153,10 @@ class Params:
     return _copy_string(params_get_default(self.p, key))
 
   def get(self, key, block=False, return_default=False):
-    k = self.check_key(key)
+    try:
+      k = self.check_key(key)
+    except UnknownKeyName:
+      return None
     t = self.get_type(k)
     default = self._default(k) if return_default else None
     value = _copy_string(params_get(self.p, k, block))
@@ -164,22 +167,35 @@ class Params:
     return self._cpp2python(t, value, default, key)
 
   def get_bool(self, key, block=False):
-    return bool(params_get_bool(self.p, self.check_key(key), block))
+    try:
+      return bool(params_get_bool(self.p, self.check_key(key), block))
+    except UnknownKeyName:
+      return False
 
   def _put_cast(self, key, dat):
     return ensure_bytes(self.python2cpp(type(dat), self.get_type(key), dat, key))
 
   def put(self, key, dat, block=False):
     """Write a parameter. block=True waits until it is persisted to disk."""
-    k = self.check_key(key)
+    try:
+      k = self.check_key(key)
+    except UnknownKeyName:
+      cloudlog.warning(f"skip unknown param {key}")
+      return
     value = self._put_cast(k, dat)
     params_put(self.p, k, value, len(value), block)
 
   def put_bool(self, key, val, block=False):
-    params_put_bool(self.p, self.check_key(key), val, block)
+    try:
+      params_put_bool(self.p, self.check_key(key), val, block)
+    except UnknownKeyName:
+      cloudlog.warning(f"skip unknown param {key}")
 
   def remove(self, key):
-    params_remove(self.p, self.check_key(key))
+    try:
+      params_remove(self.p, self.check_key(key))
+    except UnknownKeyName:
+      cloudlog.warning(f"skip unknown param {key}")
 
   def get_param_path(self, key=""):
     key = ensure_bytes(key)
