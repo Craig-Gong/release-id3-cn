@@ -11,8 +11,8 @@ import os
 import time
 from pathlib import Path
 
-from cereal import log
-from cereal import messaging
+from openpilot.cereal import log
+import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog

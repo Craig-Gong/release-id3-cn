@@ -47,13 +47,13 @@ def test_standard_profile_preserves_alternating_reset_recover() -> None:
   assert (io.resets, io.recovers) == (1, 1)
 
 
-def test_c3xl_waits_for_slow_application_without_recovery() -> None:
-  io = FakePandaStartupIO(states=[{}] * 20 + [{"spi": False}])
+def test_c3xl_live_app_skips_gpio_reset_and_dfu() -> None:
+  io = FakePandaStartupIO(states=[{"spi": False}])
   startup = PandaStartup(io, HardwareProfile.C3XL)
 
   assert startup.prepare(0, lambda: False) == PandaStartupResult.APP_READY
-  assert io.now == 10.0
-  assert (io.resets, io.recovers) == (1, 0)
+  assert io.now == 0.0
+  assert (io.resets, io.recovers) == (0, 0)
 
 
 def test_c3xl_bootstub_is_returned_to_firmware_flash_path() -> None:
@@ -61,31 +61,22 @@ def test_c3xl_bootstub_is_returned_to_firmware_flash_path() -> None:
   startup = PandaStartup(io, HardwareProfile.C3XL)
 
   assert startup.prepare(0, lambda: False) == PandaStartupResult.BOOTSTUB_READY
-  assert io.now == startup.C3XL_APP_TIMEOUT_S
-  assert (io.resets, io.recovers) == (1, 0)
+  assert io.now == 0.0
+  assert (io.resets, io.recovers) == (0, 0)
 
 
-def test_c3xl_recovers_only_after_application_timeout() -> None:
+def test_c3xl_empty_list_waits_then_resets_without_recover() -> None:
   io = FakePandaStartupIO(states=[])
   startup = PandaStartup(io, HardwareProfile.C3XL)
 
-  assert startup.prepare(0, lambda: False) == PandaStartupResult.RECOVER_AFTER_TIMEOUT
-  assert io.now == startup.C3XL_APP_TIMEOUT_S + startup.C3XL_RECOVERY_SETTLE_S
-  assert (io.resets, io.recovers) == (1, 1)
+  assert startup.prepare(0, lambda: False) == PandaStartupResult.RESET
+  assert io.now == 5.0
+  assert (io.resets, io.recovers) == (0, 0)
 
 
-def test_c3xl_wait_is_interruptible() -> None:
-  io = FakePandaStartupIO(states=[])
+def test_c3xl_enumeration_error_does_not_recover() -> None:
+  io = FakePandaStartupIO(states=[{"spi": False}], enumeration_errors=1)
   startup = PandaStartup(io, HardwareProfile.C3XL)
 
-  assert startup.prepare(0, lambda: io.now >= 2.0) == PandaStartupResult.INTERRUPTED
-  assert io.now == 2.0
-  assert (io.resets, io.recovers) == (1, 0)
-
-
-def test_c3xl_tolerates_transient_enumeration_errors() -> None:
-  io = FakePandaStartupIO(states=[{}, {}, {"spi": False}], enumeration_errors=2)
-  startup = PandaStartup(io, HardwareProfile.C3XL)
-
-  assert startup.prepare(0, lambda: False) == PandaStartupResult.APP_READY
-  assert (io.resets, io.recovers) == (1, 0)
+  assert startup.prepare(0, lambda: False) == PandaStartupResult.RESET
+  assert (io.resets, io.recovers) == (0, 0)

@@ -55,41 +55,19 @@ class PandaStartup:
       self.io.recover_internal()
       return PandaStartupResult.RECOVER
 
-    self.io.reset_internal()
-    deadline = self.io.monotonic() + self.C3XL_APP_TIMEOUT_S
-    last_bootstub_visible = False
-
-    while self.io.monotonic() < deadline:
-      if should_exit():
-        return PandaStartupResult.INTERRUPTED
-
-      last_bootstub_visible = False
+    # Live internal panda: do not GPIO-reset (clock_init deadlock) or DFU-recover
+    # (erases sectors 0+1). Wait if the list is empty instead of recover().
+    try:
+      serials = self.io.list_internal()
+    except Exception:
+      serials = []
+    for serial in serials:
       try:
-        serials = self.io.list_internal()
+        if not self.io.is_bootstub(serial):
+          return PandaStartupResult.APP_READY
       except Exception:
-        serials = []
-      for serial in serials:
-        try:
-          if self.io.is_bootstub(serial):
-            last_bootstub_visible = True
-          else:
-            return PandaStartupResult.APP_READY
-        except Exception:
-          continue
-
-      remaining = deadline - self.io.monotonic()
-      self.io.sleep(min(self.C3XL_POLL_INTERVAL_S, max(0.0, remaining)))
-
-    if should_exit():
-      return PandaStartupResult.INTERRUPTED
-    if last_bootstub_visible:
+        continue
+    if serials:
       return PandaStartupResult.BOOTSTUB_READY
-
-    self.io.recover_internal()
-    recovery_deadline = self.io.monotonic() + self.C3XL_RECOVERY_SETTLE_S
-    while self.io.monotonic() < recovery_deadline:
-      if should_exit():
-        return PandaStartupResult.INTERRUPTED
-      remaining = recovery_deadline - self.io.monotonic()
-      self.io.sleep(min(self.C3XL_POLL_INTERVAL_S, max(0.0, remaining)))
-    return PandaStartupResult.RECOVER_AFTER_TIMEOUT
+    self.io.sleep(5.0)
+    return PandaStartupResult.RESET

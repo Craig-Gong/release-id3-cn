@@ -51,9 +51,11 @@ def flash_panda(panda_serial: str):
   if panda.bootstub:
     bootstub_version = panda.get_version()
     cloudlog.info(f"Flashed firmware not booting, flashing development bootloader. {bootstub_version=}, {internal_panda=}")
+    # C3XL: recover() pulls BOOT0 and erases sectors 0+1. Do not DFU the internal panda.
     if internal_panda:
-      HARDWARE.recover_internal_panda()
-    panda.recover(reset=(not internal_panda))
+      cloudlog.warning("internal panda still bootstub; skip DFU recover")
+    else:
+      panda.recover(reset=True)
     cloudlog.info("Done flashing bootstub")
 
   if panda.bootstub:
@@ -119,11 +121,9 @@ def main() -> None:
       if startup_result == PandaStartupResult.INTERRUPTED:
         break
 
-      # Flash all Pandas in DFU mode
+      # Flash all Pandas in DFU mode (external only). Internal recover wipes flash.
       for serial in PandaDFU.list():
-        cloudlog.info(f"Panda in DFU mode found, flashing recovery {serial}")
-        PandaDFU(serial).recover()
-        time.sleep(1)
+        cloudlog.info(f"Panda in DFU mode found, skip recover on C3XL {serial}")
 
       panda_serials = Panda.list()
       if len(panda_serials):
