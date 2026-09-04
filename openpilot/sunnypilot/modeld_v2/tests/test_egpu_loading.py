@@ -31,12 +31,16 @@ class TestEgpuLoading(unittest.TestCase):
     configure_default_device(True, environment, c3xl=True)
     self.assertEqual(environment["XDG_CACHE_HOME"], "/custom/cache")
 
-  def test_does_not_force_am_power_limit_by_default(self):
-    # Keep eGPU boot identical to onemiless/dev-sp-egpu unless operator exports it.
+  def test_sets_am_power_limit_only_on_c3xl(self):
+    environment = {}
+    configure_default_device(True, environment)
+    self.assertNotIn("AM_POWER_LIMIT", environment)
+
     environment = {}
     configure_default_device(True, environment, c3xl=True)
-    self.assertNotIn("AM_POWER_LIMIT", environment)
-    self.assertEqual(C3XL_AM_POWER_LIMIT_W, "100")
+    self.assertEqual(environment["AM_POWER_LIMIT"], C3XL_AM_POWER_LIMIT_W)
+    # tinygrad: getenv("AM_POWER_LIMIT", 0.0) > 0 → SetPptLimit(watts).
+    self.assertGreater(float(environment["AM_POWER_LIMIT"]), 0.0)
 
     environment = {"AM_POWER_LIMIT": "90"}
     configure_default_device(True, environment, c3xl=True)
