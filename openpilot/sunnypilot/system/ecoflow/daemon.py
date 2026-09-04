@@ -202,8 +202,12 @@ class EcoflowDaemon:
 
       if not _enabled(self.params):
         if self.recover.active:
+          cloudlog.warning("ecoflowd: EcoFlow disabled during GPU recover")
           self.recover.cancel()
           clear_recover_request(self.params)
+          if self.kl15:
+            # Leave the rail on if ignition is up — do not strand chestnut at 0 V.
+            self._set_dc(True, reason="ecoflow disabled during recover")
         rk.keep_time()
         continue
 
