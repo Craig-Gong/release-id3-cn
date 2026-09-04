@@ -8,6 +8,9 @@ from openpilot.cereal import custom
 
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import (
+  _path_lateral_m, _path_matches_blinker, _steer_into_blinker,
+)
 
 TurnDirection = custom.ModelDataV2SP.TurnDirection
 
@@ -40,15 +43,30 @@ class LaneTurnController:
       self.read_params()
     self.param_read_counter += 1
 
-  def update_lane_turn(self, blindspot_left: bool, blindspot_right: bool, left_blinker: bool, right_blinker: bool, v_ego: float) -> None:
+  def update_lane_turn(self, blindspot_left: bool, blindspot_right: bool, left_blinker: bool, right_blinker: bool,
+                       v_ego: float, path_x=None, path_y=None, steering_angle_deg: float = 0.0) -> None:
     # Turn vs lane-change split is fixed at 45 km/h (same as DesireHelper). Do not let LaneTurnValue open a 40–45 gap.
+    # Blinker below 45 is not enough: a straight multi-lane road is a lane change
+    # (Nudgeless still applies) until the path/steering actually turns.
     below_turn_speed = v_ego < LANE_CHANGE_SPEED_MIN
-    if left_blinker and not right_blinker and below_turn_speed and not blindspot_left:
-      self.turn_direction = TurnDirection.turnLeft
-    elif right_blinker and not left_blinker and below_turn_speed and not blindspot_right:
-      self.turn_direction = TurnDirection.turnRight
-    else:
+    left = bool(left_blinker) and not bool(right_blinker) and below_turn_speed and not blindspot_left
+    right = bool(right_blinker) and not bool(left_blinker) and below_turn_speed and not blindspot_right
+    if not left and not right:
       self.turn_direction = TurnDirection.none
+      return
+
+    lat_m = _path_lateral_m(path_x, path_y)
+    if lat_m is not None:
+      path_turn = _path_matches_blinker(lat_m, left, right)
+      steer_turn = _steer_into_blinker(float(steering_angle_deg), left, right)
+      if not (path_turn or steer_turn):
+        self.turn_direction = TurnDirection.none
+        return
+
+    if left:
+      self.turn_direction = TurnDirection.turnLeft
+    else:
+      self.turn_direction = TurnDirection.turnRight
 
   def get_turn_direction(self):
     if not self.enabled:

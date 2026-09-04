@@ -69,10 +69,48 @@ class TestLaneTurnDesire(OpenpilotTestCase):
     controller.update_lane_turn(False, True, True, False, v_ego)
     assert controller.get_turn_direction() == expected
 
+  def test_straight_path_is_not_a_turn(self):
+    dh = DesireHelper()
+    controller = LaneTurnController(dh)
+    controller.enabled = True
+    xs, ys = _path(0.0)
+    controller.update_lane_turn(False, False, True, False, 10.0, path_x=xs, path_y=ys, steering_angle_deg=0.0)
+    assert controller.get_turn_direction() == TurnDirection.none
+
+  def test_curved_path_is_a_turn(self):
+    dh = DesireHelper()
+    controller = LaneTurnController(dh)
+    controller.enabled = True
+    xs, ys = _path(3.5)
+    controller.update_lane_turn(False, False, True, False, 10.0, path_x=xs, path_y=ys, steering_angle_deg=0.0)
+    assert controller.get_turn_direction() == TurnDirection.turnLeft
+    xs, ys = _path(-3.5)
+    controller.update_lane_turn(False, False, False, True, 10.0, path_x=xs, path_y=ys, steering_angle_deg=0.0)
+    assert controller.get_turn_direction() == TurnDirection.turnRight
+
+  def test_steering_into_blinker_is_a_turn(self):
+    dh = DesireHelper()
+    controller = LaneTurnController(dh)
+    controller.enabled = True
+    xs, ys = _path(0.0)
+    controller.update_lane_turn(False, False, True, False, 10.0, path_x=xs, path_y=ys, steering_angle_deg=25.0)
+    assert controller.get_turn_direction() == TurnDirection.turnLeft
+
+
+def _path(y_far=0.0, n=33, xs_max=60.0):
+  xs = [i * (xs_max / (n - 1)) for i in range(n)]
+  ys = []
+  for x in xs:
+    if x < 12.0:
+      ys.append(0.0)
+    else:
+      ys.append(float(y_far) * min(1.0, (x - 12.0) / 20.0))
+  return xs, ys
+
 
 class DummyCarState:
   def __init__(self, vEgo=0, leftBlinker=False, rightBlinker=False, leftBlindspot=False, rightBlindspot=False,
-               steeringPressed=False, steeringTorque=0, brakePressed=False):
+               steeringPressed=False, steeringTorque=0, brakePressed=False, steeringAngleDeg=0):
     self.vEgo = vEgo
     self.leftBlinker = leftBlinker
     self.rightBlinker = rightBlinker
@@ -81,6 +119,7 @@ class DummyCarState:
     self.steeringPressed = steeringPressed
     self.steeringTorque = steeringTorque
     self.brakePressed = brakePressed
+    self.steeringAngleDeg = steeringAngleDeg
 
 
 def set_lane_turn_params():
@@ -122,3 +161,23 @@ class TestDesireHelperIntegration(OpenpilotTestCase):
     assert dh.lane_change_state == LaneChangeState.preLaneChange
     assert dh.lane_change_direction == LaneChangeDirection.left
     assert dh.desire == log.Desire.none
+
+  def test_urban_straight_blinker_is_nudged_lane_change(self, set_lane_turn_params):
+    dh = DesireHelper()
+    dh.alc.lane_change_set_timer = AutoLaneChangeMode.NUDGE
+    xs, ys = _path(0.0)
+    carstate = DummyCarState(vEgo=10, leftBlinker=True, steeringPressed=True, steeringTorque=1, steeringAngleDeg=0)
+    for _ in range(10):
+      dh.update(carstate, True, 1.0, path_x=xs, path_y=ys)
+    assert dh.lane_turn_direction == TurnDirection.none
+    assert dh.desire == log.Desire.laneChangeLeft
+
+  def test_urban_nudgeless_lane_change(self, set_lane_turn_params):
+    dh = DesireHelper()
+    dh.alc.lane_change_set_timer = AutoLaneChangeMode.NUDGELESS
+    xs, ys = _path(0.0)
+    carstate = DummyCarState(vEgo=10, leftBlinker=True, steeringPressed=False, steeringTorque=0, steeringAngleDeg=0)
+    for _ in range(20):
+      dh.update(carstate, True, 1.0, path_x=xs, path_y=ys)
+    assert dh.lane_turn_direction == TurnDirection.none
+    assert dh.desire == log.Desire.laneChangeLeft
