@@ -1,19 +1,17 @@
 import os
 import threading
 from collections.abc import Callable, MutableMapping
-from typing import TypeVar
 
-# Measured on C3XL (onemiless/dev-sp-egpu, 2026-08-29):
+
+# Measured on the C3XL/UT3G device on 2026-08-29:
 # LM 71.50 s, BMV3 73.54 s, TT 74.66 s, BMV2 75.58 s.
-# 120 s keeps a margin for cold starts and USB scheduling.
+# Keep a bounded 44.42 s margin for cold starts and USB scheduling variance.
 C3XL_MODEL_LOAD_TIMEOUT = 120
 C3XL_TINYGRAD_CACHE_HOME = "/data/cache"
-# Cap chestnut GPU PPT for car 12V rails.
-# Comma chestnut ≈100 W; 9060 XT 8GB TBP 150 W; Delta 3 12V = 126 W. PPT 100
-# matches designed Lebowski budget with rail headroom. Raise after AC→12V ≥20 A.
+# Suggested PPT for ~126 W car rails (comma chestnut ≈100 W). NOT applied by default:
+# AM_POWER_LIMIT also changes tinygrad clocks (level=None vs max). Match onemiless
+# eGPU boot unless the operator exports AM_POWER_LIMIT explicitly (e.g. 100).
 C3XL_AM_POWER_LIMIT_W = "100"
-
-T = TypeVar("T")
 
 
 class EgpuModelLoadError(RuntimeError):
@@ -25,13 +23,13 @@ def configure_default_device(comma_hardware: bool, environment: MutableMapping[s
   if comma_hardware:
     environment.setdefault("DEV", "QCOM")
   if c3xl:
-    # /home is an ephemeral overlay on C3XL. Keep AMD firmware/compiler caches.
+    # /home is an ephemeral overlay on C3XL. Keep AMD firmware and compiler
+    # caches across reboots so model startup never depends on a live download.
     environment.setdefault("XDG_CACHE_HOME", C3XL_TINYGRAD_CACHE_HOME)
-    # PPT limit → SMU auto-downclocks under load; set AM_POWER_LIMIT before import to override.
-    environment.setdefault("AM_POWER_LIMIT", C3XL_AM_POWER_LIMIT_W)
+    # Do not setdefault AM_POWER_LIMIT — keep identical to onemiless/dev-sp-egpu.
 
 
-def load_with_timeout(load: Callable[[], T], timeout: float) -> T:
+def load_with_timeout[T](load: Callable[[], T], timeout: float) -> T:
   result: list[T] = []
   error: list[Exception] = []
   done = threading.Event()
