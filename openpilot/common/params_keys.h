@@ -308,6 +308,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"IqlinkBleLinkState", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"IqlinkBleConnected", {CLEAR_ON_MANAGER_START, BOOL, "0"}},
     {"EcoflowEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
+    // One-shot: parked EcoFlow 12V OFF→ON to wake chestnut GPU (ecoflowd).
+    {"EcoflowGpuRecover", {CLEAR_ON_MANAGER_START, BOOL, "0"}},
     {"PlanplusControl", {PERSISTENT | BACKUP, FLOAT, "1.0"}},
 
     // mapd

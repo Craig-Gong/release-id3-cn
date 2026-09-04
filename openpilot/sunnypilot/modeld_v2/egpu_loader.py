@@ -8,6 +8,12 @@ from collections.abc import Callable, MutableMapping
 # Keep a bounded 44.42 s margin for cold starts and USB scheduling variance.
 C3XL_MODEL_LOAD_TIMEOUT = 120
 C3XL_TINYGRAD_CACHE_HOME = "/data/cache"
+# Cap chestnut GPU PPT for car 12V rails.
+# Comma chestnut budget ≈100 W; AMD RX 9060 XT 8GB TBP 150 W; Delta 3 12V = 126 W
+# (12.6 V×10 A). PPT 100 leaves headroom for dock/losses/transients while matching
+# the designed Lebowski operating point. Raise (e.g. 130) only after AC→12V ≥20 A.
+# tinygrad AMDev reads AM_POWER_LIMIT at AMD boot (USB eGPU included).
+C3XL_AM_POWER_LIMIT_W = "100"
 
 
 class EgpuModelLoadError(RuntimeError):
@@ -22,6 +28,8 @@ def configure_default_device(comma_hardware: bool, environment: MutableMapping[s
     # /home is an ephemeral overlay on C3XL. Keep AMD firmware and compiler
     # caches across reboots so model startup never depends on a live download.
     environment.setdefault("XDG_CACHE_HOME", C3XL_TINYGRAD_CACHE_HOME)
+    # PPT limit → SMU auto-downclocks under load; override with AM_POWER_LIMIT=0 to disable.
+    environment.setdefault("AM_POWER_LIMIT", C3XL_AM_POWER_LIMIT_W)
 
 
 def load_with_timeout[T](load: Callable[[], T], timeout: float) -> T:
