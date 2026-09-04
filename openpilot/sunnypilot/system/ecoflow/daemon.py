@@ -68,8 +68,12 @@ def _load_creds_into_env() -> None:
       os.environ[env] = val
 
 
-def _network_up(network_type: int) -> bool:
-  return network_type != log.DeviceState.NetworkType.none
+def _network_up(network_type) -> bool:
+  # capnp enums are not int(); comparing to the cereal none value is enough.
+  try:
+    return network_type != log.DeviceState.NetworkType.none
+  except Exception:
+    return False
 
 
 class EcoflowDaemon:
@@ -199,6 +203,7 @@ class EcoflowDaemon:
     return True
 
   def run(self) -> None:
+    cloudlog.info("ecoflowd start")
     sm = messaging.SubMaster(["can", "deviceState", "selfdriveState", "carState"])
     rk = Ratekeeper(2)
     while True:
@@ -222,11 +227,10 @@ class EcoflowDaemon:
         self.kl15, self.last_on_ts, saw = meb_ignition_from_can(packets, now, self.last_on_ts)
         self.saw_can = self.saw_can or saw
 
-      net = 0
       try:
-        net = int(sm["deviceState"].networkType)
+        net = sm["deviceState"].networkType
       except Exception:
-        pass
+        net = log.DeviceState.NetworkType.none
 
       if _network_up(net):
         self._session()
