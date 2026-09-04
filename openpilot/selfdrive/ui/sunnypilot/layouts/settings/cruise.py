@@ -9,7 +9,7 @@ from enum import IntEnum
 from openpilot.selfdrive.ui.sunnypilot.layouts.settings.cruise_sub_layouts.speed_limit_settings import SpeedLimitSettingsLayout
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.system.ui.sunnypilot.widgets.list_view import toggle_item_sp, option_item_sp, simple_button_item_sp
+from openpilot.system.ui.sunnypilot.widgets.list_view import toggle_item_sp, option_item_sp, simple_button_item_sp, button_item_sp
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 
@@ -108,8 +108,14 @@ class CruiseLayout(Widget):
 
     self.ecoflow_toggle = toggle_item_sp(
       title=tr("EcoFlow 12V"),
-      description=tr("Delta 3 12V DC follows KL15. Delayed off after ignition. Never pulses 12V while chestnut is SuperSpeed. Credentials in /data/ecoflow_params/."),
+      description=tr("Delta 3 12V DC follows KL15; delayed off after lock. While parked, use Recover eGPU to pulse 12V (USB stays). Never pulses while engaged. Credentials in /data/ecoflow_params/."),
       param="EcoflowEnabled")
+
+    self.ecoflow_recover_btn = button_item_sp(
+      title=tr("Recover eGPU"),
+      button_text=lambda: tr("RECOVER"),
+      description=tr("Parked only: EcoFlow 12V off ~15 s then on. Use when chestnut hangs or eGPU drops after READY. Requires EcoFlow 12V enabled."),
+      callback=self._on_ecoflow_gpu_recover)
 
     items = [
       self.icbm_toggle,
@@ -123,6 +129,7 @@ class CruiseLayout(Widget):
       self.traffic_stop_offset,
       self.iqlink_toggle,
       self.ecoflow_toggle,
+      self.ecoflow_recover_btn,
       self.sla_settings_button,
     ]
     return items
@@ -223,3 +230,11 @@ class CruiseLayout(Widget):
     self.custom_acc_long_increment.set_visible(state)
     self.custom_acc_short_increment.action_item.set_enabled(self.custom_acc_toggle.action_item.enabled)
     self.custom_acc_long_increment.action_item.set_enabled(self.custom_acc_toggle.action_item.enabled)
+
+  def _on_ecoflow_gpu_recover(self):
+    from openpilot.sunnypilot.system.ecoflow.recover import request_recover
+    request_recover()
+    try:
+      ui_state.params.put_bool("EcoflowGpuRecover", True, block=True)
+    except Exception:
+      pass
