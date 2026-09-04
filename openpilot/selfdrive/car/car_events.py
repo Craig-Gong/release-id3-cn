@@ -170,8 +170,12 @@ class CarEvents:
       else:
         self.no_steer_warning = False
 
+        # VW MEB: P→D / EPS HCA init sets steerFaultTemporary at standstill.
+        # Keep lateral gated, but don't toast or send cluster laneAssistTakeOver.
+        if self.CP.brand == 'volkswagen' and CS.standstill and not CS.cruiseState.enabled:
+          self.silent_steer_warning = True
         # if the user overrode recently, show a less harsh alert
-        if self.silent_steer_warning or CS.standstill or self.steering_unpressed < int(1.5 / DT_CTRL):
+        elif self.silent_steer_warning or CS.standstill or self.steering_unpressed < int(1.5 / DT_CTRL):
           self.silent_steer_warning = True
           events.add(EventName.steerTempUnavailableSilent)
         else:
