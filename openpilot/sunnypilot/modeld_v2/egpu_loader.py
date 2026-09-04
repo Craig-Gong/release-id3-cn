@@ -8,9 +8,12 @@ from collections.abc import Callable, MutableMapping
 # Keep a bounded 44.42 s margin for cold starts and USB scheduling variance.
 C3XL_MODEL_LOAD_TIMEOUT = 120
 C3XL_TINYGRAD_CACHE_HOME = "/data/cache"
-# C3XL-only PPT trial for ~126 W car rails (comma chestnut ≈100 W). tinygrad
-# getenv("AM_POWER_LIMIT", 0.0) > 0 → SMU SetPptLimit + clocks level=None.
-# Other devices stay onemiless-default (unset → max clocks). Export wins.
+# C3XL default PPT (2026-09-04 onroad). Rails are EcoFlow 12V ~126 W and/or
+# cigarette 10 A; comma chestnut ≈100 W. tinygrad getenv("AM_POWER_LIMIT", 0.0)
+# > 0 → SMU SetPptLimit + clocks level=None. Full clocks had a first-frame
+# bulk IN 0x81 timeout; after 100 W + offroad/READY, Lebowski loaded in 15.3 s
+# with ChestnutActive=1 and no fallback. 100 W is the rail cap, not a USB-link
+# fix. Other devices stay unset (max clocks). Export wins.
 C3XL_AM_POWER_LIMIT_W = "100"
 
 

@@ -336,6 +336,7 @@ def main(demo=False):
   CHESTNUT = chestnut_present()
   if CHESTNUT:
     os.environ['HCQDEV_WAIT_TIMEOUT_MS'] = '3000'
+  cloudlog.warning(f"egpu env DEV={os.environ.get('DEV')} AM_POWER_LIMIT={os.environ.get('AM_POWER_LIMIT')} XDG_CACHE_HOME={os.environ.get('XDG_CACHE_HOME')} chestnut={CHESTNUT}")
 
   params = Params()
   params.put_bool("ChestnutLoading", CHESTNUT)
