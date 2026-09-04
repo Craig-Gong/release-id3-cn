@@ -1,8 +1,8 @@
 """Vision red / model-stop offset that does not change lead follow gap.
 
 TrafficStopOffset (meters, 0..6 in 0.5 steps, default 3): when the model
-wants to stop, no lead, and the plan is holding, brake toward a point this
-far short of model.position.x[-1] and hold there.
+wants to stop and there is no lead, brake toward a point this far short of
+model.position.x[-1] and hold there. Larger = stop sooner (before the line).
 """
 from opendbc.car.interfaces import ACCEL_MIN
 from openpilot.common.params import Params, UnknownKeyName
