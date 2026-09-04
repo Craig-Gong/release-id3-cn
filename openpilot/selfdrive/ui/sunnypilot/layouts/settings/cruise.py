@@ -113,9 +113,10 @@ class CruiseLayout(Widget):
 
     self.ecoflow_recover_btn = button_item_sp(
       title=tr("Recover eGPU"),
-      button_text=lambda: tr("RECOVER"),
+      button_text=self._ecoflow_recover_label,
       description=tr("Parked only: EcoFlow 12V off ~15 s then on. Use when chestnut hangs or eGPU drops after READY. Requires EcoFlow 12V enabled."),
-      callback=self._on_ecoflow_gpu_recover)
+      callback=self._on_ecoflow_gpu_recover,
+      enabled=self._ecoflow_recover_enabled)
 
     items = [
       self.icbm_toggle,
@@ -231,7 +232,25 @@ class CruiseLayout(Widget):
     self.custom_acc_short_increment.action_item.set_enabled(self.custom_acc_toggle.action_item.enabled)
     self.custom_acc_long_increment.action_item.set_enabled(self.custom_acc_toggle.action_item.enabled)
 
+  def _ecoflow_enabled(self) -> bool:
+    try:
+      return bool(ui_state.params.get_bool("EcoflowEnabled"))
+    except Exception:
+      return False
+
+  def _ecoflow_recover_busy(self) -> bool:
+    from openpilot.sunnypilot.system.ecoflow.recover import recover_request_pending
+    return recover_request_pending(lambda k: bool(ui_state.params.get_bool(k)))
+
+  def _ecoflow_recover_enabled(self) -> bool:
+    return self._ecoflow_enabled() and not self._ecoflow_recover_busy()
+
+  def _ecoflow_recover_label(self) -> str:
+    return tr("CYCLING") if self._ecoflow_recover_busy() else tr("RECOVER")
+
   def _on_ecoflow_gpu_recover(self):
+    if not self._ecoflow_recover_enabled():
+      return
     from openpilot.sunnypilot.system.ecoflow.recover import request_recover
     request_recover()
     try:
