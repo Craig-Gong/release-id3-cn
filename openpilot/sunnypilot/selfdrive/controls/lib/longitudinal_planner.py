@@ -112,6 +112,7 @@ class LongitudinalPlannerSP:
       lane_change_state = model.meta.laneChangeState
     except Exception:
       lane_change_state = 0
+    big = bool(getattr(model, "big", False))
     return self.turn_prep.update(
       v_ego=float(v_ego),
       enabled=bool(enabled),
@@ -123,6 +124,7 @@ class LongitudinalPlannerSP:
       lane_change_state=lane_change_state,
       path_x=path_x,
       path_y=path_y,
+      big=big,
     )
 
   def apply_stop_helpers(self, sm: messaging.SubMaster, v_ego: float, a_target: float,
