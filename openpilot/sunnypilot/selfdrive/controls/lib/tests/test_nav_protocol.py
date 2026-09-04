@@ -62,14 +62,29 @@ def test_red_view_and_follow_lead():
     snap=snap, green_flash=False,
   )
   assert stop.headline == "红灯"
-  assert "米" in stop.detail
+  assert stop.dist_m == 18 and stop.remain_s == 6
   follow = build_junction_view(
     engaged=True, has_lead=True, model_stop=True, standstill_hold=True,
     snap=snap, green_flash=False,
   )
   assert follow.headline == "跟前车"
+  assert follow.detail == ""
 
 
 def test_lane_hint_left():
   snap = NavSnapshot(lane_recommend="left")
   assert lane_hint(snap) == "靠左车道"
+
+
+def test_lane_guide_separate_from_junction():
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_lane_guide_view
+  snap = NavSnapshot(iqlink_enabled=True, link_ok=True, traffic_light="none",
+                     lane_recommend="left")
+  view = build_junction_view(
+    engaged=True, has_lead=False, model_stop=False, standstill_hold=False,
+    snap=snap, green_flash=False,
+  )
+  lane = build_lane_guide_view(engaged=True, snap=snap)
+  assert view.detail == "等待识别"
+  assert "靠左" not in view.detail
+  assert lane.show and lane.text == "靠左车道" and lane.kind == "left"

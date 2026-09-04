@@ -15,9 +15,22 @@ MAX_X0 = 60
 MAX_Y0 = 45
 LIMIT_GAP = 30
 LIMIT_PAD = 6
-BAR_GAP_BELOW = 14
-BAR_HEIGHT = 84
-LAMP_COL_W = 56
+BAR_GAP_BELOW = 12
+# Taller band (same width) so headline + metric capsules read clearly on-road.
+BAR_HEIGHT = 130
+SIGNAL_W = 52
+SIGNAL_PAD_X = 14
+CONTENT_GAP = 16
+CAPSULE_W = 108
+CAPSULE_H = 44
+CAPSULE_GAP = 8
+CAPSULE_RIGHT_PAD = 16
+# Lane-change / turn guide sits under the junction signal bar.
+# Badge centers on the signal column; title x matches junction headline.
+LANE_GUIDE_GAP = 10
+LANE_GUIDE_HEIGHT = 72
+LANE_BADGE_W = 48  # centered in SIGNAL_W column
+LANE_TEXT_SIZE = 32
 
 
 @dataclass(frozen=True)
@@ -54,3 +67,9 @@ def junction_bar_rect(hud_x: float, hud_y: float, *, metric: bool = True) -> Hud
   limit_r = limit_chip_rect(hud_x, hud_y, metric=metric)
   y = max(max_r.y + max_r.h, limit_r.y + limit_r.h) + BAR_GAP_BELOW
   return HudBand(max_r.x, y, limit_r.right - max_r.x, float(BAR_HEIGHT))
+
+
+def lane_guide_rect(hud_x: float, hud_y: float, *, metric: bool = True) -> HudBand:
+  """Same width as junction bar; sits directly underneath with a small gap."""
+  bar = junction_bar_rect(hud_x, hud_y, metric=metric)
+  return HudBand(bar.x, bar.y + bar.h + LANE_GUIDE_GAP, bar.w, float(LANE_GUIDE_HEIGHT))
