@@ -75,6 +75,16 @@ def test_turn_in_when_path_matches():
   assert abs(v - TURN_IN_MS) < 1e-6
 
 
+def test_big_model_skips_turn_in_cap():
+  helper = _prep()
+  _update(helper, 55.0)
+  xs = [0, 10, 20, 30, 40]
+  ys = [0, 1.0, 2.5, 3.0, 3.2]
+  v = _update(helper, 35.0, path_x=xs, path_y=ys, big=True)
+  assert helper.stage == STAGE_TURN_IN
+  assert v is None
+
+
 def test_gas_releases_cap():
   helper = _prep()
   _update(helper, 55.0)
