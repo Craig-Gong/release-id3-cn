@@ -23,6 +23,7 @@ from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.system.ecoflow.kl15 import chestnut_superspeed_present, meb_ignition_from_can
+from openpilot.sunnypilot.system.ecoflow.status import dc12v_from_telemetry, write_status
 from openpilot.sunnypilot.system.ecoflow.recover import (
   GpuRecoverCycle, RecoverPhase, clear_recover_request, recover_allowed, recover_request_pending,
 )
@@ -202,6 +203,23 @@ class EcoflowDaemon:
       return True
     return True
 
+  def _publish_status(self) -> None:
+    tel = {}
+    mqtt = False
+    if self.session is not None:
+      mqtt = True
+      tel = getattr(self.session, "_telemetry", None) or {}
+    try:
+      write_status(
+        enabled=_enabled(self.params),
+        mqtt=mqtt,
+        dc12v=dc12v_from_telemetry(tel),
+        kl15=self.kl15,
+        want_on=self.want_on,
+      )
+    except Exception:
+      cloudlog.exception("ecoflowd status shm write failed")
+
   def run(self) -> None:
     cloudlog.info("ecoflowd start")
     sm = messaging.SubMaster(["can", "deviceState", "selfdriveState", "carState"])
@@ -219,6 +237,7 @@ class EcoflowDaemon:
           if self.kl15:
             # Leave the rail on if ignition is up — do not strand chestnut at 0 V.
             self._set_dc(True, reason="ecoflow disabled during recover")
+        self._publish_status()
         rk.keep_time()
         continue
 
@@ -240,10 +259,12 @@ class EcoflowDaemon:
         self._begin_recover(now)
 
       if self._tick_recover(now):
+        self._publish_status()
         rk.keep_time()
         continue
 
       if not self.saw_can:
+        self._publish_status()
         rk.keep_time()
         continue
 
@@ -262,6 +283,7 @@ class EcoflowDaemon:
           self._cycle_blocked_logged = False
           self._set_dc(False, reason="KL15 delayed off", allow_cut_while_superspeed=True)
           self.off_deadline = now + 3600.0
+      self._publish_status()
       rk.keep_time()
 
 

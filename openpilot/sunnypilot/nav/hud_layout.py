@@ -31,6 +31,24 @@ LANE_GUIDE_GAP = 10
 LANE_GUIDE_HEIGHT = 72
 LANE_BADGE_W = 48  # centered in SIGNAL_W column
 LANE_TEXT_SIZE = 32
+# eGPU strip: same width as junction; under lane-guide when that bar is up.
+# Header + 12V chip + two rows of metric tiles — keep width, give the numbers room.
+EGPU_HUD_GAP = 10
+EGPU_HUD_HEIGHT = 220
+EGPU_HUD_HEIGHT_COMPACT = 92
+EGPU_HEAD_SIZE = 32
+EGPU_DETAIL_SIZE = 22
+EGPU_TILE_VALUE = 30
+EGPU_TILE_UNIT = 16
+EGPU_DC_VALUE = 26
+EGPU_DC_UNIT = 16
+EGPU_DC_PILL_GAP = 6
+EGPU_DC_PILL_PAD = 22
+EGPU_DC_PILL_MIN = 92
+# Accent rail, then the same inset as the 12V chip uses on the right.
+EGPU_RAIL_X = 6
+EGPU_RAIL_W = 4
+EGPU_PAD = CAPSULE_RIGHT_PAD
 
 
 @dataclass(frozen=True)
@@ -73,3 +91,18 @@ def lane_guide_rect(hud_x: float, hud_y: float, *, metric: bool = True) -> HudBa
   """Same width as junction bar; sits directly underneath with a small gap."""
   bar = junction_bar_rect(hud_x, hud_y, metric=metric)
   return HudBand(bar.x, bar.y + bar.h + LANE_GUIDE_GAP, bar.w, float(LANE_GUIDE_HEIGHT))
+
+
+def egpu_status_rect(hud_x: float, hud_y: float, *, metric: bool = True,
+                     lane_guide: bool = False, compact: bool = False) -> HudBand:
+  """Same width as junction bar; under lane-guide when present, else under the light bar."""
+  above = lane_guide_rect(hud_x, hud_y, metric=metric) if lane_guide else junction_bar_rect(
+    hud_x, hud_y, metric=metric,
+  )
+  height = EGPU_HUD_HEIGHT_COMPACT if compact else EGPU_HUD_HEIGHT
+  return HudBand(above.x, above.y + above.h + EGPU_HUD_GAP, above.w, float(height))
+
+
+def dc_pill_width(unit_w: float, value_w: float) -> float:
+  """12V chip width: text plus equal side padding so long labels like 未启用 fit."""
+  return max(EGPU_DC_PILL_MIN, unit_w + EGPU_DC_PILL_GAP + value_w + EGPU_DC_PILL_PAD * 2)
