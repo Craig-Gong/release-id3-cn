@@ -114,6 +114,20 @@ class UnknownKeyName(Exception):
   pass
 
 
+# Keys added in params_keys.h that a prebuilt libparams.so may not know yet.
+# Used only when check_key raises UnknownKeyName (rsync without rebuilding).
+_PREBUILT_KEY_DEFAULTS = {
+  "TrafficStopOffset": 3.0,
+  "AutoGasSyncSpeed": True,
+  "IqlinkEnabled": True,
+  "IqlinkBlePsk": "999999",
+  "IqlinkBleLinkState": 0,
+  "IqlinkBleConnected": False,
+  "EcoflowEnabled": False,
+  "EcoflowGpuRecover": False,
+}
+
+
 class Params:
   def __init__(self, d=""):
     path = ensure_bytes(d)
@@ -156,6 +170,8 @@ class Params:
     try:
       k = self.check_key(key)
     except UnknownKeyName:
+      if return_default:
+        return _PREBUILT_KEY_DEFAULTS.get(key)
       return None
     t = self.get_type(k)
     default = self._default(k) if return_default else None
@@ -170,7 +186,7 @@ class Params:
     try:
       return bool(params_get_bool(self.p, self.check_key(key), block))
     except UnknownKeyName:
-      return False
+      return bool(_PREBUILT_KEY_DEFAULTS.get(key, False))
 
   def _put_cast(self, key, dat):
     return ensure_bytes(self.python2cpp(type(dat), self.get_type(key), dat, key))

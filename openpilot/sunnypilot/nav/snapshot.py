@@ -111,4 +111,5 @@ def snapshot_executable(snap: NavSnapshot, *, now: float | None = None) -> bool:
   clock = time.monotonic() if now is None else now
   if snap.ts <= 0.0:
     return False
-  return (clock - snap.ts) <= STALE_LINK_S or snap.link_state == 2
+  # Keep HUD via link_ok; leftover speed/accel only while the last packet is fresh.
+  return (clock - snap.ts) <= STALE_LINK_S

@@ -499,6 +499,13 @@ class GuiApplication(GuiApplicationExt):
     """Load and resize an image, storing it for later automatic unloading."""
     image = rl.load_image(image_path)
 
+    if image.width <= 0 or image.height <= 0:
+      cloudlog.error(f"failed to load image {image_path} ({image.width}x{image.height})")
+      w = max(int(width or 1), 1)
+      h = max(int(height or 1), 1)
+      rl.unload_image(image)
+      image = rl.gen_image_color(w, h, rl.BLANK)
+
     if alpha_premultiply:
       rl.image_alpha_premultiply(image)
 
@@ -730,6 +737,11 @@ class GuiApplication(GuiApplicationExt):
       unifont_chars.update(language)
       if code not in FONT_FALLBACK_LANGUAGES:
         base_chars.update(TRANSLATIONS_DIR.joinpath(f"app_{code}.po").read_text(encoding="utf-8"))
+    try:
+      from openpilot.sunnypilot.nav.hud_copy import overlay_font_chars
+      unifont_chars.update(overlay_font_chars())
+    except Exception:
+      pass
 
     for font_weight_file in FontWeight:
       with as_file(FONT_DIR) as fspath:

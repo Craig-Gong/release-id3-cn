@@ -19,14 +19,21 @@ class LaneTurnController:
     self.DH = desire_helper
     self.turn_direction = TurnDirection.none
     self.params = Params()
-    self.lane_turn_value = float(self.params.get("LaneTurnValue", return_default=True)) * CV.MPH_TO_MS
+    self.lane_turn_value = self._lane_turn_value_ms()
     self.param_read_counter = 0
     self.enabled = self.params.get_bool("LaneTurnDesire")
 
+  def _lane_turn_value_ms(self) -> float:
+    raw = self.params.get("LaneTurnValue", return_default=True)
+    try:
+      value = float(raw) * CV.MPH_TO_MS
+    except (TypeError, ValueError):
+      value = 28.0 * CV.MPH_TO_MS
+    return min(float(LANE_CHANGE_SPEED_MIN), value)
+
   def read_params(self):
     self.enabled = self.params.get_bool("LaneTurnDesire")
-    value = float(self.params.get("LaneTurnValue", return_default=True)) * CV.MPH_TO_MS
-    self.lane_turn_value = min(float(LANE_CHANGE_SPEED_MIN), value)
+    self.lane_turn_value = self._lane_turn_value_ms()
 
   def update_params(self) -> None:
     if self.param_read_counter % 50 == 0:
