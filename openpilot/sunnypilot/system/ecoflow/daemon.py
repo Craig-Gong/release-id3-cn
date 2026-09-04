@@ -8,8 +8,14 @@ recover without rebooting the host. Never cycle while engaged / moving.
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
+
+# AGNOS venv is read-only; paho-mqtt lives in /data/python-packages on C3XL.
+_DATA_PKGS = "/data/python-packages"
+if os.path.isdir(_DATA_PKGS) and _DATA_PKGS not in sys.path:
+  sys.path.append(_DATA_PKGS)
 
 from openpilot.cereal import log
 import openpilot.cereal.messaging as messaging
