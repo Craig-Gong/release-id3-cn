@@ -4,13 +4,15 @@ from opendbc.car.interfaces import CarStateBase
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.volkswagen.values import DBC, CanBus, NetworkLocation, TransmissionType, GearShifter, \
                                                       CarControllerParams, VolkswagenFlags
+from opendbc.sunnypilot.car.volkswagen.carstate_ext import CarStateExt
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
 
-class CarState(CarStateBase):
+class CarState(CarStateBase, CarStateExt):
   def __init__(self, CP, CP_SP):
     super().__init__(CP, CP_SP)
+    CarStateExt.__init__(self, CP, CP_SP)
     self.frame = 0
     self.eps_init_complete = False
     self.tsk_recovery_timer = 0
@@ -320,6 +322,8 @@ class CarState(CarStateBase):
     ret.buttonEvents = self.create_button_events(pt_cp, self.CCP.BUTTONS)
     ret.lowSpeedAlert = self.update_low_speed_alert(ret.vEgo)
 
+    self.update_vze_speed_limit(ret_sp, ext_cp, ret.vEgo)
+
     self.frame += 1
     return ret, ret_sp
 
@@ -456,6 +460,10 @@ class CarState(CarStateBase):
     cam_messages = []
     if CP.networkLocation == NetworkLocation.gateway:
       cam_messages.append(("AWV_03", 1)) # Front Collision Detection (1 Hz when inactive, 50 Hz when active)
+    if CP.networkLocation == NetworkLocation.fwdCamera:
+      pt_messages.append(("VZE_04", 1))
+    else:
+      cam_messages.append(("VZE_04", 1))
 
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus(CP).pt),
