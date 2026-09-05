@@ -31,7 +31,9 @@ V_EGO_STATIONARY = 4.   # stock radar-only lead only below this speed (~14 km/h)
 # 4 m/s, so a distant bus never becomes leadOne until vision locks — E2E then
 # aims at the stop line through the car.
 _CRUISE_RADAR_YREL = 1.2      # m, in-path
-_CRUISE_RADAR_D_MIN = 5.0     # m
+# Keep promoting below 5 m. Old 5.0 left a hole: still >4 m/s with a bumper
+# under 5 m dropped the fused track, and ExperimentalMode coasted through it.
+_CRUISE_RADAR_D_MIN = 0.75    # m
 _CRUISE_RADAR_D_MAX = 90.0    # m
 _CRUISE_RADAR_VLEAD = 3.0     # m/s world speed
 _CRUISE_RADAR_MIN_CNT = 6     # ~0.3 s at 20 Hz
