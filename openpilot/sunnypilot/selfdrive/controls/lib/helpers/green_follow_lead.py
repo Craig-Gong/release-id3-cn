@@ -23,6 +23,14 @@ FOLLOW_LEAD_START_ACCEL = 1.1
 FOLLOW_LEAD_LAUNCH_V_EGO = 2.0
 VISION_LEAD_PROB = 0.5
 
+# Bumper gap floor for a stopped/crawling lead. Target rest gap ~2–3 m.
+STOPPED_LEAD_V_MPS = 0.5
+STOPPED_LEAD_GAP_M = 2.5
+STOPPED_LEAD_SOFT_M = 4.5
+STOPPED_LEAD_HARD_A = -1.2
+STOPPED_LEAD_SOFT_A = -0.7
+STOPPED_LEAD_HOLD_A = -0.5
+
 
 @dataclass(frozen=True)
 class LeadSnapshot:
@@ -91,6 +99,25 @@ def follow_lead_soft_launch(sm: Any, v_ego: float) -> bool:
   if v_ego > FOLLOW_LEAD_LAUNCH_V_EGO:
     return False
   return follow_lead_present(sm)
+
+
+def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: bool) -> tuple[float, bool]:
+  """Hard floor behind a stopped lead so E2E cannot creep into the bumper."""
+  lead = read_follow_lead(sm)
+  if not lead.present or lead.v_lead >= STOPPED_LEAD_V_MPS:
+    return float(a_target), bool(should_stop)
+
+  d_rel = lead.d_rel
+  if d_rel <= LEAD_MIN_D_M:
+    return float(a_target), bool(should_stop)
+
+  if d_rel < STOPPED_LEAD_GAP_M:
+    should_stop = True
+    brake = STOPPED_LEAD_HARD_A if v_ego > 0.2 else STOPPED_LEAD_HOLD_A
+    a_target = min(float(a_target), brake)
+  elif d_rel < STOPPED_LEAD_SOFT_M and v_ego > 0.5:
+    a_target = min(float(a_target), STOPPED_LEAD_SOFT_A)
+  return float(a_target), bool(should_stop)
 
 
 class GreenFollowLeadGate:

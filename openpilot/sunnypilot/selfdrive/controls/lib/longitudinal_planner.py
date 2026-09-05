@@ -15,7 +15,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.dec.dec import DynamicExperimen
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import junction_stop_active
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_soft_curve import nav_soft_curve_ms
-from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import follow_lead_present
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
+  apply_stopped_lead_gap, follow_lead_present,
+)
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import StandstillHold, apply_follow_launch
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
@@ -142,18 +144,7 @@ class LongitudinalPlannerSP:
       a_target, should_stop, v_ego, model,
       stop_light=model_stop, has_lead=has_lead, right_blinker=bool(CS.rightBlinker),
     )
-    if has_lead:
-      try:
-        d_rel = float(getattr(lead, "dRel", 0.0) or 0.0)
-        v_lead = float(getattr(lead, "vLead", 0.0) or 0.0)
-        radar_track = bool(getattr(lead, "radar", False))
-      except Exception:
-        d_rel, v_lead, radar_track = 0.0, 0.0, False
-      # Bumper gap floor only when the fused ACC track is present. Vision-only
-      # dRel is already camera-corrected and must not fight a far-ahead E2E stop.
-      if radar_track and 0.5 < d_rel < 5.5 and v_ego < 1.5 and v_lead < 0.5:
-        should_stop = True
-        a_target = min(float(a_target), -0.4)
+    a_target, should_stop = apply_stopped_lead_gap(sm, v_ego, a_target, should_stop)
     snap = read_snapshot()
     if snapshot_executable(snap) and snap.stop_for_light:
       a_target = min(float(a_target), float(snap.accel_target))

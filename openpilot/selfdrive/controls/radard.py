@@ -30,7 +30,9 @@ V_EGO_STATIONARY = 4.   # stock radar-only lead only below this speed (~14 km/h)
 # In-lane stopped/crawling fused tracks at cruise. Stock only promotes these
 # below 4 m/s, so a distant bus never becomes leadOne until vision locks.
 _CRUISE_RADAR_YREL = 1.2
-_CRUISE_RADAR_D_MIN = 5.0
+# Keep promoting below 5 m. Old 5.0 left a hole: still >4 m/s with a bumper
+# under 5 m dropped the fused track, and ExperimentalMode coasted through it.
+_CRUISE_RADAR_D_MIN = 0.75
 _CRUISE_RADAR_D_MAX = 90.0
 _CRUISE_RADAR_VLEAD = 3.0
 _CRUISE_RADAR_MIN_CNT = 6
