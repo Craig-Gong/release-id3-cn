@@ -222,8 +222,11 @@ class EcoflowDaemon:
 
   def run(self) -> None:
     cloudlog.info("ecoflowd start")
-    sm = messaging.SubMaster(["can", "deviceState", "selfdriveState", "carState"])
-    rk = Ratekeeper(2)
+    # vehicle sockets stay on SubMaster; CAN must be drain_sock — conflated
+    # SubMaster["can"] often misses 0x3C0 for seconds and falsely drops KL15.
+    sm = messaging.SubMaster(["deviceState", "selfdriveState", "carState"])
+    can_sock = messaging.sub_sock("can", timeout=100)
+    rk = Ratekeeper(10)
     while True:
       sm.update(0)
       now = time.monotonic()
@@ -241,10 +244,12 @@ class EcoflowDaemon:
         rk.keep_time()
         continue
 
-      if sm.updated["can"]:
-        packets = [sm["can"]]
-        self.kl15, self.last_on_ts, saw = meb_ignition_from_can(packets, now, self.last_on_ts)
-        self.saw_can = self.saw_can or saw
+      try:
+        packets = messaging.drain_sock(can_sock, wait_for_one=False)
+      except Exception:
+        packets = []
+      self.kl15, self.last_on_ts, saw = meb_ignition_from_can(packets, now, self.last_on_ts)
+      self.saw_can = self.saw_can or saw
 
       try:
         net = sm["deviceState"].networkType

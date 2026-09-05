@@ -11,6 +11,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead impor
   FOLLOW_LEAD_LAUNCH_V_EGO,
   FOLLOW_LEAD_START_ACCEL,
   LEAD_GO_SPEED_MPS,
+  STOPPED_LEAD_GAP_M,
   GreenFollowLeadGate,
   follow_lead_soft_launch,
   read_follow_lead,
@@ -18,6 +19,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead impor
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, read_snapshot, snapshot_executable
 
 _STANDSTILL_HOLD_RELEASE_S = 1.0
+_STANDSTILL_HOLD_LEAD_RELEASE_S = 0.15
 _DT_MDL = 0.05
 _RELEASE_V_EGO = 2.0
 _STANDSTILL_V = 0.3
@@ -49,6 +51,11 @@ class StandstillHold:
     nav_live = snapshot_executable(snap, now=now)
     follow_sm = sm if sm is not None else {}
     clock = float(now) if now is not None else 0.0
+    lead = read_follow_lead(follow_sm)
+    lead_rolling = bool(lead.present and lead.v_lead >= LEAD_GO_SPEED_MPS)
+    closing_gap = bool(
+      lead.present and lead.v_lead < LEAD_GO_SPEED_MPS and lead.d_rel > STOPPED_LEAD_GAP_M
+    )
 
     at_rest = standstill or v_ego <= _STANDSTILL_V
     if not at_rest:
@@ -70,6 +77,19 @@ class StandstillHold:
       self.hold_s = 0.0
       self.hold_released = False
       return True, min(float(a_target), 0.0)
+
+    # Congestion: lead already rolling, or we are intentionally closing a
+    # too-large gap behind a stopped bumper — do not keep the 1 s pin.
+    if (lead_rolling or closing_gap) and not nav_red:
+      release_s = _STANDSTILL_HOLD_LEAD_RELEASE_S if lead_rolling else 0.0
+      if self.hold:
+        self.hold_s += _DT_MDL
+        if self.hold_s < release_s:
+          return True, min(float(a_target), 0.0)
+        self.hold = False
+        self.hold_s = 0.0
+        self.hold_released = True
+      return should_stop, float(a_target)
 
     if remain_go and follow_ok:
       self.hold = False
@@ -118,8 +138,12 @@ def apply_follow_launch(sm, v_ego: float, a_target: float) -> float:
   lead = read_follow_lead(sm)
   if not lead.present:
     return float(a_target)
-  # Lead already rolling: do not keep the 1.1 queued-launch cap.
+  # Lead already rolling: do not keep the queued-launch cap.
   if lead.v_lead >= LEAD_GO_SPEED_MPS:
+    return float(a_target)
+  # Closing a too-large gap behind a still-stopped lead: allow the creep
+  # accel from apply_stopped_lead_gap instead of the 1.x queue floor only.
+  if lead.d_rel > STOPPED_LEAD_GAP_M:
     return float(a_target)
   if follow_lead_soft_launch(sm, v_ego):
     return min(float(a_target), FOLLOW_LEAD_START_ACCEL)

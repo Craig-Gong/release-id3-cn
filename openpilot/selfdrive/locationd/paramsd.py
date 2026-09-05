@@ -270,6 +270,12 @@ def main():
 
       msg_dat = msg.to_bytes()
       if sm.frame % 1200 == 0:  # once a minute
+        # Cleared by UI reset-calibration (C3XL avoids OnroadCycle).
+        if params.get("LiveParametersV2") is None:
+          cloudlog.warning("LiveParametersV2 cleared; resetting vehicle params learner")
+          learner.reset(None)
+          msg = learner.get_msg(sm.all_checks(), debug=DEBUG)
+          msg_dat = msg.to_bytes()
         params.put("LiveParametersV2", msg_dat)
 
       pm.send('vehicleParameters', msg_dat)
