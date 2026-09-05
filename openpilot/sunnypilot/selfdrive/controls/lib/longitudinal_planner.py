@@ -142,6 +142,16 @@ class LongitudinalPlannerSP:
       a_target, should_stop, v_ego, model,
       stop_light=model_stop, has_lead=has_lead, right_blinker=bool(CS.rightBlinker),
     )
+    if has_lead:
+      try:
+        d_rel = float(getattr(lead, "dRel", 0.0) or 0.0)
+        v_lead = float(getattr(lead, "vLead", 0.0) or 0.0)
+      except Exception:
+        d_rel, v_lead = 0.0, 0.0
+      radar_track = bool(getattr(lead, "radar", False))
+      if radar_track and 0.5 < d_rel < 5.5 and v_ego < 1.5 and v_lead < 0.5:
+        should_stop = True
+        a_target = min(float(a_target), -0.4)
     snap = read_snapshot()
     if snapshot_executable(snap) and snap.stop_for_light:
       a_target = min(float(a_target), float(snap.accel_target))

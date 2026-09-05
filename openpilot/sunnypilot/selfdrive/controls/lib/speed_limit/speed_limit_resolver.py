@@ -14,6 +14,7 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD, get_sanitize_int_param
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import LIMIT_MAX_MAP_DATA_AGE, LIMIT_ADAPT_ACC
+from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Policy, OffsetType
 
 SpeedLimitSource = custom.LongitudinalPlanSP.SpeedLimit.Source
@@ -171,6 +172,11 @@ class SpeedLimitResolver:
     """Get limit solutions from each data source"""
     self._get_from_car_state(sm)
     self._get_from_map_data(sm)
+
+    snap = read_snapshot()
+    if snapshot_executable(snap) and snap.road_limit_kph >= 20.0:
+      nav_ms = float(snap.road_limit_kph) * CV.KPH_TO_MS
+      return nav_ms, 0., SpeedLimitSource.map
 
     source = self._get_source_solution_according_to_policy()
     speed_limit = self.limit_solutions[source] if source else 0.

@@ -10,6 +10,8 @@ Planner must only min() this onto v_cruise. No IQ-link / nav path.
 """
 from __future__ import annotations
 
+import time
+
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
 
@@ -22,6 +24,8 @@ LC_FINISHING = 3
 APPROACH_BELOW_GATE_MS = 3.0 * CV.KPH_TO_MS
 ENTER_ABOVE_GATE_MS = 1.0 * CV.KPH_TO_MS
 TURN_IN_MS = 20.0 * CV.KPH_TO_MS
+POST_TURN_MS = 30.0 * CV.KPH_TO_MS
+POST_TURN_HOLD_S = 2.0
 URBAN_V_MAX_MS = 65.0 * CV.KPH_TO_MS
 HIGHWAY_LIMIT_MS = 70.0 * CV.KPH_TO_MS
 PATH_LATERAL_M = 2.2
@@ -34,6 +38,7 @@ PATH_STRAIGHT_M = 1.0
 STAGE_OFF = 0
 STAGE_APPROACH = 1
 STAGE_TURN_IN = 2
+STAGE_POST = 3
 
 
 def _mph_param_to_mps(raw_value) -> float:
@@ -101,6 +106,7 @@ class UrbanTurnPrep:
   def __init__(self, params: Params | None = None):
     self.params = params if params is not None else Params()
     self.stage = STAGE_OFF
+    self._post_until = 0.0
     self._turn_planning_on = True
     self._gate_mps = DEFAULT_TURN_GATE_MPS
     self._refresh_tick = 0
@@ -118,6 +124,7 @@ class UrbanTurnPrep:
 
   def reset(self) -> None:
     self.stage = STAGE_OFF
+    self._post_until = 0.0
 
   def _approach_target(self) -> float:
     return max(self._gate_mps - APPROACH_BELOW_GATE_MS, TURN_IN_MS)
@@ -139,10 +146,22 @@ class UrbanTurnPrep:
   ) -> float | None:
     self._maybe_refresh_params()
 
+    if self.stage == STAGE_POST:
+      if gas_pressed or not enabled or time.monotonic() >= self._post_until:
+        self.reset()
+        return None
+      return POST_TURN_MS
+
     if not enabled or gas_pressed or not self._turn_planning_on:
       self.reset()
       return None
     if not _one_blinker(left_blinker, right_blinker):
+      # Typical: cancel the stalk on exit. Keep the 2 s 30 cap only after a
+      # real turn-in, not after an aborted approach / lane-change blinker.
+      if self.stage == STAGE_TURN_IN:
+        self.stage = STAGE_POST
+        self._post_until = time.monotonic() + POST_TURN_HOLD_S
+        return POST_TURN_MS
       self.reset()
       return None
     if _as_int(lane_change_state) in (LC_STARTING, LC_FINISHING):
@@ -167,8 +186,9 @@ class UrbanTurnPrep:
       and _path_straight(lat_m)
     )
     if finished:
-      self.reset()
-      return None
+      self.stage = STAGE_POST
+      self._post_until = time.monotonic() + POST_TURN_HOLD_S
+      return POST_TURN_MS
 
     if self.stage == STAGE_OFF:
       if v_ego > self._gate_mps + ENTER_ABOVE_GATE_MS:

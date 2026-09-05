@@ -77,6 +77,14 @@ class TestLaneTurnDesire(OpenpilotTestCase):
     controller.update_lane_turn(False, False, True, False, 10.0, path_x=xs, path_y=ys, steering_angle_deg=0.0)
     assert controller.get_turn_direction() == TurnDirection.none
 
+  def test_ambiguous_path_is_a_turn(self):
+    dh = DesireHelper()
+    controller = LaneTurnController(dh)
+    controller.enabled = True
+    xs, ys = _path(1.5)
+    controller.update_lane_turn(False, False, True, False, 10.0, path_x=xs, path_y=ys, steering_angle_deg=0.0)
+    assert controller.get_turn_direction() == TurnDirection.turnLeft
+
   def test_curved_path_is_a_turn(self):
     dh = DesireHelper()
     controller = LaneTurnController(dh)
