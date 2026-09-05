@@ -13,7 +13,7 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.sunnypilot.nav.hud_copy import METERS, SECONDS
 from openpilot.sunnypilot.nav.hud_layout import (
   CAPSULE_GAP, CAPSULE_H, CAPSULE_RIGHT_PAD, CAPSULE_W,
-  CONTENT_GAP, LANE_BADGE_W, LANE_TEXT_SIZE, SIGNAL_PAD_X, SIGNAL_W,
+  CONTENT_GAP, HUD_CN_DETAIL, LANE_BADGE_W, LANE_TEXT_SIZE, SIGNAL_PAD_X, SIGNAL_W,
   junction_bar_rect, lane_guide_rect,
 )
 from openpilot.sunnypilot.nav.snapshot import read_snapshot
@@ -166,22 +166,31 @@ class JunctionHudRenderer(Widget):
     self._draw_lane_arrow(cx, cy, lane.kind)
 
     label = "车道引导" if lane.kind in ("left", "right") else "转向提示"
-    # Title x = junction headline ("暂无信号"); right pad = CAPSULE_RIGHT_PAD
-    size = LANE_TEXT_SIZE
-    lab_sz = measure_text_cached(self._font_head, label, size)
-    txt_sz = measure_text_cached(self._font_head, lane.text, size)
+    # Stack like 绿灯 / 可通行: kicker 34, recommendation matches 红灯 (~52).
+    head_size = LANE_TEXT_SIZE
+    det_size = HUD_CN_DETAIL
     text_left = signal_x + SIGNAL_W + CONTENT_GAP
     text_right = bar.x + bar.width - CAPSULE_RIGHT_PAD
-    mid = bar.y + bar.height / 2
+    avail = max(48.0, text_right - text_left)
+    lab_sz = measure_text_cached(self._font_detail, label, det_size)
+    txt_sz = measure_text_cached(self._font_head, lane.text, head_size)
+    while (lab_sz.x > avail or txt_sz.x > avail) and head_size > 36:
+      head_size -= 1
+      det_size = max(28, det_size - 1)
+      lab_sz = measure_text_cached(self._font_detail, label, det_size)
+      txt_sz = measure_text_cached(self._font_head, lane.text, head_size)
+    gap = 6.0
+    block = lab_sz.y + gap + txt_sz.y
+    ty = bar.y + (bar.height - block) / 2
     rl.draw_text_ex(
-      self._font_head, label,
-      rl.Vector2(text_left, mid - lab_sz.y / 2),
-      size, 0, _LANE_TEXT,
+      self._font_detail, label,
+      rl.Vector2(text_left, ty),
+      det_size, 0, _DETAIL,
     )
     rl.draw_text_ex(
       self._font_head, lane.text,
-      rl.Vector2(text_right - txt_sz.x, mid - txt_sz.y / 2),
-      size, 0, _LANE_TEXT,
+      rl.Vector2(text_left, ty + lab_sz.y + gap),
+      head_size, 0, _LANE_TEXT,
     )
 
   def _draw_lane_arrow(self, cx: float, cy: float, kind: str) -> None:

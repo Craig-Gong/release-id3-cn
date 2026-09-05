@@ -28,9 +28,11 @@ CAPSULE_RIGHT_PAD = 16
 # Lane-change / turn guide sits under the junction signal bar.
 # Badge centers on the signal column; title x matches junction headline.
 LANE_GUIDE_GAP = 10
-LANE_GUIDE_HEIGHT = 72
-LANE_BADGE_W = 48  # centered in SIGNAL_W column
-LANE_TEXT_SIZE = 32
+LANE_GUIDE_HEIGHT = 120
+LANE_BADGE_W = 52  # fill the SIGNAL_W column
+HUD_CN_HEAD = 52
+HUD_CN_DETAIL = 34
+LANE_TEXT_SIZE = HUD_CN_HEAD
 
 
 @dataclass(frozen=True)
