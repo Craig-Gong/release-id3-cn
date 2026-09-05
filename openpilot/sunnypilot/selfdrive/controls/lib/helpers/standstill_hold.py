@@ -8,9 +8,12 @@ sticky vision-stop does not re-arm until the car moves.
 from __future__ import annotations
 
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
+  FOLLOW_LEAD_LAUNCH_V_EGO,
   FOLLOW_LEAD_START_ACCEL,
+  LEAD_GO_SPEED_MPS,
   GreenFollowLeadGate,
   follow_lead_soft_launch,
+  read_follow_lead,
 )
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, read_snapshot, snapshot_executable
 
@@ -110,6 +113,14 @@ class StandstillHold:
 
 
 def apply_follow_launch(sm, v_ego: float, a_target: float) -> float:
+  if v_ego > FOLLOW_LEAD_LAUNCH_V_EGO:
+    return float(a_target)
+  lead = read_follow_lead(sm)
+  if not lead.present:
+    return float(a_target)
+  # Lead already rolling: do not keep the 1.1 queued-launch cap.
+  if lead.v_lead >= LEAD_GO_SPEED_MPS:
+    return float(a_target)
   if follow_lead_soft_launch(sm, v_ego):
     return min(float(a_target), FOLLOW_LEAD_START_ACCEL)
   return float(a_target)
