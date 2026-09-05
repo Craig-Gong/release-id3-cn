@@ -83,10 +83,10 @@ def build_lane_guide_view(*, engaged: bool, snap: NavSnapshot) -> LaneGuideView:
   return LaneGuideView(True, text, _lane_kind(snap))
 
 
-def build_junction_view(*, engaged: bool, has_lead: bool, model_stop: bool,
+def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
                         standstill_hold: bool, snap: NavSnapshot,
                         green_flash: bool) -> JunctionView:
-  if not engaged:
+  if not onroad:
     return JunctionView(False, "none", "", "", False, False)
 
   light = snap.light_token if snap.iqlink_enabled else "none"

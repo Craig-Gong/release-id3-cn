@@ -34,14 +34,14 @@ def dc_chip_from_label(dc_label: str) -> tuple[str, str]:
   return "未知", "unknown"
 
 
-def build_hud_egpu_view(*, engaged: bool, connected: bool, compiled: bool, loading: bool,
+def build_hud_egpu_view(*, onroad: bool, connected: bool, compiled: bool, loading: bool,
                         active: bool | None, model_alive: bool, model_big: bool,
                         telemetry_valid: bool, loading_progress: int = 0,
                         usb_speed_mbps: int = 0, model_fps: float = 0.0,
                         power_w: float = 0.0, temp_c: float = 0.0,
                         memory_used_mb: int = 0, memory_total_mb: int = 0,
                         dc_label: str = "12V 未知") -> HudEgpuView:
-  if not engaged:
+  if not onroad:
     return HudEgpuView()
 
   degraded = connected and 0 < usb_speed_mbps < 5000

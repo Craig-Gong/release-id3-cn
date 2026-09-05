@@ -17,9 +17,11 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.sunnypilot.nav.hud_copy import METERS, SECONDS
 from openpilot.sunnypilot.nav.hud_layout import (
   CAPSULE_GAP, CAPSULE_H, CAPSULE_RIGHT_PAD, CAPSULE_W,
-  CONTENT_GAP, EGPU_DC_PILL_GAP, EGPU_DC_UNIT, EGPU_DC_VALUE, EGPU_DETAIL_SIZE,
-  EGPU_HEAD_SIZE, EGPU_PAD, EGPU_RAIL_W, EGPU_RAIL_X, EGPU_TILE_UNIT,
-  EGPU_TILE_VALUE, LANE_BADGE_W, LANE_TEXT_SIZE, SIGNAL_PAD_X, SIGNAL_W,
+  CONTENT_GAP, EGPU_DC_PILL_GAP, EGPU_DC_PILL_H, EGPU_DC_UNIT, EGPU_DC_VALUE, EGPU_DETAIL_SIZE,
+  EGPU_HEAD_SIZE, EGPU_HUD_HEIGHT, EGPU_HUD_HEIGHT_COMPACT, EGPU_PAD, EGPU_RAIL_W,
+  EGPU_RAIL_X, EGPU_TILE_GAP, EGPU_TILE_LINE_GAP, EGPU_TILE_UNIT, EGPU_TILE_VALUE,
+  HUD_CN_DETAIL, LANE_BADGE_W, LANE_TEXT_SIZE,
+  SIGNAL_PAD_X, SIGNAL_W, HudBand,
   dc_pill_width, egpu_status_rect, junction_bar_rect, lane_guide_rect,
 )
 from openpilot.sunnypilot.nav.snapshot import read_snapshot
@@ -114,10 +116,14 @@ class JunctionHudRenderer(Widget):
       self._font_unit = self._font_detail
 
   def update(self) -> None:
+    self._update_state()
+
+  def _update_state(self) -> None:
+    started = bool(ui_state.started)
     if ui_state.sm.recv_frame["carState"] < ui_state.started_frame:
       self._view = JunctionView(False, "none", "", "", True, False)
       self._lane = LaneGuideView(False, "", "none")
-      self._egpu = HudEgpuView()
+      self._egpu = self._build_egpu_view(started=started)
       return
     snap = read_snapshot()
     engaged = bool(ui_state.engaged)
@@ -142,7 +148,7 @@ class JunctionHudRenderer(Widget):
       stopping=stopping, light=snap.light_token, engaged=engaged, now=time.monotonic(),
     )
     self._view = build_junction_view(
-      engaged=engaged,
+      onroad=started,
       has_lead=has_lead,
       model_stop=model_stop,
       standstill_hold=hold,
@@ -150,7 +156,7 @@ class JunctionHudRenderer(Widget):
       green_flash=flashing,
     )
     self._lane = build_lane_guide_view(engaged=engaged, snap=snap)
-    self._egpu = self._build_egpu_view(engaged)
+    self._egpu = self._build_egpu_view(started=started)
 
   def _ecoflow_enabled(self) -> bool:
     try:
@@ -160,7 +166,7 @@ class JunctionHudRenderer(Widget):
     except Exception:
       return False
 
-  def _build_egpu_view(self, engaged: bool) -> HudEgpuView:
+  def _build_egpu_view(self, started: bool) -> HudEgpuView:
     sm = ui_state.sm
     connected = False
     model_alive = False
@@ -192,7 +198,7 @@ class JunctionHudRenderer(Widget):
       telemetry_valid = False
     dc_label = ecoflow_dc_label(enabled=self._ecoflow_enabled(), snap=read_status())
     return build_hud_egpu_view(
-      engaged=engaged, connected=connected, compiled=ui_state.usbgpu_compiled,
+      onroad=started, connected=connected, compiled=ui_state.usbgpu_compiled,
       loading=ui_state.usbgpu_loading, active=ui_state.usbgpu_active,
       model_alive=model_alive, model_big=model_big, telemetry_valid=telemetry_valid,
       loading_progress=ui_state.usbgpu_loading_progress, usb_speed_mbps=usb_speed,
@@ -202,41 +208,47 @@ class JunctionHudRenderer(Widget):
 
   def _render(self, rect: rl.Rectangle) -> None:
     view = self._view
-    if not view.show:
-      return
     metric = bool(ui_state.is_metric)
-    band = junction_bar_rect(rect.x, rect.y, metric=metric)
-    bar = rl.Rectangle(band.x, band.y, band.w, band.h)
-    bg = _BG_IDLE if view.idle else _BG
-    rl.draw_rectangle_rounded(bar, 0.16, 14, bg)
-    rl.draw_rectangle_rounded_lines_ex(bar, 0.16, 14, 1.8, _BORDER)
+    if view.show:
+      band = junction_bar_rect(rect.x, rect.y, metric=metric)
+      bar = rl.Rectangle(band.x, band.y, band.w, band.h)
+      bg = _BG_IDLE if view.idle else _BG
+      rl.draw_rectangle_rounded(bar, 0.16, 14, bg)
+      rl.draw_rectangle_rounded_lines_ex(bar, 0.16, 14, 1.8, _BORDER)
 
-    accent = _ACCENT.get(view.light, _MUTED)
-    rail = rl.Rectangle(bar.x + 6, bar.y + 16, 5, bar.height - 32)
-    rl.draw_rectangle_rounded(rail, 0.9, 6, accent)
+      accent = _ACCENT.get(view.light, _MUTED)
+      rail = rl.Rectangle(bar.x + 6, bar.y + 16, 5, bar.height - 32)
+      rl.draw_rectangle_rounded(rail, 0.9, 6, accent)
 
-    signal_x = bar.x + SIGNAL_PAD_X
-    signal_y = bar.y + 14
-    signal_h = bar.height - 28
-    self._draw_signal(signal_x, signal_y, SIGNAL_W, signal_h, view.light)
+      signal_x = bar.x + SIGNAL_PAD_X
+      signal_y = bar.y + 14
+      signal_h = bar.height - 28
+      self._draw_signal(signal_x, signal_y, SIGNAL_W, signal_h, view.light)
 
-    text_x = signal_x + SIGNAL_W + CONTENT_GAP
-    text_right = bar.x + bar.width - CAPSULE_RIGHT_PAD
-    capsules = self._metric_capsules(view)
-    if capsules:
-      text_right = bar.x + bar.width - CAPSULE_RIGHT_PAD - CAPSULE_W - 12
-      self._draw_capsules(bar, capsules, view.light)
-    inner_w = max(48.0, text_right - text_x)
-    self._draw_copy(text_x, bar.y, inner_w, bar.height, view)
+      text_x = signal_x + SIGNAL_W + CONTENT_GAP
+      text_right = bar.x + bar.width - CAPSULE_RIGHT_PAD
+      capsules = self._metric_capsules(view)
+      if capsules:
+        text_right = bar.x + bar.width - CAPSULE_RIGHT_PAD - CAPSULE_W - 12
+        self._draw_capsules(bar, capsules, view.light)
+      inner_w = max(48.0, text_right - text_x)
+      self._draw_copy(text_x, bar.y, inner_w, bar.height, view)
 
-    if self._lane.show:
-      lane_band = lane_guide_rect(rect.x, rect.y, metric=metric)
-      self._draw_lane_guide(rl.Rectangle(lane_band.x, lane_band.y, lane_band.w, lane_band.h), self._lane)
+      if self._lane.show:
+        lane_band = lane_guide_rect(rect.x, rect.y, metric=metric)
+        self._draw_lane_guide(rl.Rectangle(lane_band.x, lane_band.y, lane_band.w, lane_band.h), self._lane)
 
     if self._egpu.show:
-      egpu_band = egpu_status_rect(
-        rect.x, rect.y, metric=metric, lane_guide=self._lane.show, compact=not bool(self._egpu.metrics),
-      )
+      if view.show:
+        egpu_band = egpu_status_rect(
+          rect.x, rect.y, metric=metric, lane_guide=self._lane.show,
+          compact=not bool(self._egpu.metrics),
+        )
+      else:
+        # No light bar: sit in the junction slot under MAX / limit chips.
+        slot = junction_bar_rect(rect.x, rect.y, metric=metric)
+        height = EGPU_HUD_HEIGHT if self._egpu.metrics else EGPU_HUD_HEIGHT_COMPACT
+        egpu_band = HudBand(slot.x, slot.y, slot.w, float(height))
       self._draw_egpu(rl.Rectangle(egpu_band.x, egpu_band.y, egpu_band.w, egpu_band.h), self._egpu)
 
   def _draw_lane_guide(self, bar: rl.Rectangle, lane: LaneGuideView) -> None:
@@ -256,22 +268,31 @@ class JunctionHudRenderer(Widget):
     self._draw_lane_arrow(cx, cy, lane.kind)
 
     label = "车道引导" if lane.kind in ("left", "right") else "转向提示"
-    # Title x = junction headline ("暂无信号"); right pad = CAPSULE_RIGHT_PAD
-    size = LANE_TEXT_SIZE
-    lab_sz = measure_text_cached(self._font_head, label, size)
-    txt_sz = measure_text_cached(self._font_head, lane.text, size)
+    # Stack like 绿灯 / 可通行: kicker 34, recommendation matches 红灯 (~52).
+    head_size = LANE_TEXT_SIZE
+    det_size = HUD_CN_DETAIL
     text_left = signal_x + SIGNAL_W + CONTENT_GAP
     text_right = bar.x + bar.width - CAPSULE_RIGHT_PAD
-    mid = bar.y + bar.height / 2
+    avail = max(48.0, text_right - text_left)
+    lab_sz = measure_text_cached(self._font_detail, label, det_size)
+    txt_sz = measure_text_cached(self._font_head, lane.text, head_size)
+    while (lab_sz.x > avail or txt_sz.x > avail) and head_size > 36:
+      head_size -= 1
+      det_size = max(28, det_size - 1)
+      lab_sz = measure_text_cached(self._font_detail, label, det_size)
+      txt_sz = measure_text_cached(self._font_head, lane.text, head_size)
+    gap = 6.0
+    block = lab_sz.y + gap + txt_sz.y
+    ty = bar.y + (bar.height - block) / 2
     rl.draw_text_ex(
-      self._font_head, label,
-      rl.Vector2(text_left, mid - lab_sz.y / 2),
-      size, 0, _LANE_TEXT,
+      self._font_detail, label,
+      rl.Vector2(text_left, ty),
+      det_size, 0, _DETAIL,
     )
     rl.draw_text_ex(
       self._font_head, lane.text,
-      rl.Vector2(text_right - txt_sz.x, mid - txt_sz.y / 2),
-      size, 0, _LANE_TEXT,
+      rl.Vector2(text_left, ty + lab_sz.y + gap),
+      head_size, 0, _LANE_TEXT,
     )
 
   def _draw_lane_arrow(self, cx: float, cy: float, kind: str) -> None:
@@ -311,13 +332,13 @@ class JunctionHudRenderer(Widget):
     pad_x = bar.x + EGPU_RAIL_X + EGPU_RAIL_W + EGPU_PAD
     pad_right = bar.x + bar.width - EGPU_PAD
     inner_w = max(48.0, pad_right - pad_x)
-    header_h = 56.0 if view.metrics else bar.height - 36.0
-    header_y = bar.y + 14.0 if view.metrics else bar.y + (bar.height - header_h) / 2
+    header_h = 112.0 if view.metrics else bar.height - 36.0
+    header_y = bar.y + 16.0 if view.metrics else bar.y + (bar.height - header_h) / 2
 
-    u_sz = measure_text_cached(self._font_unit, "12V", EGPU_DC_UNIT)
-    v_sz = measure_text_cached(self._font_head, view.dc_text, EGPU_DC_VALUE)
+    u_sz = measure_text_cached(self._font_num, "12V", EGPU_DC_UNIT)
+    v_sz = measure_text_cached(self._font_detail, view.dc_text, EGPU_DC_VALUE)
     pill_w = dc_pill_width(u_sz.x, v_sz.x)
-    pill_h = 44.0
+    pill_h = float(EGPU_DC_PILL_H)
     pill = rl.Rectangle(pad_right - pill_w, header_y + (header_h - pill_h) / 2, pill_w, pill_h)
     self._draw_dc_pill(pill, view.dc_text, view.dc_kind, u_sz, v_sz)
 
@@ -327,15 +348,15 @@ class JunctionHudRenderer(Widget):
     det_size = EGPU_DETAIL_SIZE
     head_sz = measure_text_cached(self._font_head, view.headline, head_size)
     det_sz = measure_text_cached(self._font_detail, view.detail, det_size) if view.detail else rl.Vector2(0, 0)
-    while head_sz.x > title_w and head_size > 22:
-      head_size -= 2
+    while (head_sz.x > title_w or (view.detail and det_sz.x > title_w)) and head_size > 36:
+      head_size -= 1
+      det_size = max(28, det_size - 1)
       head_sz = measure_text_cached(self._font_head, view.headline, head_size)
-    while view.detail and det_sz.x > title_w and det_size > 16:
-      det_size -= 2
-      det_sz = measure_text_cached(self._font_detail, view.detail, det_size)
+      if view.detail:
+        det_sz = measure_text_cached(self._font_detail, view.detail, det_size)
 
     if view.detail:
-      gap = 4.0
+      gap = 6.0
       block = head_sz.y + gap + det_sz.y
       ty = header_y + (header_h - block) / 2
       rl.draw_text_ex(self._font_head, view.headline, rl.Vector2(pad_x, ty), head_size, 0, _EGPU_TEXT)
@@ -353,9 +374,17 @@ class JunctionHudRenderer(Widget):
     if not view.metrics:
       return
 
-    tile_top = header_y + header_h + 8.0
-    tile_bottom = bar.y + bar.height - 14.0
+    tile_top = header_y + header_h + 12.0
+    tile_bottom = bar.y + bar.height - 18.0
     self._draw_egpu_tiles(pad_x, tile_top, inner_w, tile_bottom - tile_top, view.metrics)
+
+  def _vcenter_in_pill(self, font, text: str, size: float, pill: rl.Rectangle) -> float:
+    """Vertically center glyph ink in the 12V chip. CJK unifont sits high in the em box."""
+    sz = measure_text_cached(font, text, size)
+    y = pill.y + (pill.height - sz.y) / 2
+    if any(ord(c) > 127 for c in text):
+      y += size * 0.10
+    return y
 
   def _draw_dc_pill(self, pill: rl.Rectangle, text: str, kind: str, u_sz, v_sz) -> None:
     bg, fg = _DC_PILL.get(kind, _DC_PILL["unknown"])
@@ -363,14 +392,15 @@ class JunctionHudRenderer(Widget):
     rl.draw_rectangle_rounded_lines_ex(pill, 0.42, 10, 1.2, rl.Color(fg.r, fg.g, fg.b, 70))
     content = u_sz.x + EGPU_DC_PILL_GAP + v_sz.x
     tx = pill.x + (pill.width - content) / 2
-    mid = pill.y + pill.height / 2
+    unit_y = self._vcenter_in_pill(self._font_num, "12V", EGPU_DC_UNIT, pill)
+    val_y = self._vcenter_in_pill(self._font_detail, text, EGPU_DC_VALUE, pill)
     rl.draw_text_ex(
-      self._font_unit, "12V",
-      rl.Vector2(tx, mid - u_sz.y / 2 + 1), EGPU_DC_UNIT, 0, rl.Color(fg.r, fg.g, fg.b, 190),
+      self._font_num, "12V",
+      rl.Vector2(tx, unit_y), EGPU_DC_UNIT, 0, rl.Color(fg.r, fg.g, fg.b, 190),
     )
     rl.draw_text_ex(
-      self._font_head, text,
-      rl.Vector2(tx + u_sz.x + EGPU_DC_PILL_GAP, mid - v_sz.y / 2), EGPU_DC_VALUE, 0, fg,
+      self._font_detail, text,
+      rl.Vector2(tx + u_sz.x + EGPU_DC_PILL_GAP, val_y), EGPU_DC_VALUE, 0, fg,
     )
 
   def _draw_text_centered(self, font, text: str, cx: float, y: float, size: float, color) -> None:
@@ -381,7 +411,7 @@ class JunctionHudRenderer(Widget):
                        metrics) -> None:
     n = len(metrics)
     cols = 2 if n == 4 else 3
-    gap = 8.0
+    gap = float(EGPU_TILE_GAP)
     rows = (n + cols - 1) // cols
     tile_w = (width - gap * (cols - 1)) / cols
     tile_h = (height - gap * (rows - 1)) / rows if rows else height
@@ -395,11 +425,11 @@ class JunctionHudRenderer(Widget):
       val_size = EGPU_TILE_VALUE
       unit_size = EGPU_TILE_UNIT
       val_sz = measure_text_cached(self._font_num, metric.value, val_size)
-      while val_sz.x > box.width - 16 and val_size > 18:
+      while val_sz.x > box.width - 16 and val_size > 28:
         val_size -= 2
         val_sz = measure_text_cached(self._font_num, metric.value, val_size)
       unit_sz = measure_text_cached(self._font_unit, metric.unit, unit_size)
-      line_gap = 2.0
+      line_gap = float(EGPU_TILE_LINE_GAP)
       stack = val_sz.y + line_gap + unit_sz.y
       cx = box.x + box.width * 0.5
       text_y = box.y + (box.height - stack) * 0.5

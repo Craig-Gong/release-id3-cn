@@ -6,7 +6,7 @@ from openpilot.sunnypilot.selfdrive.ui.egpu_hud import build_hud_egpu_view, dc_c
 
 def _hud(**kwargs):
   defaults = dict(
-    engaged=True, connected=True, compiled=True, loading=False, active=True,
+    onroad=True, connected=True, compiled=True, loading=False, active=True,
     model_alive=True, model_big=True, telemetry_valid=True, usb_speed_mbps=5000,
     model_fps=19.8, power_w=72.0, temp_c=61.0,
     memory_used_mb=6144, memory_total_mb=8192, dc_label="12V 开",
@@ -16,8 +16,8 @@ def _hud(**kwargs):
 
 
 class TestHudEgpuView(unittest.TestCase):
-  def test_hidden_when_not_engaged(self):
-    self.assertFalse(_hud(engaged=False).show)
+  def test_hidden_when_offroad(self):
+    self.assertFalse(_hud(onroad=False).show)
 
   def test_running_uses_tiles_and_dc_chip(self):
     view = _hud()

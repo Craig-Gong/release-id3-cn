@@ -27,24 +27,30 @@ CAPSULE_GAP = 8
 CAPSULE_RIGHT_PAD = 16
 # Lane-change / turn guide sits under the junction signal bar.
 # Badge centers on the signal column; title x matches junction headline.
+# Chinese type matches the light-bar 红灯 headline (~52); grow height, keep width.
+HUD_CN_HEAD = 52
+HUD_CN_DETAIL = 34
 LANE_GUIDE_GAP = 10
-LANE_GUIDE_HEIGHT = 72
-LANE_BADGE_W = 48  # centered in SIGNAL_W column
-LANE_TEXT_SIZE = 32
+LANE_GUIDE_HEIGHT = 120
+LANE_BADGE_W = 52  # fill the SIGNAL_W column
+LANE_TEXT_SIZE = HUD_CN_HEAD
 # eGPU strip: same width as junction; under lane-guide when that bar is up.
 # Header + 12V chip + two rows of metric tiles — keep width, give the numbers room.
 EGPU_HUD_GAP = 10
-EGPU_HUD_HEIGHT = 220
-EGPU_HUD_HEIGHT_COMPACT = 92
-EGPU_HEAD_SIZE = 32
-EGPU_DETAIL_SIZE = 22
-EGPU_TILE_VALUE = 30
-EGPU_TILE_UNIT = 16
-EGPU_DC_VALUE = 26
-EGPU_DC_UNIT = 16
-EGPU_DC_PILL_GAP = 6
+EGPU_HUD_HEIGHT = 372
+EGPU_HUD_HEIGHT_COMPACT = 148
+EGPU_HEAD_SIZE = HUD_CN_HEAD
+EGPU_DETAIL_SIZE = HUD_CN_DETAIL
+EGPU_TILE_VALUE = 40
+EGPU_TILE_UNIT = 22
+EGPU_TILE_GAP = 12
+EGPU_TILE_LINE_GAP = 10
+EGPU_DC_VALUE = HUD_CN_DETAIL  # 开/关/未启用 — same as 运行中, not 红灯
+EGPU_DC_UNIT = 44
+EGPU_DC_PILL_H = 72
+EGPU_DC_PILL_GAP = 8
 EGPU_DC_PILL_PAD = 22
-EGPU_DC_PILL_MIN = 92
+EGPU_DC_PILL_MIN = 118
 # Accent rail, then the same inset as the 12V chip uses on the right.
 EGPU_RAIL_X = 6
 EGPU_RAIL_W = 4
