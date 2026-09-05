@@ -423,4 +423,8 @@ def main():
         params.put("LiveDelay", lag_msg_dat)
 
       if sm.frame % 60 == 0:  # read from and write to params every 3 seconds
+        # Cleared by UI reset-calibration (C3XL avoids OnroadCycle).
+        if params.get("LiveDelay") is None and lag_learner.block_avg.valid_blocks > 0:
+          cloudlog.warning("LiveDelay cleared; resetting lag estimator")
+          lag_learner.reset(lag_learner.initial_lag, 0)
         lagd_toggle.update(lag_msg)

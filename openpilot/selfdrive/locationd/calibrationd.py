@@ -289,6 +289,12 @@ def main() -> NoReturn:
 
     # 4Hz driven by cameraOdometry
     if sm.frame % 5 == 0:
+      # UI "Reset calibration" clears the param. On C3XL we skip OnroadCycle so
+      # pick that up here instead of restarting modeld.
+      if calibrator.param_put and calibrator.valid_blocks > 0 and params_reader.get("CalibrationParams") is None:
+        cloudlog.warning("CalibrationParams cleared; resetting calibrator")
+        calibrator.reset()
+        calibrator.update_status()
       calibrator.send_data(pm, sm.all_checks())
 
 

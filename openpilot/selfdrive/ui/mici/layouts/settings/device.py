@@ -169,12 +169,14 @@ class DeviceLayoutMici(NavScroller):
       ui_state.params.put_bool("DoReboot", True, block=True)
 
     def reset_calibration_callback():
+      from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
       params = ui_state.params
       params.remove("CalibrationParams")
       params.remove("LiveTorqueParameters")
       params.remove("LiveParametersV2")
       params.remove("LiveDelay")
-      params.put_bool("OnroadCycleRequested", True, block=True)
+      if get_hardware_profile() != HardwareProfile.C3XL:
+        params.put_bool("OnroadCycleRequested", True, block=True)
 
     reset_calibration_btn = EngagedConfirmationButton("reset calibration", "reset", gui_app.texture("icons_mici/settings/device/lkas.png", 122, 64),
                                                       reset_calibration_callback)

@@ -8,15 +8,22 @@ recover without rebooting the host. Never cycle while engaged / moving.
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 
-from cereal import log
-from cereal import messaging
+# AGNOS venv is read-only; paho-mqtt lives in /data/python-packages on C3XL.
+_DATA_PKGS = "/data/python-packages"
+if os.path.isdir(_DATA_PKGS) and _DATA_PKGS not in sys.path:
+  sys.path.append(_DATA_PKGS)
+
+from openpilot.cereal import log
+import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.system.ecoflow.kl15 import chestnut_superspeed_present, meb_ignition_from_can
+from openpilot.sunnypilot.system.ecoflow.status import dc12v_from_telemetry, write_status
 from openpilot.sunnypilot.system.ecoflow.recover import (
   GpuRecoverCycle, RecoverPhase, clear_recover_request, recover_allowed, recover_request_pending,
 )
@@ -62,8 +69,12 @@ def _load_creds_into_env() -> None:
       os.environ[env] = val
 
 
-def _network_up(network_type: int) -> bool:
-  return network_type != log.DeviceState.NetworkType.none
+def _network_up(network_type) -> bool:
+  # capnp enums are not int(); comparing to the cereal none value is enough.
+  try:
+    return network_type != log.DeviceState.NetworkType.none
+  except Exception:
+    return False
 
 
 class EcoflowDaemon:
@@ -192,9 +203,30 @@ class EcoflowDaemon:
       return True
     return True
 
+  def _publish_status(self) -> None:
+    tel = {}
+    mqtt = False
+    if self.session is not None:
+      mqtt = True
+      tel = getattr(self.session, "_telemetry", None) or {}
+    try:
+      write_status(
+        enabled=_enabled(self.params),
+        mqtt=mqtt,
+        dc12v=dc12v_from_telemetry(tel),
+        kl15=self.kl15,
+        want_on=self.want_on,
+      )
+    except Exception:
+      cloudlog.exception("ecoflowd status shm write failed")
+
   def run(self) -> None:
-    sm = messaging.SubMaster(["can", "deviceState", "selfdriveState", "carState"])
-    rk = Ratekeeper(2)
+    cloudlog.info("ecoflowd start")
+    # vehicle sockets stay on SubMaster; CAN must be drain_sock — conflated
+    # SubMaster["can"] often misses 0x3C0 for seconds and falsely drops KL15.
+    sm = messaging.SubMaster(["deviceState", "selfdriveState", "carState"])
+    can_sock = messaging.sub_sock("can", timeout=100)
+    rk = Ratekeeper(10)
     while True:
       sm.update(0)
       now = time.monotonic()
@@ -208,19 +240,21 @@ class EcoflowDaemon:
           if self.kl15:
             # Leave the rail on if ignition is up — do not strand chestnut at 0 V.
             self._set_dc(True, reason="ecoflow disabled during recover")
+        self._publish_status()
         rk.keep_time()
         continue
 
-      if sm.updated["can"]:
-        packets = [sm["can"]]
-        self.kl15, self.last_on_ts, saw = meb_ignition_from_can(packets, now, self.last_on_ts)
-        self.saw_can = self.saw_can or saw
-
-      net = 0
       try:
-        net = int(sm["deviceState"].networkType)
+        packets = messaging.drain_sock(can_sock, wait_for_one=False)
       except Exception:
-        pass
+        packets = []
+      self.kl15, self.last_on_ts, saw = meb_ignition_from_can(packets, now, self.last_on_ts)
+      self.saw_can = self.saw_can or saw
+
+      try:
+        net = sm["deviceState"].networkType
+      except Exception:
+        net = log.DeviceState.NetworkType.none
 
       if _network_up(net):
         self._session()
@@ -230,10 +264,12 @@ class EcoflowDaemon:
         self._begin_recover(now)
 
       if self._tick_recover(now):
+        self._publish_status()
         rk.keep_time()
         continue
 
       if not self.saw_can:
+        self._publish_status()
         rk.keep_time()
         continue
 
@@ -252,6 +288,7 @@ class EcoflowDaemon:
           self._cycle_blocked_logged = False
           self._set_dc(False, reason="KL15 delayed off", allow_cut_while_superspeed=True)
           self.off_deadline = now + 3600.0
+      self._publish_status()
       rk.keep_time()
 
 

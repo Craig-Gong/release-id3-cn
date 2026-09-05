@@ -279,6 +279,10 @@ def main(demo=False):
 
     # Cache points every 60 seconds while onroad
     if sm.frame % 240 == 0:
+      # Cleared by UI reset-calibration (C3XL avoids OnroadCycle).
+      if params.get("LiveTorqueParameters") is None:
+        cloudlog.warning("LiveTorqueParameters cleared; resetting torque estimator")
+        estimator.reset()
       msg = estimator.get_msg(valid=sm.all_checks(), with_points=True)
       params.put("LiveTorqueParameters", msg.to_bytes())
 

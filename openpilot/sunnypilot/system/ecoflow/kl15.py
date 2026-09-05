@@ -2,29 +2,68 @@
 from __future__ import annotations
 
 import os
+from typing import Any, Iterable
 
 MEB_KLEMMEN_ADDR = 0x3C0
-MEB_IGNITION_HOLD_S = 2.0
+# Hold past brief SubMaster/poll gaps; 0x3C0 is ~10 Hz but conflated reads can miss.
+MEB_IGNITION_HOLD_S = 5.0
 _DOCK_VID = "3801"
 _DOCK_PID = "0001"
 
 
+def _as_can_frames(packets: Any) -> list[Any]:
+  """Normalize SubMaster['can'] (frame list) or Event / Event-list (.can)."""
+  if packets is None:
+    return []
+
+  # Single cereal Event with .can
+  if hasattr(packets, "can") and not hasattr(packets, "address"):
+    try:
+      return list(packets.can)
+    except Exception:
+      return []
+
+  try:
+    seq = list(packets)
+  except TypeError:
+    if hasattr(packets, "address"):
+      return [packets]
+    return []
+
+  if not seq:
+    return []
+
+  # List of Events (drain_sock style)
+  first = seq[0]
+  if hasattr(first, "can") and not hasattr(first, "address"):
+    out: list[Any] = []
+    for msg in seq:
+      try:
+        out.extend(msg.can)
+      except Exception:
+        continue
+    return out
+
+  # SubMaster["can"]: already a list of CanData
+  return seq
+
+
 def meb_ignition_from_can(packets, now: float, last_on_ts: float | None):
   saw = False
-  for msg in packets:
+  for c in _as_can_frames(packets):
     try:
-      cans = msg.can
+      src = int(getattr(c, "src", 0))
+      addr = int(c.address)
     except Exception:
       continue
-    for c in cans:
-      if getattr(c, "src", 0) >= 128:
-        continue
-      if c.address != MEB_KLEMMEN_ADDR:
-        continue
-      saw = True
-      dat = bytes(c.dat)
-      if len(dat) >= 3 and (dat[2] & 0x02):
-        last_on_ts = now
+    if src >= 128:
+      continue
+    if addr != MEB_KLEMMEN_ADDR:
+      continue
+    saw = True
+    dat = bytes(c.dat)
+    if len(dat) >= 3 and (dat[2] & 0x02):
+      last_on_ts = now
   if last_on_ts is not None and (now - last_on_ts) < MEB_IGNITION_HOLD_S:
     return True, last_on_ts, saw
   return False, last_on_ts, saw

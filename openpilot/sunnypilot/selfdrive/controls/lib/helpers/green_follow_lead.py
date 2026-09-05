@@ -15,21 +15,27 @@ _DT_MDL = 0.05
 LEAD_QUEUE_M = 12.0
 LEAD_CLOSE_M = 8.0
 LEAD_MIN_D_M = 0.5
-LEAD_GO_SPEED_MPS = 0.4
-LEAD_GO_CONFIRM_S = 0.15
+# Congestion: lead often creeps <0.4 before we used to release.
+LEAD_GO_SPEED_MPS = 0.25
+LEAD_GO_CONFIRM_S = 0.05
 LEAD_GAP_M = 0.3
 FOLLOW_TIMEOUT_S = 4.0
-FOLLOW_LEAD_START_ACCEL = 1.1
-FOLLOW_LEAD_LAUNCH_V_EGO = 2.0
+FOLLOW_LEAD_START_ACCEL = 1.5
+FOLLOW_LEAD_LAUNCH_V_EGO = 2.5
 VISION_LEAD_PROB = 0.5
 
-# Bumper gap floor for a stopped/crawling lead. Target rest gap ~2–3 m.
+# Settle ~3.5–4 m behind a stopped lead. Farther than that: creep closed.
+# Closer: hard brake. Soft band only caps a fast approach, never freezes
+# the car at 5–6 m with a_target<=0.
 STOPPED_LEAD_V_MPS = 0.5
-STOPPED_LEAD_GAP_M = 2.5
-STOPPED_LEAD_SOFT_M = 4.5
-STOPPED_LEAD_HARD_A = -1.2
-STOPPED_LEAD_SOFT_A = -0.7
-STOPPED_LEAD_HOLD_A = -0.5
+STOPPED_LEAD_GAP_M = 3.8
+STOPPED_LEAD_SOFT_M = 8.0
+STOPPED_LEAD_HARD_A = -1.8
+STOPPED_LEAD_SOFT_A = -1.0
+STOPPED_LEAD_HOLD_A = -0.6
+STOPPED_LEAD_CLOSE_A = 0.7
+STOPPED_LEAD_CLOSE_V_MAX = 1.8
+RADAR_TO_CAMERA_M = 1.52
 
 
 @dataclass(frozen=True)
@@ -72,7 +78,8 @@ def _from_vision(sm: Any) -> LeadSnapshot | None:
     ml = _sm_get(sm, "modelV2").leadsV3[0]
     if float(ml.prob) <= VISION_LEAD_PROB:
       return None
-    d_rel = float(ml.x[0])
+    # leadsV3.x is camera-frame; align with radarState / bumper gap.
+    d_rel = float(ml.x[0]) - RADAR_TO_CAMERA_M
     v_lead = float(ml.v[0])
     if not (LEAD_MIN_D_M < d_rel <= LEAD_QUEUE_M):
       return None
@@ -102,7 +109,7 @@ def follow_lead_soft_launch(sm: Any, v_ego: float) -> bool:
 
 
 def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: bool) -> tuple[float, bool]:
-  """Hard floor behind a stopped lead so E2E cannot creep into the bumper."""
+  """Keep ~3.5–4 m behind a stopped lead; creep closed if farther in traffic."""
   lead = read_follow_lead(sm)
   if not lead.present or lead.v_lead >= STOPPED_LEAD_V_MPS:
     return float(a_target), bool(should_stop)
@@ -113,10 +120,19 @@ def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: 
 
   if d_rel < STOPPED_LEAD_GAP_M:
     should_stop = True
-    brake = STOPPED_LEAD_HARD_A if v_ego > 0.2 else STOPPED_LEAD_HOLD_A
+    brake = STOPPED_LEAD_HARD_A if v_ego > 0.15 else STOPPED_LEAD_HOLD_A
     a_target = min(float(a_target), brake)
-  elif d_rel < STOPPED_LEAD_SOFT_M and v_ego > 0.5:
-    a_target = min(float(a_target), STOPPED_LEAD_SOFT_A)
+    return float(a_target), bool(should_stop)
+
+  if d_rel < STOPPED_LEAD_SOFT_M:
+    # Too far behind a stopped bumper: gently close instead of freezing.
+    if v_ego > STOPPED_LEAD_CLOSE_V_MAX:
+      a_target = min(float(a_target), STOPPED_LEAD_SOFT_A)
+    else:
+      should_stop = False
+      a_target = min(max(float(a_target), STOPPED_LEAD_CLOSE_A * 0.5), STOPPED_LEAD_CLOSE_A)
+    return float(a_target), bool(should_stop)
+
   return float(a_target), bool(should_stop)
 
 
