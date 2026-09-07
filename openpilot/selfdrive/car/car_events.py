@@ -4,6 +4,7 @@ from opendbc.car import DT_CTRL, structs
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import MAX_CTRL_SPEED
 from opendbc.car.toyota.values import ToyotaFlags
+from opendbc.car.volkswagen.values import VolkswagenFlags
 
 from openpilot.selfdrive.selfdrived.events import Events
 
@@ -170,9 +171,11 @@ class CarEvents:
       else:
         self.no_steer_warning = False
 
-        # VW MEB: P→D / EPS HCA init sets steerFaultTemporary at standstill.
-        # Keep lateral gated, but don't toast or send cluster laneAssistTakeOver.
-        if self.CP.brand == 'volkswagen' and CS.standstill and not CS.cruiseState.enabled:
+        # VW MEB: HCA REJECTED/PREEMPTED/init sets steerFaultTemporary. latActive is
+        # already gated in controlsd; steerTempUnavailable(Silent) still sets
+        # VisualAlert.steerRequired → LDW「车道保持」cluster flash. Mute events.
+        meb = self.CP.brand == 'volkswagen' and bool(self.CP.flags & VolkswagenFlags.MEB)
+        if meb:
           self.silent_steer_warning = True
         # if the user overrode recently, show a less harsh alert
         elif self.silent_steer_warning or CS.standstill or self.steering_unpressed < int(1.5 / DT_CTRL):
