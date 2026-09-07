@@ -65,9 +65,18 @@ class TestDynamicExperimentalController(OpenpilotTestCase):
   def test_standstill_triggers_blended(self, mock_cp, mock_mpc, default_sm):
     controller = DynamicExperimentalController(mock_cp, mock_mpc, params=MockParams())
     default_sm['carState'].standstill = True
+    default_sm['radarState'].leadOne.present = False
     for _ in range(10):
       controller.update(default_sm)
     assert controller.mode() == "blended"
+
+  def test_standstill_with_lead_stays_acc(self, mock_cp, mock_mpc, default_sm):
+    controller = DynamicExperimentalController(mock_cp, mock_mpc, params=MockParams())
+    default_sm['carState'].standstill = True
+    default_sm['radarState'].leadOne.present = True
+    for _ in range(10):
+      controller.update(default_sm)
+    assert controller.mode() == "acc"
 
   def test_emergency_blended_on_fcw(self, mock_cp, mock_mpc, default_sm):
     controller = DynamicExperimentalController(mock_cp, mock_mpc, params=MockParams())

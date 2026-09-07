@@ -1,9 +1,10 @@
 """Hold after a vision stop, or IQ-link red, until a stable go.
 
 Vision-only: ~1 s dwell after the model stops asking to stop.
-IQ-link: remainS==1 is immediate only if GreenFollowLeadGate agrees;
-APK green still dwells ~1 s, then the same lead gate. After a nav go,
-sticky vision-stop does not re-arm until the car moves.
+IQ-link: remainS==1 is immediate after a short flicker filter if
+GreenFollowLeadGate agrees; APK green dwells ~1 s, then the same lead
+gate. Sticky red keeps pinning briefly when BLE drops executable.
+After a nav go, sticky vision-stop does not re-arm until the car moves.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead impor
   FOLLOW_LEAD_LAUNCH_V_EGO,
   FOLLOW_LEAD_START_ACCEL,
   LEAD_GO_SPEED_MPS,
-  STOPPED_LEAD_GAP_M,
+  STOPPED_LEAD_CREEP_M,
   GreenFollowLeadGate,
   follow_lead_soft_launch,
   read_follow_lead,
@@ -20,9 +21,31 @@ from openpilot.sunnypilot.nav.snapshot import NavSnapshot, read_snapshot, snapsh
 
 _STANDSTILL_HOLD_RELEASE_S = 1.0
 _STANDSTILL_HOLD_LEAD_RELEASE_S = 0.15
+_REMAIN_GO_CONFIRM_S = 0.15  # 3 frames @ 50 ms — filter single-packet false go
+_STICKY_RED_TTL_S = 8.0
+_GO_LAUNCH_FLOOR_A = 0.4
 _DT_MDL = 0.05
 _RELEASE_V_EGO = 2.0
 _STANDSTILL_V = 0.3
+
+
+def left_arrow_red(snap: NavSnapshot) -> bool:
+  """Left-turn TBT + red: keep pin even if approach curve still has speed."""
+  return (
+    str(snap.traffic_light or "").strip().lower() == "red"
+    and bool(snap.send_turn)
+    and str(snap.maneuver_dir or "") == "left"
+    and not bool(snap.remain_go)
+  )
+
+
+def _right_turn_pending(snap: NavSnapshot) -> bool:
+  # Match protocol RTOR: near right turn must not sticky-arm a red pin.
+  return (
+    str(snap.maneuver or "") == "turn"
+    and str(snap.maneuver_dir or "") == "right"
+    and 0.0 < float(snap.tbt_dist or 0.0) <= 150.0
+  )
 
 
 class StandstillHold:
@@ -32,6 +55,10 @@ class StandstillHold:
     self.hold_released = False
     self._follow = GreenFollowLeadGate()
     self._nav_go_latched = False
+    self.sticky_red = False
+    self._sticky_until = 0.0
+    self._remain_go_s = 0.0
+    self.red_pin = False
 
   def reset(self) -> None:
     self.hold = False
@@ -39,6 +66,36 @@ class StandstillHold:
     self.hold_released = False
     self._follow.reset()
     self._nav_go_latched = False
+    self.sticky_red = False
+    self._sticky_until = 0.0
+    self._remain_go_s = 0.0
+    self.red_pin = False
+
+  def _clear_sticky(self) -> None:
+    self.sticky_red = False
+    self._sticky_until = 0.0
+
+  def observe_nav(self, snap: NavSnapshot, now: float, *, gas: bool, v_ego: float) -> None:
+    """Arm / expire sticky red. Speed-limit stale rules stay separate."""
+    if gas or v_ego > _RELEASE_V_EGO or not snap.iqlink_enabled:
+      self._clear_sticky()
+      self.red_pin = False
+      self._remain_go_s = 0.0
+      return
+
+    live = snapshot_executable(snap, now=now)
+    live_red = bool(live and snap.stop_for_light)
+    live_left = bool(live and left_arrow_red(snap))
+    # Never sticky-arm across an active RTOR exemption.
+    if (live_red or live_left) and not _right_turn_pending(snap):
+      self.sticky_red = True
+      self._sticky_until = float(now) + _STICKY_RED_TTL_S
+    elif self.sticky_red and float(now) > self._sticky_until:
+      self._clear_sticky()
+
+    self.red_pin = bool(
+      (live_red or live_left or self.sticky_red) and not _right_turn_pending(snap)
+    )
 
   def apply(self, should_stop: bool, a_target: float, v_ego: float, *,
             standstill: bool, gas: bool, model_stop: bool,
@@ -47,15 +104,46 @@ class StandstillHold:
       self.reset()
       return should_stop, a_target
 
-    snap = read_snapshot() if sm is not None else NavSnapshot()
-    nav_live = snapshot_executable(snap, now=now)
-    follow_sm = sm if sm is not None else {}
     clock = float(now) if now is not None else 0.0
+    snap = read_snapshot() if sm is not None else NavSnapshot()
+    self.observe_nav(snap, clock, gas=False, v_ego=v_ego)
+
+    nav_live = snapshot_executable(snap, now=clock)
+    follow_sm = sm if sm is not None else {}
     lead = read_follow_lead(follow_sm)
     lead_rolling = bool(lead.present and lead.v_lead >= LEAD_GO_SPEED_MPS)
     closing_gap = bool(
-      lead.present and lead.v_lead < LEAD_GO_SPEED_MPS and lead.d_rel > STOPPED_LEAD_GAP_M
+      lead.present and lead.v_lead < LEAD_GO_SPEED_MPS and lead.d_rel > STOPPED_LEAD_CREEP_M
     )
+
+    # remainS==1 must be live; require ~3 frames to filter a single false packet.
+    if nav_live and snap.remain_go:
+      self._remain_go_s += _DT_MDL
+    else:
+      self._remain_go_s = 0.0
+    remain_go = self._remain_go_s >= _REMAIN_GO_CONFIRM_S
+
+    apk_green = bool(nav_live and snap.apk_green)
+    nav_go = remain_go or apk_green
+    follow_ok = self._follow.may_release(now=clock, nav_go=nav_go, sm=follow_sm)
+
+    # Explicit go clears sticky so a fresh green is not re-pinned.
+    if remain_go and follow_ok:
+      self._clear_sticky()
+      self.red_pin = False
+      self.hold = False
+      self.hold_s = 0.0
+      self.hold_released = True
+      self._nav_go_latched = True
+      return False, max(float(a_target), _GO_LAUNCH_FLOOR_A)
+
+    # Nav / sticky red (no confirmed go): pin including while creeping.
+    if self.red_pin and not (remain_go and follow_ok):
+      self.hold = True
+      self.hold_s = 0.0
+      self.hold_released = False
+      self._nav_go_latched = False
+      return True, min(float(a_target), -1.0)
 
     at_rest = standstill or v_ego <= _STANDSTILL_V
     if not at_rest:
@@ -66,21 +154,8 @@ class StandstillHold:
         self.hold_s = 0.0
       return should_stop, a_target
 
-    nav_red = bool(nav_live and snap.stop_for_light)
-    remain_go = bool(nav_live and snap.remain_go)
-    apk_green = bool(nav_live and snap.apk_green)
-    nav_go = remain_go or apk_green
-    follow_ok = self._follow.may_release(now=clock, nav_go=nav_go, sm=follow_sm)
-
-    if nav_red and not (remain_go and follow_ok):
-      self.hold = True
-      self.hold_s = 0.0
-      self.hold_released = False
-      return True, min(float(a_target), 0.0)
-
-    # Congestion: lead already rolling, or we are intentionally closing a
-    # too-large gap behind a stopped bumper — do not keep the 1 s pin.
-    if (lead_rolling or closing_gap) and not nav_red:
+    # Congestion: lead already rolling, or closing a too-large gap.
+    if lead_rolling or closing_gap:
       release_s = _STANDSTILL_HOLD_LEAD_RELEASE_S if lead_rolling else 0.0
       if self.hold:
         self.hold_s += _DT_MDL
@@ -89,14 +164,10 @@ class StandstillHold:
         self.hold = False
         self.hold_s = 0.0
         self.hold_released = True
-      return should_stop, float(a_target)
-
-    if remain_go and follow_ok:
-      self.hold = False
-      self.hold_s = 0.0
-      self.hold_released = True
-      self._nav_go_latched = True
-      return False, float(a_target)
+      a_out = float(a_target)
+      if lead_rolling:
+        a_out = max(a_out, _GO_LAUNCH_FLOOR_A)
+      return should_stop, a_out
 
     if apk_green:
       if not follow_ok:
@@ -112,10 +183,11 @@ class StandstillHold:
         self.hold = False
         self.hold_released = True
         self._nav_go_latched = True
-        return False, float(a_target)
+        self._clear_sticky()
+        self.red_pin = False
+        return False, max(float(a_target), _GO_LAUNCH_FLOOR_A)
 
     if self._nav_go_latched:
-      # Green already released: do not re-pin on sticky vision stop.
       return should_stop, a_target
 
     arm = should_stop if self.hold_released else (should_stop or model_stop)
@@ -138,12 +210,9 @@ def apply_follow_launch(sm, v_ego: float, a_target: float) -> float:
   lead = read_follow_lead(sm)
   if not lead.present:
     return float(a_target)
-  # Lead already rolling: do not keep the queued-launch cap.
   if lead.v_lead >= LEAD_GO_SPEED_MPS:
     return float(a_target)
-  # Closing a too-large gap behind a still-stopped lead: allow the creep
-  # accel from apply_stopped_lead_gap instead of the 1.x queue floor only.
-  if lead.d_rel > STOPPED_LEAD_GAP_M:
+  if lead.d_rel > STOPPED_LEAD_CREEP_M:
     return float(a_target)
   if follow_lead_soft_launch(sm, v_ego):
     return min(float(a_target), FOLLOW_LEAD_START_ACCEL)

@@ -96,7 +96,7 @@ class CruiseLayout(Widget):
       title=tr("Traffic Stop Offset"),
       description=tr("Brake this far short of the model's stop point at a red light or stop. Does not change follow gap. 0 disables."),
       param="TrafficStopOffset",
-      min_value=0, max_value=600, value_change_step=50,
+      min_value=0, max_value=1000, value_change_step=50,
       use_float_scaling=True,
       label_callback=lambda x: f"{x / 100:.1f} m",
       inline=True)

@@ -18,6 +18,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_soft_curve import n
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
   apply_stopped_lead_gap, follow_lead_present,
 )
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import apply_lead_stop_safety
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import StandstillHold, apply_follow_launch
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
@@ -33,10 +34,10 @@ LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
 
 
 class LongitudinalPlannerSP:
-  def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP, mpc):
+  def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP, mpc, *, enable_dec: bool = True):
     self.events_sp = EventsSP()
     self.resolver = SpeedLimitResolver()
-    self.dec = DynamicExperimentalController(CP, mpc)
+    self.dec = DynamicExperimentalController(CP, mpc) if enable_dec else None
     self.scc = SmartCruiseControl()
     self.resolver = SpeedLimitResolver()
     self.sla = SpeedLimitAssist(CP, CP_SP)
@@ -51,8 +52,29 @@ class LongitudinalPlannerSP:
     self.output_a_target = 0.
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
+    # Never blend e2e into a present lead — ACC/MPC owns the gap.
+    try:
+      if sm['radarState'].leadOne.present:
+        return False
+    except Exception:
+      pass
+    # Nav red / sticky red / crawling vision stop: e2e positive accel causes creep→slam.
+    if getattr(self.standstill_hold, "red_pin", False):
+      return False
+    try:
+      snap = read_snapshot()
+      if snapshot_executable(snap) and snap.stop_for_light:
+        return False
+    except Exception:
+      pass
+    try:
+      CS = sm['carState']
+      if (CS.standstill or float(CS.vEgo) <= 0.6) and bool(sm['modelV2'].action.shouldStop):
+        return False
+    except Exception:
+      pass
     experimental_mode = sm['selfdriveState'].experimentalMode
-    if not self.dec.active():
+    if self.dec is None or not self.dec.active():
       return experimental_mode
 
     return experimental_mode and self.dec.mode() == "blended"
@@ -137,27 +159,50 @@ class LongitudinalPlannerSP:
       lead = sm['radarState'].leadOne
     except Exception:
       return a_target, should_stop
+    now = time.monotonic()
+    snap = read_snapshot()
+    # Arm sticky red before lead-gap / e2e so a stale link cannot re-enable creep.
+    self.standstill_hold.observe_nav(
+      snap, now, gas=bool(CS.gasPressed), v_ego=float(v_ego),
+    )
+    red_pin = bool(self.standstill_hold.red_pin)
+
     has_lead = follow_lead_present(sm) or bool(getattr(lead, "present", False))
+    try:
+      lead_d_rel = float(getattr(lead, "dRel", 0.0) or 0.0) if has_lead else None
+    except (TypeError, ValueError):
+      lead_d_rel = None
     model_stop = bool(getattr(model.action, "shouldStop", False))
     self.traffic_stop_offset.update()
     a_target, should_stop = self.traffic_stop_offset.adjust(
       a_target, should_stop, v_ego, model,
       stop_light=model_stop, has_lead=has_lead, right_blinker=bool(CS.rightBlinker),
+      lead_d_rel=lead_d_rel,
     )
-    a_target, should_stop = apply_stopped_lead_gap(sm, v_ego, a_target, should_stop)
-    snap = read_snapshot()
-    if snapshot_executable(snap) and snap.stop_for_light:
-      a_target = min(float(a_target), float(snap.accel_target))
-      if snap.speed_target <= 0.05:
+    a_target, should_stop = apply_stopped_lead_gap(
+      sm, v_ego, a_target, should_stop, red_pin=red_pin, model_stop=model_stop,
+    )
+    a_target, should_stop = apply_lead_stop_safety(sm, v_ego, a_target, should_stop)
+    if red_pin or (snapshot_executable(snap, now=now) and snap.stop_for_light):
+      # Never let lead-gap creep / e2e leave should_stop=False under a red.
+      # Approach speed is only for high-speed braking; once crawling or near
+      # the line, hard-stop or MEB RELEASE → creep → slam.
+      a_target = min(float(a_target), float(snap.accel_target if snap.stop_for_light else -2.0))
+      near_line = snap.dist_m <= 0.0 or 0.0 < snap.dist_m <= 12.0 or snap.speed_target <= 0.5
+      if v_ego <= 1.5 or near_line or red_pin:
         should_stop = True
+        if v_ego <= 0.6 or red_pin:
+          a_target = min(float(a_target), -1.0)
     should_stop, a_target = self.standstill_hold.apply(
       should_stop, a_target, v_ego,
       standstill=bool(CS.standstill), gas=bool(CS.gasPressed), model_stop=model_stop,
-      sm=sm, now=time.monotonic(),
+      sm=sm, now=now,
     )
     a_target = apply_follow_launch(sm, v_ego, a_target)
     approaching = junction_stop_active(
-      has_lead=has_lead, nav_red=bool(snap.stop_for_light), model_stop=model_stop,
+      has_lead=has_lead,
+      nav_red=bool(self.standstill_hold.red_pin or snap.stop_for_light),
+      model_stop=model_stop,
       standstill_hold=self.standstill_hold.hold, light=snap.light_token,
     )
     write_cluster_hud(approaching=approaching and not bool(CS.standstill),
@@ -166,8 +211,22 @@ class LongitudinalPlannerSP:
 
   def update(self, sm: messaging.SubMaster) -> None:
     self.events_sp.clear()
-    self.dec.update(sm)
+    self._update_backend(sm)
     self.e2e_alerts_helper.update(sm, self.events_sp)
+
+  def _update_backend(self, sm: messaging.SubMaster) -> None:
+    """Backend extension point; the upstream provider keeps DEC unchanged."""
+    if self.dec is not None:
+      self.dec.update(sm)
+
+  def _publish_backend_state(self, longitudinal_plan_sp) -> None:
+    """Publish backend-specific diagnostics without forking the common plan."""
+    if self.dec is None:
+      return
+    dec = longitudinal_plan_sp.dec
+    dec.state = DecState.blended if self.dec.mode() == 'blended' else DecState.acc
+    dec.enabled = self.dec.enabled()
+    dec.active = self.dec.active()
 
   def publish_longitudinal_plan_sp(self, sm: messaging.SubMaster, pm: messaging.PubMaster) -> None:
     plan_sp_send = messaging.new_message('longitudinalPlanSP')
@@ -180,11 +239,7 @@ class LongitudinalPlannerSP:
     longitudinalPlanSP.aTarget = float(self.output_a_target)
     longitudinalPlanSP.events = self.events_sp.to_msg()
 
-    # Dynamic Experimental Control
-    dec = longitudinalPlanSP.dec
-    dec.state = DecState.blended if self.dec.mode() == 'blended' else DecState.acc
-    dec.enabled = self.dec.enabled()
-    dec.active = self.dec.active()
+    self._publish_backend_state(longitudinalPlanSP)
 
     # Smart Cruise Control
     smartCruiseControl = longitudinalPlanSP.smartCruiseControl

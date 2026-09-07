@@ -342,9 +342,15 @@ class DynamicExperimentalController:
       self._mode_manager.request_mode('blended', confidence=1.0, emergency=True)
       return
 
-    # If lead detected and not in standstill: always use ACC
-    if self._has_lead_filtered and not (self._standstill_count > 3):
+    # Lead present: always ACC (including standstill). Blended at standstill
+    # behind a bumper was letting e2e creep into <2 m gaps.
+    if self._has_lead_filtered:
       self._mode_manager.request_mode('acc', confidence=1.0)
+      return
+
+    # No lead + standstill: blended (vision / traffic-light stops)
+    if self._standstill_count > 3:
+      self._mode_manager.request_mode('blended', confidence=0.9)
       return
 
     # Slow down scenarios: emergency for high urgency, normal for lower urgency
@@ -356,11 +362,6 @@ class DynamicExperimentalController:
         # Normal: blended with urgency-based confidence
         confidence = min(1.0, self._urgency * 1.3)
         self._mode_manager.request_mode('blended', confidence=confidence)
-      return
-
-    # Standstill: use blended
-    if self._standstill_count > 3:
-      self._mode_manager.request_mode('blended', confidence=0.9)
       return
 
     # Driving slow: use ACC (but not if actively slowing down)

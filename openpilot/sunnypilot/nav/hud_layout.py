@@ -27,12 +27,34 @@ CAPSULE_GAP = 8
 CAPSULE_RIGHT_PAD = 16
 # Lane-change / turn guide sits under the junction signal bar.
 # Badge centers on the signal column; title x matches junction headline.
+# Chinese type: 红灯+米/秒 capsules ~52; 前方停车 (detail, no capsules) = 44.
+HUD_CN_HEAD = 52
+HUD_CN_STOP = 44  # 前方停车 / short headline with side detail
+HUD_CN_DETAIL = 34
 LANE_GUIDE_GAP = 10
 LANE_GUIDE_HEIGHT = 120
 LANE_BADGE_W = 52  # fill the SIGNAL_W column
-HUD_CN_HEAD = 52
-HUD_CN_DETAIL = 34
 LANE_TEXT_SIZE = HUD_CN_HEAD
+# eGPU strip: title + 12V chip match 前方停车 (44), not the taller 红灯 size.
+EGPU_HUD_GAP = 10
+EGPU_HUD_HEIGHT = 372
+EGPU_HUD_HEIGHT_COMPACT = 148
+EGPU_HEAD_SIZE = HUD_CN_STOP
+EGPU_DETAIL_SIZE = HUD_CN_DETAIL
+EGPU_TILE_VALUE = 40
+EGPU_TILE_UNIT = 22
+EGPU_TILE_GAP = 12
+EGPU_TILE_LINE_GAP = 10
+EGPU_DC_VALUE = HUD_CN_STOP  # 开/关/未启用 — same size as 前方停车
+EGPU_DC_UNIT = HUD_CN_STOP   # "12V" label
+EGPU_DC_PILL_H = 64
+EGPU_DC_PILL_GAP = 8
+EGPU_DC_PILL_PAD = 22
+EGPU_DC_PILL_MIN = 118
+# Accent rail, then the same inset as the 12V chip uses on the right.
+EGPU_RAIL_X = 6
+EGPU_RAIL_W = 4
+EGPU_PAD = CAPSULE_RIGHT_PAD
 
 
 @dataclass(frozen=True)
@@ -75,3 +97,18 @@ def lane_guide_rect(hud_x: float, hud_y: float, *, metric: bool = True) -> HudBa
   """Same width as junction bar; sits directly underneath with a small gap."""
   bar = junction_bar_rect(hud_x, hud_y, metric=metric)
   return HudBand(bar.x, bar.y + bar.h + LANE_GUIDE_GAP, bar.w, float(LANE_GUIDE_HEIGHT))
+
+
+def egpu_status_rect(hud_x: float, hud_y: float, *, metric: bool = True,
+                     lane_guide: bool = False, compact: bool = False) -> HudBand:
+  """Same width as junction bar; under lane-guide when present, else under the light bar."""
+  above = lane_guide_rect(hud_x, hud_y, metric=metric) if lane_guide else junction_bar_rect(
+    hud_x, hud_y, metric=metric,
+  )
+  height = EGPU_HUD_HEIGHT_COMPACT if compact else EGPU_HUD_HEIGHT
+  return HudBand(above.x, above.y + above.h + EGPU_HUD_GAP, above.w, float(height))
+
+
+def dc_pill_width(unit_w: float, value_w: float) -> float:
+  """12V chip width: text plus equal side padding so long labels like 未启用 fit."""
+  return max(EGPU_DC_PILL_MIN, unit_w + EGPU_DC_PILL_GAP + value_w + EGPU_DC_PILL_PAD * 2)

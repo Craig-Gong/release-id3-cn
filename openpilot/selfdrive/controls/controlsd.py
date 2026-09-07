@@ -18,7 +18,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
-from openpilot.selfdrive.controls.lib.longcontrol import LongControl
+from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_backends.longcontrol_factory import create_long_control
 from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 
@@ -56,7 +56,7 @@ class Controls(ControlsExt):
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
 
-    self.LoC = LongControl(self.CP, self.CP_SP)
+    self.LoC = create_long_control(self.CP, self.CP_SP)
     self.VM = VehicleModel(self.CP)
     self.LaC: LatControl
     if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
@@ -90,19 +90,19 @@ class Controls(ControlsExt):
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
-    # NNLC lives on LatControlTorque.extension. MEB is LatControlCurvature:
-    # CarParams can still say torque (stale/NNLC) while LaC has no extension.
-    # Gate on the live controller, not lateralTuning.which().
-    ext = getattr(self.LaC, "extension", None)
-    if ext is not None:
+    # Torque helpers only exist on torque lat controllers. MEB ID.3 is
+    # curvature/angle even when opendbc fills a torque tune blob.
+    if self.CP.lateralTuning.which() == 'torque' and hasattr(self.LaC, "extension"):
       torque_params = self.sm['lateralTorqueParameters']
       if self.sm.all_checks(['lateralTorqueParameters']) and torque_params.useParams:
         self.LaC.update_torque_parameters(torque_params.latAccelFactorFiltered, torque_params.latAccelOffsetFiltered,
                                            torque_params.frictionCoefficientFiltered)
-        ext.update_limits()
-      ext.update_model_v2(self.sm['modelV2'])
-      if hasattr(self, "lat_delay"):
-        ext.update_lateral_lag(self.lat_delay)
+
+        self.LaC.extension.update_limits()
+
+      self.LaC.extension.update_model_v2(self.sm['modelV2'])
+
+      self.LaC.extension.update_lateral_lag(self.lat_delay)
 
     long_plan = self.sm['longitudinalPlan']
     model_v2 = self.sm['modelV2']
@@ -226,14 +226,15 @@ class Controls(ControlsExt):
     # trigger the car's stock driver monitoring escalation
     CC.driverMonitoringEscalation = cs.forceDecel
 
-    lat_tuning = self.CP.lateralTuning.which()
-    if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
+    # Publish the union that matches the live controller, not CarParams.
+    # MEB ID.3 is curvature even when opendbc also fills a torque tune blob.
+    if isinstance(self.LaC, LatControlAngle):
       cs.lateralControlState.angleState = lac_log
-    elif self.CP.steerControlType == car.CarParams.SteerControlType.curvature:
+    elif isinstance(self.LaC, LatControlCurvature):
       cs.lateralControlState.curvatureState = lac_log
-    elif lat_tuning == 'pid':
+    elif isinstance(self.LaC, LatControlPID):
       cs.lateralControlState.pidState = lac_log
-    elif lat_tuning == 'torque':
+    else:
       cs.lateralControlState.torqueState = lac_log
 
     self.pm.send('controlsState', dat)

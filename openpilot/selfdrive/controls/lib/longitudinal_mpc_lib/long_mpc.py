@@ -9,6 +9,9 @@ from openpilot.common.swaglog import cloudlog
 # WARNING: imports outside of constants will not trigger a rebuild
 from openpilot.selfdrive.modeld.constants import index_function
 from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
+from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_backends.tuning import (
+  LongitudinalTuning, TuningController, adjusted_obstacle, follow_distance_for_personality,
+)
 
 if __name__ == '__main__':  # generating code
   from acados.acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
@@ -54,6 +57,8 @@ T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
+# Baked into acados (c_generated_code/long_cost). Runtime settle gap is
+# LongitudinalTuning.stop_distance (default 3.5 m) via adjusted_obstacle.
 STOP_DISTANCE = 4.0
 MIN_X_LEAD_FACTOR = 0.5
 
@@ -77,6 +82,7 @@ def get_T_FOLLOW(personality=log.LongitudinalPersonality.standard):
     return 1.25
   else:
     raise NotImplementedError("Longitudinal personality not supported")
+
 
 def get_stopped_equivalence_factor(v_lead):
   return (v_lead**2) / (2 * COMFORT_BRAKE)
@@ -214,9 +220,18 @@ def gen_long_ocp():
 class LongitudinalMpc:
   def __init__(self, dt=DT_MDL):
     self.dt = dt
+    self.runtime_tuning = LongitudinalTuning()
+    self._tuning_controller = None
     self.solver = AcadosOcpSolverCython(MODEL_NAME, ACADOS_SOLVER_TYPE, N)
     self.reset()
     self.source = LongitudinalPlanSource.cruise
+
+  def configure_runtime_tuning(self, params, backend) -> None:
+    self._tuning_controller = TuningController(params, backend)
+
+  def _refresh_runtime_tuning(self) -> None:
+    if self._tuning_controller is not None:
+      self.runtime_tuning = self._tuning_controller.update(self.dt)
 
   def reset(self):
     self.solver.reset()
@@ -262,11 +277,25 @@ class LongitudinalMpc:
       self.solver.cost_set(i, 'Zl', Zl)
 
   def set_weights(self, prev_accel_constraint=True, personality=log.LongitudinalPersonality.standard):
+    self._refresh_runtime_tuning()
     jerk_factor = get_jerk_factor(personality)
-    a_change_cost = A_CHANGE_COST if prev_accel_constraint else 0
-    cost_weights = [X_EGO_OBSTACLE_COST, X_EGO_COST, V_EGO_COST, A_EGO_COST, jerk_factor * a_change_cost, jerk_factor * J_EGO_COST]
-    constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, DANGER_ZONE_COST]
+    if personality == log.LongitudinalPersonality.relaxed:
+      jerk_factor *= self.runtime_tuning.jerk_factor_relaxed
+    a_change_cost = self.runtime_tuning.a_change_cost if prev_accel_constraint else 0
+    jerk_factor = self._scale_backend_jerk_factor(jerk_factor)
+    cost_weights = [self.runtime_tuning.x_ego_obstacle_cost, X_EGO_COST, V_EGO_COST, A_EGO_COST,
+                    jerk_factor * a_change_cost, jerk_factor * self.runtime_tuning.j_ego_cost]
+    constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, self.runtime_tuning.danger_zone_cost]
     self.set_cost_weights(cost_weights, constraint_cost_weights)
+
+  def _scale_backend_jerk_factor(self, jerk_factor: float) -> float:
+    return jerk_factor
+
+  def _apply_backend_params(self) -> None:
+    pass
+
+  def _save_backend_solution_status(self) -> None:
+    pass
 
   def set_cur_state(self, v, a):
     v_prev = self.x0[1]
@@ -308,7 +337,7 @@ class LongitudinalMpc:
     return lead_xv
 
   def update(self, radarstate, personality=log.LongitudinalPersonality.standard):
-    t_follow = get_T_FOLLOW(personality)
+    t_follow = follow_distance_for_personality(personality, self.runtime_tuning)
 
     lead_xv_0 = self.process_lead(radarstate.leadOne)
     lead_xv_1 = self.process_lead(radarstate.leadTwo)
@@ -318,6 +347,8 @@ class LongitudinalMpc:
     # and then treat that as a stopped car/obstacle at this new distance.
     lead_0_obstacle = lead_xv_0[:,0] + get_stopped_equivalence_factor(lead_xv_0[:,1])
     lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
+    lead_0_obstacle = adjusted_obstacle(lead_0_obstacle, lead_xv_0[:,1], self.x0[1], self.runtime_tuning, t_follow)
+    lead_1_obstacle = adjusted_obstacle(lead_1_obstacle, lead_xv_1[:,1], self.x0[1], self.runtime_tuning, t_follow)
 
     x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle])
     self.source = MPC_SOURCES[np.argmin(x_obstacles[0])]
@@ -332,11 +363,14 @@ class LongitudinalMpc:
     self.params[:,2] = np.min(x_obstacles, axis=1)
     self.params[:,3] = np.copy(self.a_prev)
     self.params[:,4] = t_follow
-    self.params[:,5] = LEAD_DANGER_FACTOR
+    self.params[:,5] = self.runtime_tuning.lead_danger_factor
+    self._apply_backend_params()
 
     self.run()
-    if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and
-            radarstate.leadOne.modelProb > 0.9):
+    lead_close = np.any(lead_xv_0[FCW_IDXS, 0] - self.x_sol[FCW_IDXS, 0] < CRASH_DISTANCE)
+    # Radar-only stationary leads report modelProb=0; still count for FCW.
+    lead_trusted = bool(radarstate.leadOne.modelProb > 0.9 or radarstate.leadOne.radar)
+    if lead_close and lead_trusted and radarstate.leadOne.present:
       self.crash_cnt += 1
     else:
       self.crash_cnt = 0
@@ -348,6 +382,7 @@ class LongitudinalMpc:
     self.solver.constraints_set(0, "ubx", self.x0)
 
     self.solution_status = self.solver.solve()
+    self._save_backend_solution_status()
     self.solve_time = float(self.solver.get_stats('time_tot')[0])
 
     for i in range(N+1):
