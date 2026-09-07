@@ -22,10 +22,11 @@ def _model_msg(stop_distance, end_velocity):
 
 
 def _adjust(c, a_target=-0.1, should_stop=False, v_ego=8.0, stop_distance=12.0, end_velocity=0.0,
-            stop_light=True, has_lead=False, right_blinker=False):
+            stop_light=True, has_lead=False, right_blinker=False, lead_d_rel=None):
   return c.adjust(
     a_target, should_stop, v_ego, _model_msg(stop_distance, end_velocity),
     stop_light=stop_light, has_lead=has_lead, right_blinker=right_blinker,
+    lead_d_rel=lead_d_rel,
   )
 
 
@@ -33,8 +34,22 @@ def test_zero_offset_is_a_no_op():
   assert _adjust(_build(0), a_target=-0.2) == (-0.2, False)
 
 
-def test_lead_is_a_no_op():
-  assert _adjust(_build(3), a_target=-0.2, has_lead=True) == (-0.2, False)
+def test_lead_short_of_stop_is_a_no_op():
+  assert _adjust(_build(3), a_target=-0.2, has_lead=True, lead_d_rel=8.0, stop_distance=20.0) == (-0.2, False)
+
+
+def test_phantom_lead_past_stop_still_offsets():
+  a_target, should_stop = _adjust(
+    _build(3), a_target=0.0, v_ego=8.0, stop_distance=4.0, end_velocity=0.5,
+    has_lead=True, lead_d_rel=6.0,
+  )
+  assert a_target < 0.0
+  assert a_target >= ACCEL_MIN
+  assert should_stop is False
+
+
+def test_lead_without_distance_stays_conservative():
+  assert _adjust(_build(3), a_target=-0.2, has_lead=True, lead_d_rel=None) == (-0.2, False)
 
 
 def test_right_blinker_is_a_no_op():
@@ -47,6 +62,12 @@ def test_no_stop_light_is_a_no_op():
 
 def test_stop_sign_plan_is_untouched():
   assert _adjust(_build(3), a_target=-0.2, end_velocity=5.0) == (-0.2, False)
+
+
+def test_soft_should_stop_plan_still_offsets():
+  a_target, should_stop = _adjust(_build(3), a_target=0.0, v_ego=8.0, stop_distance=12.0, end_velocity=1.5)
+  assert a_target < 0.0
+  assert should_stop is False
 
 
 def test_deepens_braking_short_of_model_stop():
@@ -72,5 +93,6 @@ def test_sanitize_keeps_half_meter_steps():
   assert _sanitize_offset_m(3.2) == 3.0
   assert _sanitize_offset_m(3.3) == 3.5
   assert _sanitize_offset_m(-1) == 0.0
-  assert _sanitize_offset_m(9) == 6.0
+  assert _sanitize_offset_m(9) == 9.0
+  assert _sanitize_offset_m(12) == 10.0
   assert _sanitize_offset_m("nope") == 3.0

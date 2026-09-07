@@ -57,6 +57,8 @@ T_IDXS = np.array(T_IDXS_LST)
 FCW_IDXS = T_IDXS < 5.0
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
+# Baked into acados (c_generated_code/long_cost). Runtime settle gap is
+# LongitudinalTuning.stop_distance (default 3.5 m) via adjusted_obstacle.
 STOP_DISTANCE = 4.0
 MIN_X_LEAD_FACTOR = 0.5
 
@@ -365,8 +367,10 @@ class LongitudinalMpc:
     self._apply_backend_params()
 
     self.run()
-    if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and
-            radarstate.leadOne.modelProb > 0.9):
+    lead_close = np.any(lead_xv_0[FCW_IDXS, 0] - self.x_sol[FCW_IDXS, 0] < CRASH_DISTANCE)
+    # Radar-only stationary leads report modelProb=0; still count for FCW.
+    lead_trusted = bool(radarstate.leadOne.modelProb > 0.9 or radarstate.leadOne.radar)
+    if lead_close and lead_trusted and radarstate.leadOne.present:
       self.crash_cnt += 1
     else:
       self.crash_cnt = 0

@@ -16,7 +16,8 @@ _EXIT = {6, 11}
 
 _RED_LIGHT_ACCEL = -2.0
 _RED_LIGHT_DECEL = 2.0
-_STOP_LINE_EARLY_M = 0.0
+# Brake as if the stop is this far short of amap trafficLightDistM (overshoot fix).
+_STOP_BEFORE_LINE_M = 3.0
 _YELLOW_STOP_DIST_M = 30.0
 LIGHT_TURN_WINDOW_M = 150.0
 TURN_DESIRE_WINDOW_M = 150.0
@@ -115,7 +116,8 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
       stop_for_light = True
   if stop_for_light:
     if light_dist > 0.0:
-      speed_target = approach_speed_ms(light_dist + _STOP_LINE_EARLY_M, _RED_LIGHT_DECEL, cap_ms=road_ms)
+      stop_dist = max(light_dist - _STOP_BEFORE_LINE_M, 0.5)
+      speed_target = approach_speed_ms(stop_dist, _RED_LIGHT_DECEL, cap_ms=road_ms)
       if speed_target <= 0.05:
         speed_target = 0.0
     else:

@@ -19,8 +19,12 @@ from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, S
 from openpilot.selfdrive.controls.lib.latcontrol_curvature import LatControlCurvature
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_backends.longcontrol_factory import create_long_control
-from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
+
+# Keep in sync with modeld.LAT_SMOOTH_SECONDS. Do not import modeld here:
+# PythonProcess forks inherit manager sys.modules, so a rsynced modeld/helpers
+# can raise ImportError (missing new symbols) until manager itself restarts.
+LAT_SMOOTH_SECONDS = 0.0
 
 from openpilot.sunnypilot.selfdrive.controls.controlsd_ext import ControlsExt
 
@@ -90,8 +94,9 @@ class Controls(ControlsExt):
     steer_angle_without_offset = math.radians(CS.steeringAngleDeg - lp.angleOffsetDeg)
     self.curvature = -self.VM.calc_curvature(steer_angle_without_offset, CS.vEgo, lp.roll)
 
-    # Update Torque Params
-    if self.CP.lateralTuning.which() == 'torque':
+    # Torque helpers only exist on torque lat controllers. MEB ID.3 is
+    # curvature/angle even when opendbc fills a torque tune blob.
+    if self.CP.lateralTuning.which() == 'torque' and hasattr(self.LaC, "extension"):
       torque_params = self.sm['lateralTorqueParameters']
       if self.sm.all_checks(['lateralTorqueParameters']) and torque_params.useParams:
         self.LaC.update_torque_parameters(torque_params.latAccelFactorFiltered, torque_params.latAccelOffsetFiltered,
@@ -225,14 +230,15 @@ class Controls(ControlsExt):
     # trigger the car's stock driver monitoring escalation
     CC.driverMonitoringEscalation = cs.forceDecel
 
-    lat_tuning = self.CP.lateralTuning.which()
-    if self.CP.steerControlType == car.CarParams.SteerControlType.angle:
+    # Publish the union that matches the live controller, not CarParams.
+    # MEB ID.3 is curvature even when opendbc also fills a torque tune blob.
+    if isinstance(self.LaC, LatControlAngle):
       cs.lateralControlState.angleState = lac_log
-    elif self.CP.steerControlType == car.CarParams.SteerControlType.curvature:
+    elif isinstance(self.LaC, LatControlCurvature):
       cs.lateralControlState.curvatureState = lac_log
-    elif lat_tuning == 'pid':
+    elif isinstance(self.LaC, LatControlPID):
       cs.lateralControlState.pidState = lac_log
-    elif lat_tuning == 'torque':
+    else:
       cs.lateralControlState.torqueState = lac_log
 
     self.pm.send('controlsState', dat)

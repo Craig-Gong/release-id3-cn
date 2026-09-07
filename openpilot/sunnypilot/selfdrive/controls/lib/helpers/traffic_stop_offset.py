@@ -1,8 +1,13 @@
 """Vision red / model-stop offset that does not change lead follow gap.
 
-TrafficStopOffset (meters, 0..6 in 0.5 steps, default 3): when the model
-wants to stop and there is no lead, brake toward a point this far short of
-model.position.x[-1] and hold there. Larger = stop sooner (before the line).
+TrafficStopOffset (meters, 0..10 in 0.5 steps, default 3): when the model
+wants to stop and there is no real lead short of that point, brake toward a
+point this far short of model.position.x[-1] and hold there. Larger = stop
+sooner (before the line).
+
+A radar track past the stop point (phantom / cross-traffic) must not cancel
+this — that used to disable the offset and let stopped-lead creep push past
+the line.
 """
 from opendbc.car.interfaces import ACCEL_MIN
 from openpilot.common.params import Params, UnknownKeyName
@@ -11,11 +16,13 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 
 TRAFFIC_STOP_OFFSET_PARAM = "TrafficStopOffset"
 MIN_OFFSET_M = 0.0
-MAX_OFFSET_M = 6.0
+MAX_OFFSET_M = 10.0
 DEFAULT_OFFSET_M = 3.0
 OFFSET_STEP_M = 0.5
 
-E2E_STOP_PLAN_VEL_THRESHOLD = 1.0
+# Model "shouldStop" plans often end ~1–2 m/s while still stopping; only skip
+# clearly non-stopping trajectories (stop-sign cruise-through).
+E2E_STOP_PLAN_VEL_THRESHOLD = 2.5
 E2E_STOP_MIN_DIST = 2.0
 E2E_STOP_HOLD_MAX_V = 0.5
 E2E_STOP_HOLD_BUFFER = 2.0
@@ -28,6 +35,21 @@ def _sanitize_offset_m(raw) -> float:
     return DEFAULT_OFFSET_M
   bounded = min(max(value, MIN_OFFSET_M), MAX_OFFSET_M)
   return round(bounded / OFFSET_STEP_M) * OFFSET_STEP_M
+
+
+def _lead_owns_stop(has_lead: bool, lead_d_rel: float | None, stop_distance: float) -> bool:
+  """True only when a lead sits short of the model stop (real queue)."""
+  if not has_lead:
+    return False
+  if lead_d_rel is None:
+    return True
+  try:
+    d = float(lead_d_rel)
+  except (TypeError, ValueError):
+    return True
+  if d <= 0.5:
+    return False
+  return d < float(stop_distance)
 
 
 class TrafficStopOffset:
@@ -53,8 +75,9 @@ class TrafficStopOffset:
     self.frame += 1
 
   def adjust(self, a_target: float, should_stop: bool, v_ego: float, model_msg,
-             *, stop_light: bool, has_lead: bool, right_blinker: bool) -> tuple[float, bool]:
-    if self.distance <= 0. or not stop_light or has_lead or right_blinker:
+             *, stop_light: bool, has_lead: bool, right_blinker: bool,
+             lead_d_rel: float | None = None) -> tuple[float, bool]:
+    if self.distance <= 0. or not stop_light or right_blinker:
       return a_target, should_stop
 
     x = model_msg.position.x
@@ -62,10 +85,12 @@ class TrafficStopOffset:
     if len(x) != ModelConstants.IDX_N or len(v) != ModelConstants.IDX_N:
       return a_target, should_stop
 
-    if float(v[-1]) > E2E_STOP_PLAN_VEL_THRESHOLD:
+    stop_distance = float(x[-1])
+    if _lead_owns_stop(has_lead, lead_d_rel, stop_distance):
       return a_target, should_stop
 
-    stop_distance = float(x[-1])
+    if float(v[-1]) > E2E_STOP_PLAN_VEL_THRESHOLD:
+      return a_target, should_stop
 
     if v_ego < E2E_STOP_HOLD_MAX_V:
       if stop_distance <= self.distance + E2E_STOP_HOLD_BUFFER:

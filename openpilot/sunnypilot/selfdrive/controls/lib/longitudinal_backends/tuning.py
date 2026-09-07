@@ -15,6 +15,13 @@ SCHEMA_VERSION = 2
 CONFIG_FORMAT = "backendProfiles"
 CONFIG_LOCK_PATH = "/tmp/longitudinal_tuning_config.lock"
 
+# Must match long_mpc.py STOP_DISTANCE / COMFORT_BRAKE baked into acados
+# (see c_generated_code/long_cost/* — currently STOP=4, comfort=2.5).
+# Do not import long_mpc here (circular). Changing those Python constants
+# without regenerating acados does nothing; this adapter is the runtime path.
+CODEGEN_STOP_DISTANCE = 4.0
+CODEGEN_COMFORT_BRAKE = 2.5
+
 
 @dataclass(frozen=True)
 class LongitudinalTuning:
@@ -27,7 +34,9 @@ class LongitudinalTuning:
   danger_zone_cost: float = 100.0
   lead_danger_factor: float = 0.75
   comfort_brake: float = 2.5
-  stop_distance: float = 6.0
+  # Desired settle gap behind a stopped lead. Runtime shifts the MPC obstacle
+  # relative to CODEGEN_STOP_DISTANCE so this is the effective gap.
+  stop_distance: float = 3.5
   jerk_factor_relaxed: float = 1.0
 
   def as_dict(self) -> dict[str, float]:
@@ -381,14 +390,23 @@ def apply_backend_profile(params: Any, backend: BackendSpec, profile: int) -> Lo
 
 def adjusted_obstacle(raw_upstream_obstacle: float, v_lead: float, v_ego: float,
                       tuning: LongitudinalTuning, t_follow: float) -> float:
-  """Translate an obstacle for the unchanged upstream 6-parameter solver."""
-  default = LongitudinalTuning()
-  if tuning == default:
+  """Translate an obstacle for the unchanged upstream 6-parameter solver.
+
+  The compiled acados cost still uses CODEGEN_* constants. Shifting x_obstacle
+  by (codegen_safe - tuned_safe) makes the residual match the tuned stop gap /
+  comfort brake. Example: codegen stop 4 m + tuned stop 6 m → obstacle -= 2 m
+  so the car settles ~6 m behind the real bumper.
+  """
+  if (tuning.stop_distance == CODEGEN_STOP_DISTANCE and
+      tuning.comfort_brake == CODEGEN_COMFORT_BRAKE):
     return raw_upstream_obstacle
-  lead_equivalence_delta = v_lead ** 2 / (2 * tuning.comfort_brake) - v_lead ** 2 / (2 * default.comfort_brake)
-  default_safe = v_ego ** 2 / (2 * default.comfort_brake) + t_follow * v_ego + default.stop_distance
-  tuned_safe = v_ego ** 2 / (2 * tuning.comfort_brake) + t_follow * v_ego + tuning.stop_distance
-  return raw_upstream_obstacle + lead_equivalence_delta + default_safe - tuned_safe
+  lead_equivalence_delta = (v_lead ** 2 / (2 * tuning.comfort_brake) -
+                            v_lead ** 2 / (2 * CODEGEN_COMFORT_BRAKE))
+  codegen_safe = (v_ego ** 2 / (2 * CODEGEN_COMFORT_BRAKE) + t_follow * v_ego +
+                  CODEGEN_STOP_DISTANCE)
+  tuned_safe = (v_ego ** 2 / (2 * tuning.comfort_brake) + t_follow * v_ego +
+                tuning.stop_distance)
+  return raw_upstream_obstacle + lead_equivalence_delta + codegen_safe - tuned_safe
 
 
 def _ramp(current: LongitudinalTuning, target: LongitudinalTuning, dt: float) -> LongitudinalTuning:

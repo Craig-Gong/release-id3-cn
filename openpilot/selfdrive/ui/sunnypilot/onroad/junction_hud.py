@@ -20,7 +20,7 @@ from openpilot.sunnypilot.nav.hud_layout import (
   CONTENT_GAP, EGPU_DC_PILL_GAP, EGPU_DC_PILL_H, EGPU_DC_UNIT, EGPU_DC_VALUE, EGPU_DETAIL_SIZE,
   EGPU_HEAD_SIZE, EGPU_HUD_HEIGHT, EGPU_HUD_HEIGHT_COMPACT, EGPU_PAD, EGPU_RAIL_W,
   EGPU_RAIL_X, EGPU_TILE_GAP, EGPU_TILE_LINE_GAP, EGPU_TILE_UNIT, EGPU_TILE_VALUE,
-  HUD_CN_DETAIL, LANE_BADGE_W, LANE_TEXT_SIZE,
+  HUD_CN_DETAIL, HUD_CN_STOP, LANE_BADGE_W, LANE_TEXT_SIZE,
   SIGNAL_PAD_X, SIGNAL_W, HudBand,
   dc_pill_width, egpu_status_rect, junction_bar_rect, lane_guide_rect,
 )
@@ -484,8 +484,9 @@ class JunctionHudRenderer(Widget):
     text_right = x + inner_w
 
     if detail and not has_caps:
-      head_size = 44 if len(headline) <= 4 else 38
-      det_size = 34 if head_size >= 44 else 30
+      # Same size family as eGPU title / 12V chip (HUD_CN_STOP = 44 for 前方停车).
+      head_size = HUD_CN_STOP if len(headline) <= 4 else max(38, HUD_CN_STOP - 6)
+      det_size = HUD_CN_DETAIL if head_size >= HUD_CN_STOP else max(26, HUD_CN_DETAIL - 4)
       head_sz = measure_text_cached(self._font_head, headline, head_size)
       det_sz = measure_text_cached(self._font_detail, detail, det_size)
       gap = 16.0
