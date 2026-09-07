@@ -164,7 +164,10 @@ class CarController(CarControllerBase):
     if self.frame % self.CCP.LDW_STEP == 0:
       hud_alert = 0
       if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw):
-        hud_alert = self.CCP.LDW_MESSAGES["laneAssistTakeOver"]
+        # MEB cluster maps LDW take-over to Chinese「车道保持」fault/takeover.
+        # Only while engaged — EPS init / silent steer warnings must not flash it.
+        if not (self.CP.flags & VolkswagenFlags.MEB) or CC.enabled:
+          hud_alert = self.CCP.LDW_MESSAGES["laneAssistTakeOver"]
       can_sends.append(self.CCS.create_lka_hud_control(self.packer_pt, self.CAN.pt, CS.ldw_stock_values, CC.latActive,
                                                        CS.out.steeringPressed, hud_alert, hud_control))
 
