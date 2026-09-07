@@ -66,6 +66,20 @@ ACC_HUD_ENABLED  = 2
 ACC_HUD_DISABLED = 0
 
 
+def meb_pid_hold_should_start(esp_hold: bool, v_ego: float, accel: float, gas_pressed: bool,
+                             *, v_hold: float = 0.25) -> bool:
+  """pid + ESP-hold RELEASE only when actually launching.
+
+  Keep LongCtrlState.starting as the primary go. Do not treat pid flicker
+  with accel<=0 as takeoff (stop-then-creep). Gas always wins.
+  """
+  if not (esp_hold or v_ego < v_hold):
+    return False
+  if gas_pressed:
+    return True
+  return accel > 0.0
+
+
 class MebLongStateMachine:
   HOLD_RELEASE_SPEED = 5 * CV.KPH_TO_MS
 
@@ -94,14 +108,15 @@ class MebLongStateMachine:
     else:
       return self.acc_status_vals['ACC_OFF_HAUPTSCHALTER_AUS']  # disabled
 
-  def _get_hold_type(self, CS, CC) -> int:
+  def _get_hold_type(self, CS, CC, accel) -> int:
     # warning: car is reacting to hold mechanic even with long control off
     # HALTEN -> KEINE_ANFORDERUNG causes the car to fault into park, so both branches below put a ramp in
     # between: disengaging always ramps, and while engaged a release ramps until 5 kph
     # NOTE: this allows KEINE_ANFORDERUNG -> ANFAHREN, but we haven't observed a fault due to this yet
     # TODO: camera can send 7 on disengage at a stop which we don't fully understand yet
     stopping = CC.actuators.longControlState == LongCtrlState.stopping
-    starting = CC.actuators.longControlState == LongCtrlState.pid and CS.esp_hold_confirmation
+    starting = (CC.actuators.longControlState == LongCtrlState.starting or
+                meb_pid_hold_should_start(CS.esp_hold_confirmation, CS.out.vEgo, accel, CS.out.gasPressed))
     long_active = CC.longActive and not CS.out.accFaulted  # catches it one frame earlier, not sure if needed
 
     if not long_active:
@@ -137,7 +152,7 @@ class MebLongStateMachine:
 
   def update(self, CS, CC, accel) -> tuple[float, int, int, bool, bool]:
     acc_status = self._get_acc_status(CS, CC)
-    acc_hold_type = self._get_hold_type(CS, CC)
+    acc_hold_type = self._get_hold_type(CS, CC, accel)
 
     # transition to inactive accel and jerks as soon as we enter ESP standstill
     requesting_hold = acc_hold_type == self.acc_hold_type_vals['HALTEN']
