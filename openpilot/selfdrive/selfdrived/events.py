@@ -338,7 +338,8 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "Steering Assist Temporarily Unavailable",
       "",
       AlertStatus.userPrompt, AlertSize.small,
-      Priority.LOW, VisualAlert.steerRequired, AudibleAlert.prompt, 1.8),
+      # none: VW MEB maps steerRequired → cluster LDW「车道保持」fault flash
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 1.8),
   },
 
   EventName.driverDistracted1: {
