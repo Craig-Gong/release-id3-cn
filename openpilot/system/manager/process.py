@@ -104,6 +104,14 @@ class ManagerProcess(ABC):
   def start(self) -> None:
     pass
 
+  def _discard_dead_proc(self) -> None:
+    # External kill / crash leaves self.proc set while is_alive() is False.
+    # start() used to early-return forever → process_not_running (e.g. ecoflowd after rsync pkill).
+    if self.proc is not None and not self.proc.is_alive():
+      cloudlog.info(f"{self.name} exited with {self.proc.exitcode}; clearing for restart")
+      self.shutting_down = False
+      self.proc = None
+
   def stop(self, retry: bool = True, block: bool = True, sig: signal.Signals | None = None) -> int | None:
     if self.proc is None:
       return None
@@ -177,6 +185,7 @@ class NativeProcess(ManagerProcess):
     if self.shutting_down:
       self.stop()
 
+    self._discard_dead_proc()
     if self.proc is not None:
       return
 
@@ -201,6 +210,7 @@ class PythonProcess(ManagerProcess):
     if self.shutting_down:
       self.stop()
 
+    self._discard_dead_proc()
     if self.proc is not None:
       return
 
