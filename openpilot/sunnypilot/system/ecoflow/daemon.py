@@ -30,8 +30,10 @@ from openpilot.sunnypilot.system.ecoflow.recover import (
 
 _VERIFY_ON_S = 2.0
 _DC_OFF_DELAY_S = 60.0
+_DC_OFF_RETRY_S = 5.0
 _MQTT_RETRY_S = 5.0
 _CRED_DIR = Path("/data/ecoflow_params")
+_DC_TELEM_KEYS = ("cfg_dc12v_out_open", "flow_info_12v")
 
 
 def _enabled(params: Params) -> bool:
@@ -83,9 +85,11 @@ class EcoflowDaemon:
     self.session = None
     self.last_on_ts = None
     self.kl15 = False
+    self.prev_kl15 = False
     self.saw_can = False
     self.off_deadline = None
     self.last_set_on = 0.0
+    self.last_set_off = 0.0
     self.last_recover_off = 0.0
     self.last_mqtt_try = 0.0
     self.last_mqtt_reconnect = 0.0
@@ -95,6 +99,16 @@ class EcoflowDaemon:
     self.started = False
     self.engaged = False
     self.v_ego = 0.0
+
+  def _clear_dc_telem(self) -> None:
+    """Drop cached DC bits so we do not treat a stale SET reply as live rail state."""
+    if self.session is None:
+      return
+    tel = getattr(self.session, "_telemetry", None)
+    if not isinstance(tel, dict):
+      return
+    for k in _DC_TELEM_KEYS:
+      tel.pop(k, None)
 
   def _session(self):
     if self.session is not None:
@@ -132,16 +146,17 @@ class EcoflowDaemon:
       return False
     try:
       # Short wait: property stream is often slow; don't block the 10 Hz loop for 10s.
-      result = sess.set_dc12v(on, wait_s=3.0)
+      # Off needs a bit longer — P231 set_reply is frequently >3 s when hotspot is busy.
+      result = sess.set_dc12v(on, wait_s=5.0 if not on else 3.0)
       if result is not None:
-        # Keep HUD/shm in sync even when DisplayProperty uploads are sparse.
+        # Only trust an explicit cfg from the reply — never invent ON/OFF on empty ack.
         if result.get("cfg_dc12v_out_open") is not None:
           sess._telemetry["cfg_dc12v_out_open"] = int(result["cfg_dc12v_out_open"])
-        else:
-          sess._telemetry["cfg_dc12v_out_open"] = 1 if on else 0
         cloudlog.info(f"ecoflowd DC {'on' if on else 'off'} ({reason})")
         return True
       cloudlog.warning(f"ecoflowd DC {'on' if on else 'off'} TIMEOUT ({reason})")
+      # TIMEOUT after a real publish: cached cfg is unreliable (rail may have flipped).
+      self._clear_dc_telem()
       return False
     except Exception:
       cloudlog.exception("ecoflowd set_dc12v failed")
@@ -284,15 +299,22 @@ class EcoflowDaemon:
         continue
 
       if self.kl15:
+        rising = not self.prev_kl15
+        self.prev_kl15 = True
         self.off_deadline = None
         self.want_on = True
+        # Fresh READY: overnight OFF may have TIMED OUT while App still flipped,
+        # leaving a stale cfg=1 that would skip SET forever.
+        if rising:
+          self._clear_dc_telem()
+          self.last_set_on = 0.0
         tel = {}
         if self.session is not None:
           tel = getattr(self.session, "_telemetry", None) or {}
         confirmed = dc12v_from_telemetry(tel)
-        # Only re-SET when telemetry has not confirmed ON (avoids 2s spam + stale shm「关」).
+        # Only re-SET when telemetry has not confirmed ON (avoids 2s spam).
         if confirmed is not True and now - self.last_set_on >= _VERIFY_ON_S:
-          ok = self._set_dc(True, reason="KL15")
+          ok = self._set_dc(True, reason="KL15 rising" if rising else "KL15")
           self.last_set_on = now
           still_off = dc12v_from_telemetry(
             getattr(self.session, "_telemetry", None) or {} if self.session else {}
@@ -307,14 +329,24 @@ class EcoflowDaemon:
             self.last_mqtt_reconnect = now
             cloudlog.warning("ecoflowd: MQTT reconnect after DC verify miss")
       else:
+        falling = self.prev_kl15
+        self.prev_kl15 = False
         self.want_on = False
-        if self.off_deadline is None:
+        if self.off_deadline is None or falling:
           self.off_deadline = now + _DC_OFF_DELAY_S
-        elif now >= self.off_deadline:
+        elif now >= self.off_deadline and now - self.last_set_off >= _DC_OFF_RETRY_S:
           # Ignition already down: delayed off is allowed even if dock was up.
           self._cycle_blocked_logged = False
-          self._set_dc(False, reason="KL15 delayed off", allow_cut_while_superspeed=True)
-          self.off_deadline = now + 3600.0
+          ok = self._set_dc(False, reason="KL15 delayed off", allow_cut_while_superspeed=True)
+          self.last_set_off = now
+          tel = getattr(self.session, "_telemetry", None) or {} if self.session else {}
+          confirmed_off = dc12v_from_telemetry(tel) is False
+          if ok and confirmed_off:
+            # Confirmed off — back off to hourly keepalive-off (in case App reopens).
+            self.off_deadline = now + 3600.0
+          else:
+            # TIMEOUT or unconfirmed: retry soon (was +3600 on any attempt → overnight stuck ON in App).
+            self.off_deadline = now + _DC_OFF_RETRY_S
       self._publish_status()
       rk.keep_time()
 
