@@ -431,9 +431,15 @@ class EcoflowSession:
             return self._ack
       time.sleep(0.2)
 
-    if self._telemetry.get("cfg_dc12v_out_open") == want:
-      return self._ack or {"ok": True, "cfg_dc12v_out_open": want, "via": "telemetry_late"}
-    return self._ack  # may be None → TIMEOUT
+    # Stale telemetry already matching `want` is not proof the SET landed.
+    if self._ack is not None:
+      ack_val = self._ack.get("cfg_dc12v_out_open")
+      if ack_val is None or int(ack_val) == want:
+        return self._ack
+    cur = self._telemetry.get("cfg_dc12v_out_open")
+    if cur == want and cur != before.get("cfg_dc12v_out_open"):
+      return {"ok": True, "cfg_dc12v_out_open": want, "via": "telemetry_late"}
+    return None
 
   def refresh_quotas(self, wait_s: float = 5.0) -> dict[str, Any]:
     if self._client is None:
