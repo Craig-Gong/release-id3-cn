@@ -186,6 +186,7 @@ class JunctionHudRenderer(Widget):
       model_big = bool(model_alive and sm["modelV2"].big)
     except Exception:
       pass
+    rail_v = None
     try:
       telemetry_valid = bool(sm.alive["chestnutState"] and sm.valid["chestnutState"])
       tel = sm["chestnutState"]
@@ -194,9 +195,13 @@ class JunctionHudRenderer(Widget):
       temp = float(tel.tempC)
       mem_used = int(tel.memoryUsedMb)
       mem_total = int(tel.memoryTotalMb)
+      # supplyVoltage is mV
+      rail_v = float(tel.supplyVoltage) / 1000.0
     except Exception:
       telemetry_valid = False
-    dc_label = ecoflow_dc_label(enabled=self._ecoflow_enabled(), snap=read_status())
+    dc_label = ecoflow_dc_label(
+      enabled=self._ecoflow_enabled(), snap=read_status(), rail_voltage_v=rail_v,
+    )
     return build_hud_egpu_view(
       onroad=started, connected=connected, compiled=ui_state.usbgpu_compiled,
       loading=ui_state.usbgpu_loading, active=ui_state.usbgpu_active,
