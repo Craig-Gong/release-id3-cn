@@ -47,6 +47,20 @@ def test_egpu_status_explains_fallback_reason():
   assert "USB" not in " ".join((status.headline, *status.details))
 
 
+def test_egpu_status_treats_post_load_gap_as_waiting_not_fallback():
+  status = build_egpu_status(
+    connected=True, compiled=True, loading=False, active=True,
+    model_alive=False, model_big=False, telemetry_valid=False, model_name="IDM",
+  )
+  assert "等待模型启动" in status.headline
+  assert "回退" not in status.headline
+  compact = build_compact_egpu_status(
+    connected=True, compiled=True, loading=False, active=True,
+    model_alive=False, model_big=False, telemetry_valid=False, model_name="IDM",
+  )
+  assert compact.text == "IDM: WAIT"
+
+
 def test_egpu_status_reports_live_model_and_gpu_metrics():
   status = build_egpu_status(
     connected=True, compiled=True, loading=False, active=True,

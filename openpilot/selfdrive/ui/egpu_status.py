@@ -128,8 +128,9 @@ def build_egpu_status(*, connected: bool, compiled: bool, loading: bool, active:
     return EgpuStatus(True, False, f"{model_label} · 大模型失败 · 已回退小模型", ())
   if active is not True:
     return EgpuStatus(True, False, f"{model_label} · 等待模型启动", ())
+  # Post-load gap: ChestnutActive set before first modelV2.big — not a fallback.
   if not model_alive or not model_big:
-    return EgpuStatus(True, False, f"{model_label} · 模型流中断 · 已回退/等待", ())
+    return EgpuStatus(True, False, f"{model_label} · 等待模型启动", ())
   if not telemetry_valid:
     return EgpuStatus(True, False, f"{model_label} · 大模型运行中 · 遥测暂不可用", ())
 
@@ -166,7 +167,7 @@ def build_compact_egpu_status(*, connected: bool, compiled: bool, loading: bool,
   if active is not True:
     return CompactEgpuStatus(True, False, f"{model_label}: WAIT")
   if not model_alive or not model_big:
-    return CompactEgpuStatus(True, False, f"{model_label}: STREAM ERR")
+    return CompactEgpuStatus(True, False, f"{model_label}: WAIT")
   if not telemetry_valid:
     return CompactEgpuStatus(True, False, f"{model_label}: RUN")
 

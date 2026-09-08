@@ -46,6 +46,10 @@ class TestHudEgpuView(unittest.TestCase):
     self.assertEqual(fallback.headline, "大模型")
     self.assertEqual(fallback.detail, "已回退小模型")
     self.assertEqual(fallback.severity, "danger")
+    # active=True before first modelV2.big is a load gap, not soft-fallback.
+    waiting = _hud(active=True, model_alive=False, model_big=False, telemetry_valid=False)
+    self.assertEqual(waiting.detail, "等待启动")
+    self.assertEqual(waiting.severity, "warning")
     loading = _hud(loading=True, active=None, model_alive=False, model_big=False,
                    telemetry_valid=False, loading_progress=64)
     self.assertEqual(loading.detail, "加载 64%")

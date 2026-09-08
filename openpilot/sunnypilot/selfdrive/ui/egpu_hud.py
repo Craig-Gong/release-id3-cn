@@ -46,9 +46,10 @@ def build_hud_egpu_view(*, onroad: bool, connected: bool, compiled: bool, loadin
 
   degraded = connected and 0 < usb_speed_mbps < 5000
   running = bool(connected and compiled and not loading and active is True and model_alive and model_big)
-  fallback = bool(connected and compiled and not loading and (
-    active is False or (active is True and (not model_alive or not model_big))
-  ))
+  # Only ChestnutActive=False is a real soft-fallback. active=True with no
+  # modelV2.big yet is the post-load gap (small preload / first frame) — not red.
+  fallback = bool(connected and compiled and not loading and active is False)
+  waiting = bool(connected and compiled and not loading and active is True and not running)
   dc_text, dc_kind = dc_chip_from_label(dc_label)
 
   if not connected:
@@ -59,7 +60,7 @@ def build_hud_egpu_view(*, onroad: bool, connected: bool, compiled: bool, loadin
     headline, detail, severity, healthy = "大模型", f"加载 {int(loading_progress)}%", "warning", False
   elif fallback:
     headline, detail, severity, healthy = "大模型", "已回退小模型", "danger", False
-  elif active is not True:
+  elif waiting or active is not True:
     headline, detail, severity, healthy = "大模型", "等待启动", "warning", False
   elif degraded:
     headline, detail, severity, healthy = "USB", "未 SuperSpeed", "danger", False
