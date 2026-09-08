@@ -47,10 +47,19 @@ def dc12v_from_telemetry(telemetry: dict[str, Any] | None) -> bool | None:
   return None
 
 
-def ecoflow_dc_label(*, enabled: bool, snap: EcoflowStatus, now: float | None = None) -> str:
+def ecoflow_dc_label(*, enabled: bool, snap: EcoflowStatus, now: float | None = None,
+                     rail_voltage_v: float | None = None) -> str:
   if not enabled:
     return "12V 未启用"
+  # Telemetry lag: dock rail already up while shm still says off.
+  if (
+    snap.want_on and snap.kl15 and snap.dc12v is False
+    and rail_voltage_v is not None and rail_voltage_v >= 11.0
+  ):
+    return "12V 开"
   if not snap.fresh(now) or snap.dc12v is None:
+    if snap.want_on and snap.kl15 and rail_voltage_v is not None and rail_voltage_v >= 11.0:
+      return "12V 开"
     return "12V 未知"
   return "12V 开" if snap.dc12v else "12V 关"
 

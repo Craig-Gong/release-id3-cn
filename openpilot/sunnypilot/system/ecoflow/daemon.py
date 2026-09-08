@@ -88,6 +88,7 @@ class EcoflowDaemon:
     self.last_set_on = 0.0
     self.last_recover_off = 0.0
     self.last_mqtt_try = 0.0
+    self.last_mqtt_reconnect = 0.0
     self.want_on = False
     self._cycle_blocked_logged = False
     self.recover = GpuRecoverCycle()
@@ -130,9 +131,18 @@ class EcoflowDaemon:
     if sess is None:
       return False
     try:
-      sess.set_dc12v(on)
-      cloudlog.info(f"ecoflowd DC {'on' if on else 'off'} ({reason})")
-      return True
+      # Short wait: property stream is often slow; don't block the 10 Hz loop for 10s.
+      result = sess.set_dc12v(on, wait_s=3.0)
+      if result is not None:
+        # Keep HUD/shm in sync even when DisplayProperty uploads are sparse.
+        if result.get("cfg_dc12v_out_open") is not None:
+          sess._telemetry["cfg_dc12v_out_open"] = int(result["cfg_dc12v_out_open"])
+        else:
+          sess._telemetry["cfg_dc12v_out_open"] = 1 if on else 0
+        cloudlog.info(f"ecoflowd DC {'on' if on else 'off'} ({reason})")
+        return True
+      cloudlog.warning(f"ecoflowd DC {'on' if on else 'off'} TIMEOUT ({reason})")
+      return False
     except Exception:
       cloudlog.exception("ecoflowd set_dc12v failed")
       try:
@@ -276,9 +286,26 @@ class EcoflowDaemon:
       if self.kl15:
         self.off_deadline = None
         self.want_on = True
-        if now - self.last_set_on >= _VERIFY_ON_S:
-          self._set_dc(True, reason="KL15")
+        tel = {}
+        if self.session is not None:
+          tel = getattr(self.session, "_telemetry", None) or {}
+        confirmed = dc12v_from_telemetry(tel)
+        # Only re-SET when telemetry has not confirmed ON (avoids 2s spam + stale shm「关」).
+        if confirmed is not True and now - self.last_set_on >= _VERIFY_ON_S:
+          ok = self._set_dc(True, reason="KL15")
           self.last_set_on = now
+          still_off = dc12v_from_telemetry(
+            getattr(self.session, "_telemetry", None) or {} if self.session else {}
+          ) is False
+          # Wedged MQTT: SET timeout or cfg stuck 0 → drop session and re-login.
+          if self.session is not None and (not ok or still_off) and now - self.last_mqtt_reconnect >= 30.0:
+            try:
+              self.session.disconnect()
+            except Exception:
+              pass
+            self.session = None
+            self.last_mqtt_reconnect = now
+            cloudlog.warning("ecoflowd: MQTT reconnect after DC verify miss")
       else:
         self.want_on = False
         if self.off_deadline is None:
