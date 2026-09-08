@@ -24,13 +24,15 @@ from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
 
 from openpilot.common.version import get_build_metadata
-from openpilot.common.hardware import HARDWARE, has_cabin_camera
+from openpilot.common.hardware import HARDWARE
+from openpilot.sunnypilot.hardware.profile import has_driver_camera
 
 from openpilot.sunnypilot.mads.mads import ModularAssistiveDrivingSystem
 from openpilot.sunnypilot import get_sanitize_int_param
 from openpilot.sunnypilot.selfdrive.car.car_specific import CarSpecificEventsSP
 from openpilot.sunnypilot.selfdrive.car.cruise_helpers import CruiseHelper
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.controller import IntelligentCruiseButtonManagement
+from openpilot.sunnypilot.selfdrive.car.tesla.control_runtime import TeslaControlRuntime
 from openpilot.sunnypilot.selfdrive.selfdrived.button_state_tracker import ButtonStateTracker
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
 
@@ -93,21 +95,25 @@ class SelfdriveD(CruiseHelper):
     self.gps_location_service = get_gps_location_service(self.params)
     self.gps_packets = [self.gps_location_service]
     self.sensor_packets = ["accelerometer", "gyroscope"]
-    self.camera_packets = ["narrowRoadCameraState", "wideRoadCameraState"]
-    if has_cabin_camera():
-      self.camera_packets.append("cabinCameraState")
+    self.camera_packets = ["narrowRoadCameraState", "cabinCameraState", "wideRoadCameraState"]
 
     # TODO: de-couple selfdrived with card/conflate on carState without introducing controls mismatches
     self.car_state_sock = messaging.sub_sock('carState', timeout=20)
+    self.tesla_control = TeslaControlRuntime(self.CP.brand == 'tesla')
+    self.car_state_sp_sock = messaging.sub_sock('carStateSP', conflate=True) if self.tesla_control.enabled else None
+    self.car_state_sp_flags = 0
+    self.car_state_sp_mono_time = 0
 
     ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan'] + ['modelDataV2SP', 'longitudinalPlanSP']
+    if not has_driver_camera():
+      # C3XL has no cabin camera and does not run visual driver monitoring.
+      # Retain every unrelated process, camera, and communication fault check.
+      ignore += ['cabinCameraState', 'driverMonitoringState']
     if SIMULATION:
       ignore += ['cabinCameraState', 'managerState']
     if REPLAY:
       # no vipc in replay will make them ignored anyways
       ignore += ['narrowRoadCameraState', 'wideRoadCameraState']
-    if not has_cabin_camera():
-      ignore += ['cabinCameraState', 'driverMonitoringState']
     self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'extrinsicsCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'deviceMotion', 'lateralDelay',
                                    'managerState', 'vehicleParameters', 'radarState', 'lateralTorqueParameters',
@@ -207,17 +213,35 @@ class SelfdriveD(CruiseHelper):
     if self.big_model_loading:
       self.events.add(EventName.bigModelLoading)
 
+    # modeld can drop modelV2 for ~10–15 s after chestnut load / runtime fallback
+    # (camera backlog). Hold settling so that gap is not treated as a failure.
+    warmup_sec = 15.
+    big_model_settling = self.big_model_loading or (
+      self.big_model_ready_t > 0. and time.monotonic() < self.big_model_ready_t + warmup_sec
+    )
+
     big_active = self.params.get("ChestnutActive")
     chestnut_present = self.sm['deviceState'].chestnutPresent
-    model_unavailable = big_active is True and self.sm.seen['modelV2'] and not self.sm.alive['modelV2']
+    model_unavailable = (
+      big_active is True
+      and self.sm.seen['modelV2']
+      and not self.sm.alive['modelV2']
+      and not big_model_settling
+    )
     big_failed = big_active is False or model_unavailable or (self.big_model_active and not chestnut_present)
     if big_failed and not self.big_model_failed:
+      # Toast only — do not soft-disable; small-model fallback stays engaged.
       self.events.add(EventName.bigModelFailed)
+      if self.big_model_active:
+        self.big_model_ready_t = time.monotonic()
+        big_model_settling = True
     self.big_model_failed = big_failed
 
-    # soft disable if the big model fails
     if big_active:
       self.big_model_active = True
+    elif self.sm.alive.get('modelV2') and not model_unavailable:
+      # Recovered on small model after fallback / dock loss.
+      self.big_model_active = False
     if not self.enabled and not model_unavailable:
       self.big_model_active = False
 
@@ -252,7 +276,7 @@ class SelfdriveD(CruiseHelper):
       self.events.add(EventName.resumeBlocked)
 
     # Handle DM
-    if not self.CP.notCar and has_cabin_camera():
+    if not self.CP.notCar:
       # Block engaging until lockout times out or ignition reset
       if self.sm['driverMonitoringState'].lockout and not self.dm_lockout_set:
         self.params.put_bool("DriverTooDistracted", True)
@@ -281,6 +305,7 @@ class SelfdriveD(CruiseHelper):
     if CS.canValid:
       car_events = self.car_events.update(CS, self.CS_prev, self.sm['carControl']).to_msg()
       self.events.add_from_msg(car_events)
+      self.tesla_control.filter_transition_events(self.events)
 
       car_events_sp = self.car_events_sp.update(CS, self.events).to_msg()
       self.events_sp.add_from_msg(car_events_sp)
@@ -402,9 +427,6 @@ class SelfdriveD(CruiseHelper):
     # All events here should at least have NO_ENTRY and SOFT_DISABLE.
     num_events = len(self.events)
 
-    if self.big_model_active and big_failed:
-      self.events.add(EventName.bigModelFailed)
-
     not_running = {p.name for p in self.sm['managerState'].processes if not p.running and p.shouldBeRunning}
     if self.sm.recv_frame['managerState'] and len(not_running):
       if not_running != self.not_running_prev:
@@ -435,8 +457,6 @@ class SelfdriveD(CruiseHelper):
     # generic catch-all. ideally, a more specific event should be added above instead
     has_disable_events = self.events.contains(ET.NO_ENTRY) and (self.events.contains(ET.SOFT_DISABLE) or self.events.contains(ET.IMMEDIATE_DISABLE))
     no_system_errors = (not has_disable_events) or (len(self.events) == num_events)
-    warmup_sec = 5.
-    big_model_settling = self.big_model_loading or time.monotonic() < self.big_model_ready_t + warmup_sec
     if not self.sm.all_checks() and no_system_errors and not big_model_settling:  # the load holds modelV2 and friends back on purpose
       if not self.sm.all_alive():
         self.events.add(EventName.commIssue)
@@ -465,18 +485,9 @@ class SelfdriveD(CruiseHelper):
           not TESTING_CLOSET and (not SIMULATION or REPLAY)):
         self.events.add(EventName.paramsdTemporaryError)
 
-    # conservative HW alert. if the data or frequency are off, locationd will throw an error.
-    # IQ.OS sensord is often late on first READY; never-received waits 20 s after init.
-    if self.initialized:
-      onroad_s = self.sm.frame * DT_CTRL
-      for s in self.sensor_packets:
-        if self.sm.recv_frame[s] < 1:
-          if onroad_s > 20.:
-            self.events.add(EventName.sensorDataInvalid)
-            break
-        elif (self.sm.frame - self.sm.recv_frame[s]) * DT_CTRL > 10.:
-          self.events.add(EventName.sensorDataInvalid)
-          break
+    # conservative HW alert. if the data or frequency are off, locationd will throw an error
+    if any((self.sm.frame - self.sm.recv_frame[s])*DT_CTRL > 10. for s in self.sensor_packets):
+      self.events.add(EventName.sensorDataInvalid)
 
     if not REPLAY:
       # Check for mismatch between openpilot and car's PCM
@@ -541,6 +552,14 @@ class SelfdriveD(CruiseHelper):
   def data_sample(self):
     _car_state = messaging.recv_one(self.car_state_sock)
     CS = _car_state.carState if _car_state else self.CS_prev
+    if self.car_state_sp_sock is not None:
+      car_state_sp = messaging.recv_one_or_none(self.car_state_sp_sock)
+      if car_state_sp is not None and car_state_sp.valid:
+        self.car_state_sp_flags = int(car_state_sp.carStateSP.flags)
+        self.car_state_sp_mono_time = int(car_state_sp.logMonoTime)
+
+    car_state_mono_time = int(_car_state.logMonoTime) if _car_state is not None else 0
+    self.tesla_control.update(self.car_state_sp_flags, car_state_mono_time, self.car_state_sp_mono_time)
 
     self.sm.update(0)
 
@@ -672,6 +691,7 @@ class SelfdriveD(CruiseHelper):
     self.publish_selfdriveState(CS)
 
     self.CS_prev = CS
+    self.tesla_control.commit_cycle()
 
   def params_thread(self, evt):
     while not evt.is_set():
