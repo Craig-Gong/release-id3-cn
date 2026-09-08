@@ -80,6 +80,7 @@ def _find_driving_pkl(bundle):
 def load_models_with_fallback(*, chestnut, load_big, load_small, params, update_loading_progress):
   model = None
   small_model = None
+  keep_loading = False
   if chestnut:
     try:
       model = load_with_timeout(load_big, BIG_MODEL_TIMEOUT)
@@ -90,8 +91,12 @@ def load_models_with_fallback(*, chestnut, load_big, load_small, params, update_
     else:
       params.put_bool("ChestnutActive", True, block=True)
       update_loading_progress(100)
+      # Keep ChestnutLoading until the first big modelV2 frame so the HUD does
+      # not leave the loading state into a false fallback / USB-danger flash.
+      keep_loading = True
 
-  params.put_bool("ChestnutLoading", False, block=True)
+  if not keep_loading:
+    params.put_bool("ChestnutLoading", False, block=True)
   if model is None:
     small_model = load_small()
     model = small_model
@@ -103,7 +108,7 @@ def load_models_with_fallback(*, chestnut, load_big, load_small, params, update_
       # incomplete qcom slot must not discard a successfully loaded big model.
       cloudlog.exception("small fallback preload failed; continuing with chestnut")
   assert model is not None
-  return model, small_model
+  return model, small_model, keep_loading
 
 
 def run_model_with_fallback(model, small_model, params, chestnut_state, bufs, transforms, inputs, prepare_only):
@@ -438,7 +443,7 @@ def main(demo=False):
   cloudlog.warning("loading model")
   st = time.monotonic()
 
-  model, small_model = load_models_with_fallback(
+  model, small_model, keep_loading = load_models_with_fallback(
     chestnut=CHESTNUT,
     load_big=lambda: ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=True,
                                 loading_progress_callback=update_loading_progress),
@@ -583,12 +588,18 @@ def main(demo=False):
       model, small_model, params, chestnut_state, bufs, transforms, inputs, prepare_only,
     )
     if fell_back:
+      if keep_loading:
+        params.put_bool("ChestnutLoading", False, block=True)
+        keep_loading = False
       run_count = 0
       long_delay = CP.longitudinalActuatorDelay + model.LONG_SMOOTH_SECONDS
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
 
     if model_output is not None:
+      if keep_loading and model.chestnut:
+        params.put_bool("ChestnutLoading", False, block=True)
+        keep_loading = False
       model_output_t = time.monotonic()
       if last_model_output_t is not None:
         model_fps_filter.update(1.0 / max(model_output_t - last_model_output_t, 1e-3))

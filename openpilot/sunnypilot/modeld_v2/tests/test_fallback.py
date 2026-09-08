@@ -33,7 +33,7 @@ def test_initial_big_model_failure_falls_back_to_small():
   def load_big():
     raise RuntimeError("USB AMD unavailable")
 
-  model, fallback = modeld_module.load_models_with_fallback(
+  model, fallback, keep_loading = modeld_module.load_models_with_fallback(
     chestnut=True,
     load_big=load_big,
     load_small=lambda: small_model,
@@ -43,6 +43,7 @@ def test_initial_big_model_failure_falls_back_to_small():
 
   assert model is small_model
   assert fallback is small_model
+  assert keep_loading is False
   assert params.values["ChestnutActive"] is False
   assert params.values["ChestnutLoading"] is False
 
@@ -62,7 +63,7 @@ def test_successful_big_model_keeps_preloaded_small_for_runtime_fallback(monkeyp
     calls["small"] += 1
     return small_model
 
-  model, fallback = modeld_module.load_models_with_fallback(
+  model, fallback, keep_loading = modeld_module.load_models_with_fallback(
     chestnut=True,
     load_big=load_big,
     load_small=load_small,
@@ -72,9 +73,10 @@ def test_successful_big_model_keeps_preloaded_small_for_runtime_fallback(monkeyp
 
   assert model is big_model
   assert fallback is small_model
+  assert keep_loading is True
   assert calls == {"big": 1, "small": 1}
   assert params.values["ChestnutActive"] is True
-  assert params.values["ChestnutLoading"] is False
+  assert "ChestnutLoading" not in params.values
 
 
 def test_successful_big_model_survives_missing_small_fallback(monkeypatch):
@@ -85,7 +87,7 @@ def test_successful_big_model_survives_missing_small_fallback(monkeypatch):
   def load_small():
     raise AssertionError("No driving pkl found — qcom slot empty")
 
-  model, fallback = modeld_module.load_models_with_fallback(
+  model, fallback, keep_loading = modeld_module.load_models_with_fallback(
     chestnut=True,
     load_big=lambda: big_model,
     load_small=load_small,
@@ -95,8 +97,9 @@ def test_successful_big_model_survives_missing_small_fallback(monkeypatch):
 
   assert model is big_model
   assert fallback is None
+  assert keep_loading is True
   assert params.values["ChestnutActive"] is True
-  assert params.values["ChestnutLoading"] is False
+  assert "ChestnutLoading" not in params.values
 
 
 def test_runtime_big_model_failure_switches_to_preloaded_small():
