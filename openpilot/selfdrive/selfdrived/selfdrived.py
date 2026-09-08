@@ -213,17 +213,35 @@ class SelfdriveD(CruiseHelper):
     if self.big_model_loading:
       self.events.add(EventName.bigModelLoading)
 
+    # modeld can drop modelV2 for ~10–15 s after chestnut load / runtime fallback
+    # (camera backlog). Hold settling so that gap is not treated as a failure.
+    warmup_sec = 15.
+    big_model_settling = self.big_model_loading or (
+      self.big_model_ready_t > 0. and time.monotonic() < self.big_model_ready_t + warmup_sec
+    )
+
     big_active = self.params.get("ChestnutActive")
     chestnut_present = self.sm['deviceState'].chestnutPresent
-    model_unavailable = big_active is True and self.sm.seen['modelV2'] and not self.sm.alive['modelV2']
+    model_unavailable = (
+      big_active is True
+      and self.sm.seen['modelV2']
+      and not self.sm.alive['modelV2']
+      and not big_model_settling
+    )
     big_failed = big_active is False or model_unavailable or (self.big_model_active and not chestnut_present)
     if big_failed and not self.big_model_failed:
+      # Toast only — do not soft-disable; small-model fallback stays engaged.
       self.events.add(EventName.bigModelFailed)
+      if self.big_model_active:
+        self.big_model_ready_t = time.monotonic()
+        big_model_settling = True
     self.big_model_failed = big_failed
 
-    # soft disable if the big model fails
     if big_active:
       self.big_model_active = True
+    elif self.sm.alive.get('modelV2') and not model_unavailable:
+      # Recovered on small model after fallback / dock loss.
+      self.big_model_active = False
     if not self.enabled and not model_unavailable:
       self.big_model_active = False
 
@@ -409,9 +427,6 @@ class SelfdriveD(CruiseHelper):
     # All events here should at least have NO_ENTRY and SOFT_DISABLE.
     num_events = len(self.events)
 
-    if self.big_model_active and big_failed:
-      self.events.add(EventName.bigModelFailed)
-
     not_running = {p.name for p in self.sm['managerState'].processes if not p.running and p.shouldBeRunning}
     if self.sm.recv_frame['managerState'] and len(not_running):
       if not_running != self.not_running_prev:
@@ -442,8 +457,6 @@ class SelfdriveD(CruiseHelper):
     # generic catch-all. ideally, a more specific event should be added above instead
     has_disable_events = self.events.contains(ET.NO_ENTRY) and (self.events.contains(ET.SOFT_DISABLE) or self.events.contains(ET.IMMEDIATE_DISABLE))
     no_system_errors = (not has_disable_events) or (len(self.events) == num_events)
-    warmup_sec = 5.
-    big_model_settling = self.big_model_loading or time.monotonic() < self.big_model_ready_t + warmup_sec
     if not self.sm.all_checks() and no_system_errors and not big_model_settling:  # the load holds modelV2 and friends back on purpose
       if not self.sm.all_alive():
         self.events.add(EventName.commIssue)
