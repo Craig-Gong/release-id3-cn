@@ -14,22 +14,22 @@ from openpilot.sunnypilot.modeld_v2.egpu_loader import C3XL_MODEL_LOAD_TIMEOUT, 
 from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
 # Must run before tinygrad import: helpers.getenv is cached.
 configure_default_device(COMMA_HARDWARE, c3xl=get_hardware_profile() == HardwareProfile.C3XL)
-
-import numpy as np
 import time
-from setproctitle import setproctitle
-from tinygrad.helpers import Context
-from tinygrad.tensor import Tensor
-
+import numpy as np
 import openpilot.cereal.messaging as messaging
 from openpilot.cereal import log
 from opendbc.car.structs import car
 from openpilot.cereal.services import SERVICE_LIST
+from setproctitle import setproctitle
 from openpilot.cereal.messaging import PubMaster, SubMaster
 from openpilot.cereal.visionipc import VisionStreamType
 from msgq.visionipc import VisionIpcClient, VisionBuf
 from opendbc.car.car_helpers import get_demo_car_params
-from openpilot.common.file_chunker import open_file_chunked
+
+from tinygrad.tensor import Tensor
+from tinygrad.helpers import Context
+
+from openpilot.common.file_chunker import get_chunked_file_size, open_file_chunked
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
 from openpilot.common.filter_simple import FirstOrderFilter
@@ -47,6 +47,7 @@ from openpilot.sunnypilot.modeld_v2.constants import Plan
 from openpilot.sunnypilot.modeld_v2.meta_helper import load_meta_constants
 from openpilot.sunnypilot.modeld_v2.camera_offset_helper import CameraOffsetHelper
 from openpilot.sunnypilot.modeld_v2.compile_modeld import derive_frame_skip, make_split_input_queues, make_supercombo_input_queues, WARP_INPUTS, POLICY_INPUTS
+
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
 from openpilot.sunnypilot.models.helpers import get_active_bundle
@@ -76,6 +77,62 @@ def _find_driving_pkl(bundle):
   return None
 
 
+def load_models_with_fallback(*, chestnut, load_big, load_small, params, update_loading_progress):
+  model = None
+  small_model = None
+  keep_loading = False
+  if chestnut:
+    try:
+      model = load_with_timeout(load_big, BIG_MODEL_TIMEOUT)
+    except Exception:
+      cloudlog.exception("chestnut load failed")
+      params.put_bool("ChestnutActive", False, block=True)
+      update_loading_progress(0)
+    else:
+      params.put_bool("ChestnutActive", True, block=True)
+      update_loading_progress(100)
+      # Keep ChestnutLoading until the first big modelV2 frame so the HUD does
+      # not leave the loading state into a false fallback / USB-danger flash.
+      keep_loading = True
+
+  if not keep_loading:
+    params.put_bool("ChestnutLoading", False, block=True)
+  if model is None:
+    small_model = load_small()
+    model = small_model
+  elif chestnut:
+    try:
+      small_model = load_small()
+    except Exception:
+      # A runtime fallback is optional while Chestnut is healthy. An empty or
+      # incomplete qcom slot must not discard a successfully loaded big model.
+      cloudlog.exception("small fallback preload failed; continuing with chestnut")
+  assert model is not None
+  return model, small_model, keep_loading
+
+
+def run_model_with_fallback(model, small_model, params, chestnut_state, bufs, transforms, inputs, prepare_only):
+  try:
+    return model, model.run(bufs, transforms, inputs, prepare_only), False
+  except Exception as error:
+    if not params.get_bool("ChestnutActive"):
+      raise
+    params.put_bool("ChestnutActive", False, block=True)
+    if small_model is None:
+      cloudlog.exception("chestnut failed and small fallback unavailable")
+      raise RuntimeError("chestnut failed and small fallback unavailable") from error
+    cloudlog.exception("chestnut failed, falling back to small")
+    if chestnut_state is not None:
+      chestnut_state.big = False
+    return small_model, None, True
+
+
+def validate_model_outputs(*, chestnut, outputs):
+  if chestnut and not np.all(np.isfinite(outputs.get("plan", np.array([0.])))):
+    raise RuntimeError("model output not finite")
+  return outputs
+
+
 class FrameMeta:
   frame_id: int = 0
   timestamp_sof: int = 0
@@ -90,7 +147,7 @@ class ModelState(ModelStateBase):
   inputs: dict[str, np.ndarray]
   prev_desire: np.ndarray
 
-  def __init__(self, cam_w: int, cam_h: int, chestnut: bool = False):
+  def __init__(self, cam_w: int, cam_h: int, chestnut: bool = False, loading_progress_callback=None):
     ModelStateBase.__init__(self)
 
     env_pkl = os.environ.get('COMBINED_MODEL_PKL')
@@ -108,16 +165,23 @@ class ModelState(ModelStateBase):
     self.chestnut = chestnut
 
     pkl_path = _find_driving_pkl(model_bundle)
-    assert pkl_path is not None, f"No driving pkl found for {'chestnut' if chestnut else 'small model'} — all models must be compiled with compile_modeld.py"
-    self._init_combined(pkl_path, cam_w, cam_h, model_bundle)
+    assert pkl_path is not None, "No driving pkl found — all models must be compiled with compile_modeld.py"
+    self._init_combined(pkl_path, cam_w, cam_h, model_bundle, loading_progress_callback)
 
-  def _init_combined(self, pkl_path, cam_w, cam_h, bundle):
+  def _init_combined(self, pkl_path, cam_w, cam_h, bundle, loading_progress_callback=None):
     cloudlog.warning(f"loading combined pkl: {pkl_path}")
+    def report_read_progress(value: float):
+      if loading_progress_callback is not None:
+        loading_progress_callback(5 + int(value * 70))
+
+    total_size = get_chunked_file_size(pkl_path)
     if self.chestnut:
       with Context(DEV="USB+AMD:LLVM"):
-        jits = load_oob(open_file_chunked(pkl_path))
+        jits = load_oob(open_file_chunked(pkl_path), total_size=total_size, progress_callback=report_read_progress)
     else:
-      jits = load_oob(open_file_chunked(pkl_path))
+      jits = load_oob(open_file_chunked(pkl_path), total_size=total_size, progress_callback=report_read_progress)
+    if loading_progress_callback is not None:
+      loading_progress_callback(80)
 
     self.WARP_DEV = 'QCOM' if COMMA_HARDWARE else 'CPU'
     self.DEV = 'AMD' if self.chestnut else self.WARP_DEV
@@ -194,6 +258,11 @@ class ModelState(ModelStateBase):
       self.warp(**self.input_queues, frame=frame_tensor, big_frame=big_frame_tensor)
     else:
       self.warp(**{k: self.input_queues[k] for k in WARP_INPUTS}, frame=frame_tensor, big_frame=big_frame_tensor)
+
+    if self.chestnut:
+      self.warmup()
+      if loading_progress_callback is not None:
+        loading_progress_callback(95)
 
   def warmup(self) -> None:
     dummy_frames = {k: np.zeros(self.frame_buf_params[k][3], dtype=np.uint8) for k in self._vision_input_names}
@@ -294,10 +363,7 @@ class ModelState(ModelStateBase):
       buf[0, :-1] = buf[0, 1:]
       buf[0, -1, :] = outputs['desired_curvature'][0, :] if not self.mlsim else 0
 
-    if self.chestnut and not np.all(np.isfinite(outputs.get('plan', np.array([0.])))):
-      raise RuntimeError("model output not finite")
-
-    return outputs
+    return validate_model_outputs(chestnut=self.chestnut, outputs=outputs)
 
   def get_action_from_model(self, model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
                             lat_action_t: float, long_action_t: float, v_ego: float) -> log.ModelDataV2.Action:
@@ -340,7 +406,16 @@ def main(demo=False):
 
   params = Params()
   params.put_bool("ChestnutLoading", CHESTNUT)
+  params.put("ChestnutLoadingProgress", 1 if CHESTNUT else 0, block=True)
   params.remove("ChestnutActive")
+
+  last_loading_progress = -1
+  def update_loading_progress(progress: int):
+    nonlocal last_loading_progress
+    progress = max(0, min(100, int(progress)))
+    if progress != last_loading_progress:
+      params.put("ChestnutLoadingProgress", progress, block=True)
+      last_loading_progress = progress
 
   # visionipc clients
   while True:
@@ -368,23 +443,14 @@ def main(demo=False):
   cloudlog.warning("loading model")
   st = time.monotonic()
 
-  model = None
-  if CHESTNUT:
-    def load_big():
-      m = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=True)
-      m.warmup()
-      return m
-    try:
-      model = load_with_timeout(load_big, BIG_MODEL_TIMEOUT)
-    except Exception:
-      cloudlog.exception("chestnut load failed")
-    params.put_bool("ChestnutActive", model is not None)
-
-  small_model = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=False) if model is None or CHESTNUT else None
-  if model is None:
-    model = small_model
-  params.put_bool("ChestnutLoading", False)
-  assert model is not None
+  model, small_model, keep_loading = load_models_with_fallback(
+    chestnut=CHESTNUT,
+    load_big=lambda: ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=True,
+                                loading_progress_callback=update_loading_progress),
+    load_small=lambda: ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=False),
+    params=params,
+    update_loading_progress=update_loading_progress,
+  )
   cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
 
   # messaging
@@ -397,6 +463,8 @@ def main(demo=False):
 
   # setup filter to track dropped frames
   frame_dropped_filter = FirstOrderFilter(0., 10., 1. / model.constants.MODEL_FREQ)
+  model_fps_filter = FirstOrderFilter(0., 2., 1. / model.constants.MODEL_FREQ, initialized=False)
+  last_model_output_t: float | None = None
   frame_id = 0
   last_vipc_frame_id = 0
   run_count = 0
@@ -516,23 +584,28 @@ def main(demo=False):
       inputs['action_t'] = np.array([lat_action_t, long_action_t], dtype=np.float32)
 
     mt1 = time.perf_counter()
-    try:
-      model_output = model.run(bufs, transforms, inputs, prepare_only)
-    except Exception:
-      if not params.get_bool("ChestnutActive"):
-        raise
-      cloudlog.exception("chestnut failed, falling back to small")
-      params.put_bool("ChestnutActive", False)
-      assert small_model is not None
-      model = small_model
-      if chestnut_state is not None:
-        chestnut_state.big = False
+    model, model_output, fell_back = run_model_with_fallback(
+      model, small_model, params, chestnut_state, bufs, transforms, inputs, prepare_only,
+    )
+    if fell_back:
+      if keep_loading:
+        params.put_bool("ChestnutLoading", False, block=True)
+        keep_loading = False
       run_count = 0
-      model_output = None
+      long_delay = CP.longitudinalActuatorDelay + model.LONG_SMOOTH_SECONDS
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
 
     if model_output is not None:
+      if keep_loading and model.chestnut:
+        params.put_bool("ChestnutLoading", False, block=True)
+        keep_loading = False
+      model_output_t = time.monotonic()
+      if last_model_output_t is not None:
+        model_fps_filter.update(1.0 / max(model_output_t - last_model_output_t, 1e-3))
+      last_model_output_t = model_output_t
+      if chestnut_state is not None:
+        chestnut_state.model_fps = float(model_fps_filter.x)
       modelv2_send = messaging.new_message('modelV2')
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')

@@ -63,7 +63,8 @@ def build_hud_egpu_view(*, onroad: bool, connected: bool, compiled: bool, loadin
   elif waiting or active is not True:
     headline, detail, severity, healthy = "大模型", "等待启动", "warning", False
   elif degraded:
-    headline, detail, severity, healthy = "USB", "未 SuperSpeed", "danger", False
+    # Big model is live; a brief usbState lag must not paint the strip red.
+    headline, detail, severity, healthy = "大模型", "运行中 · USB降速", "warning", False
   else:
     headline, detail, severity, healthy = "大模型", "运行中", "good", True
 

@@ -56,8 +56,9 @@ class TestHudEgpuView(unittest.TestCase):
 
   def test_usb_degraded_still_shows_gpu_metrics_when_running(self):
     view = _hud(usb_speed_mbps=480)
-    self.assertEqual(view.headline, "USB")
-    self.assertEqual(view.detail, "未 SuperSpeed")
+    self.assertEqual(view.headline, "大模型")
+    self.assertEqual(view.detail, "运行中 · USB降速")
+    self.assertEqual(view.severity, "warning")
     self.assertFalse(view.healthy)
     self.assertEqual(view.metrics[0].value, "20")
     self.assertEqual(view.metrics[2].unit, "GPU")

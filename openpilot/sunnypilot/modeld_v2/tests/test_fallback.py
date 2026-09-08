@@ -1,62 +1,179 @@
-"""
-Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
+import numpy as np
+import pytest
 
-This file is part of sunnypilot and is licensed under the MIT License.
-See the LICENSE.md file in the root directory for more details.
-"""
-
-import io
-import requests
-
-from openpilot.common.file_chunker import get_chunk_name
-from openpilot.common.hardware import hw
-from openpilot.common.test import OpenpilotTestCase
-from openpilot.selfdrive.modeld.helpers import dump_oob
-import openpilot.sunnypilot.modeld_v2.modeld as modeld_module
-from openpilot.sunnypilot.modeld_v2.tests import helpers as tests_helpers
-from openpilot.sunnypilot.modeld_v2.tests.helpers import DummyModel, DummyBundle, CAM_W, CAM_H
-from openpilot.sunnypilot.models.fetcher import ModelParser, ModelFetcher
-
-tmp_path = tests_helpers.tmp_path
+from openpilot.sunnypilot.modeld_v2 import modeld as modeld_module
+from openpilot.sunnypilot.models import manager as manager_module
+from openpilot.sunnypilot.models.helpers import REQUIRED_JSON_VERSION
 
 
-class TestFallback(OpenpilotTestCase):
-  def test_find_dual_model_in_bundle(self, tmp_path, monkeypatch):
-    lebowski_file = 'driving_lebowski.pkl'
-    tsfdo_file = 'driving_tsfdo.pkl'
-    (tmp_path / lebowski_file).write_bytes(b'fkasdjfkljf')
-    (tmp_path / tsfdo_file).write_bytes(b'dskfajklsdjlsfka')
+class FakeParams:
+  def __init__(self):
+    self.values = {}
+    self.blocking_bool_writes = []
 
-    monkeypatch.setattr(hw.Paths, 'model_root', staticmethod(lambda: str(tmp_path)))
-    big_bundle = DummyBundle(models=[DummyModel('supercombo', lebowski_file)])
-    small_bundle = DummyBundle(models=[DummyModel('supercombo', tsfdo_file)])
-    big_pkl = modeld_module._find_driving_pkl(big_bundle)
-    small_pkl = modeld_module._find_driving_pkl(small_bundle)
+  def put_bool(self, key, value, block=False):
+    self.values[key] = bool(value)
+    if block:
+      self.blocking_bool_writes.append((key, bool(value)))
 
-    assert big_pkl is not None and lebowski_file in big_pkl
-    assert small_pkl is not None and tsfdo_file in small_pkl
+  def put(self, key, value, block=False):
+    self.values[key] = value
 
-  def test_download_models_and_init_modelstate_fallback(self, tmp_path, monkeypatch):
-    monkeypatch.setattr(hw.Paths, 'model_root', staticmethod(lambda: str(tmp_path)))
-    big_json = requests.get(ModelFetcher.MODEL_URL_CHESTNUT).json()
-    big_bundle = ModelParser.parse_models(big_json)[-1]
-    small_json = requests.get(ModelFetcher.MODEL_URL).json()
-    small_bundle = ModelParser.parse_models(small_json)[-1]
+  def get(self, key):
+    return self.values.get(key)
 
-    buf = io.BytesIO()
-    dump_oob(tests_helpers.make_pkl_data(tests_helpers.ARCHETYPES['supercombo_non20hz']), buf)
-    oob_bytes = buf.getvalue()
+  def get_bool(self, key):
+    return bool(self.values.get(key, False))
 
-    for bundle in (big_bundle, small_bundle):
-      artifact = bundle.models[0].artifact
-      for i in range(len(artifact.chunks)):
-        (tmp_path / get_chunk_name(artifact.fileName, i, len(artifact.chunks))).write_bytes(oob_bytes if i == 0 else b"")
 
-    monkeypatch.setattr(modeld_module, 'get_active_bundle', lambda params=None, *, chestnut=None: small_bundle)
-    assert modeld_module.ModelState(CAM_W, CAM_H, chestnut=False).chestnut is False
+def test_initial_big_model_failure_falls_back_to_small():
+  params = FakeParams()
+  small_model = object()
 
-    monkeypatch.setattr(modeld_module, 'get_active_bundle', lambda params=None, *, chestnut=None: big_bundle)
-    try:
-      assert modeld_module.ModelState(CAM_W, CAM_H, chestnut=True).chestnut is True
-    except Exception as e:
-      assert "AMD" in str(e) or "device" in str(e).lower()
+  def load_big():
+    raise RuntimeError("USB AMD unavailable")
+
+  model, fallback, keep_loading = modeld_module.load_models_with_fallback(
+    chestnut=True,
+    load_big=load_big,
+    load_small=lambda: small_model,
+    params=params,
+    update_loading_progress=lambda _progress: None,
+  )
+
+  assert model is small_model
+  assert fallback is small_model
+  assert keep_loading is False
+  assert params.values["ChestnutActive"] is False
+  assert params.values["ChestnutLoading"] is False
+
+
+def test_successful_big_model_keeps_preloaded_small_for_runtime_fallback(monkeypatch):
+  params = FakeParams()
+  big_model = object()
+  small_model = object()
+  calls = {"big": 0, "small": 0}
+  monkeypatch.setattr(modeld_module, "load_with_timeout", lambda load, timeout: load())
+
+  def load_big():
+    calls["big"] += 1
+    return big_model
+
+  def load_small():
+    calls["small"] += 1
+    return small_model
+
+  model, fallback, keep_loading = modeld_module.load_models_with_fallback(
+    chestnut=True,
+    load_big=load_big,
+    load_small=load_small,
+    params=params,
+    update_loading_progress=lambda _progress: None,
+  )
+
+  assert model is big_model
+  assert fallback is small_model
+  assert keep_loading is True
+  assert calls == {"big": 1, "small": 1}
+  assert params.values["ChestnutActive"] is True
+  assert "ChestnutLoading" not in params.values
+
+
+def test_successful_big_model_survives_missing_small_fallback(monkeypatch):
+  params = FakeParams()
+  big_model = object()
+  monkeypatch.setattr(modeld_module, "load_with_timeout", lambda load, timeout: load())
+
+  def load_small():
+    raise AssertionError("No driving pkl found — qcom slot empty")
+
+  model, fallback, keep_loading = modeld_module.load_models_with_fallback(
+    chestnut=True,
+    load_big=lambda: big_model,
+    load_small=load_small,
+    params=params,
+    update_loading_progress=lambda _progress: None,
+  )
+
+  assert model is big_model
+  assert fallback is None
+  assert keep_loading is True
+  assert params.values["ChestnutActive"] is True
+  assert "ChestnutLoading" not in params.values
+
+
+def test_runtime_big_model_failure_switches_to_preloaded_small():
+  params = FakeParams()
+  params.values["ChestnutActive"] = True
+  small_model = object()
+  chestnut_state = type("ChestnutState", (), {"big": True})()
+
+  class FailingBigModel:
+    def run(self, *_args, **_kwargs):
+      raise RuntimeError("non-finite model output")
+
+  active, output, fell_back = modeld_module.run_model_with_fallback(
+    FailingBigModel(), small_model, params, chestnut_state, (), {}, {}, False,
+  )
+
+  assert active is small_model
+  assert output is None
+  assert fell_back
+  assert params.values["ChestnutActive"] is False
+  assert chestnut_state.big is False
+  assert ("ChestnutActive", False) in params.blocking_bool_writes
+
+
+def test_runtime_big_model_failure_without_small_fallback_is_explicit():
+  params = FakeParams()
+  params.values["ChestnutActive"] = True
+
+  class FailingBigModel:
+    def run(self, *_args, **_kwargs):
+      raise RuntimeError("USB stream stopped")
+
+  with pytest.raises(RuntimeError, match="small fallback unavailable"):
+    modeld_module.run_model_with_fallback(
+      FailingBigModel(), None, params, None, (), {}, {}, False,
+    )
+
+  assert params.values["ChestnutActive"] is False
+
+
+def test_non_finite_big_model_plan_becomes_fallback_error():
+  outputs = {"plan": np.array([np.nan])}
+
+  with pytest.raises(RuntimeError, match="not finite"):
+    modeld_module.validate_model_outputs(chestnut=True, outputs=outputs)
+
+
+def test_missing_qcom_selection_queues_exact_default_fallback_ref():
+  params = FakeParams()
+  params.values["ModelManager_ActiveBundleChestnut"] = {
+    "internalName": "BMV4",
+    "minimumSelectorVersion": REQUIRED_JSON_VERSION,
+  }
+
+  manager_module.ensure_default_qcom_fallback(params)
+
+  assert params.values["ModelManager_DownloadRef"] == "5b6436a90cf6902b8aaa71c2b6f3d7164d8ae391"
+
+
+@pytest.mark.parametrize("existing", (
+  {"ModelManager_ActiveBundle": {"internalName": "USER", "minimumSelectorVersion": REQUIRED_JSON_VERSION}},
+  {"ModelManager_DownloadRef": "user-request"},
+))
+def test_default_fallback_never_overwrites_user_model_or_download(existing):
+  params = FakeParams()
+  params.values.update(existing)
+  params.values["ModelManager_ActiveBundleChestnut"] = {
+    "internalName": "BMV4",
+    "minimumSelectorVersion": REQUIRED_JSON_VERSION,
+  }
+
+  manager_module.ensure_default_qcom_fallback(params)
+
+  if "ModelManager_DownloadRef" in existing:
+    assert params.values["ModelManager_DownloadRef"] == "user-request"
+  else:
+    assert "ModelManager_DownloadRef" not in params.values
