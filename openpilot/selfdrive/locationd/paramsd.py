@@ -11,6 +11,7 @@ from openpilot.common.realtime import config_realtime_process, DT_MDL
 from openpilot.selfdrive.locationd.models.car_kf import CarKalman, ObservationKind, States
 from openpilot.selfdrive.locationd.models.constants import GENERATED_DIR
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
+from openpilot.selfdrive.locationd.c3xl_calib_reset import consume_c3xl_calib_reset
 from openpilot.common.swaglog import cloudlog
 
 MAX_ANGLE_OFFSET_DELTA = 20 * DT_MDL  # Max 20 deg/s
@@ -270,9 +271,8 @@ def main():
 
       msg_dat = msg.to_bytes()
       if sm.frame % 1200 == 0:  # once a minute
-        # Cleared by UI reset-calibration (C3XL avoids OnroadCycle).
-        if params.get("LiveParametersV2") is None:
-          cloudlog.warning("LiveParametersV2 cleared; resetting vehicle params learner")
+        if consume_c3xl_calib_reset("paramsd"):
+          cloudlog.warning("C3XL calibration reset requested; resetting vehicle params learner")
           learner.reset(None)
           msg = learner.get_msg(sm.all_checks(), debug=DEBUG)
           msg_dat = msg.to_bytes()

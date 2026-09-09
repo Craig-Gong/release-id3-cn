@@ -14,6 +14,7 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose, fft_next_good_size, parabolic_peak_interp
+from openpilot.selfdrive.locationd.c3xl_calib_reset import consume_c3xl_calib_reset
 from openpilot.sunnypilot.livedelay.lagd_toggle import LagdToggle
 
 BLOCK_SIZE = 100
@@ -423,8 +424,8 @@ def main():
         params.put("LiveDelay", lag_msg_dat)
 
       if sm.frame % 60 == 0:  # read from and write to params every 3 seconds
-        # Cleared by UI reset-calibration (C3XL avoids OnroadCycle).
-        if params.get("LiveDelay") is None and lag_learner.block_avg.valid_blocks > 0:
-          cloudlog.warning("LiveDelay cleared; resetting lag estimator")
+        if consume_c3xl_calib_reset("lagd"):
+          cloudlog.warning("C3XL calibration reset requested; resetting lag estimator")
           lag_learner.reset(lag_learner.initial_lag, 0)
+          params.put("LiveDelay", lag_learner.get_msg(sm.all_checks(), DEBUG).to_bytes(), block=True)
         lagd_toggle.update(lag_msg)

@@ -1,6 +1,7 @@
 import importlib
 import os
 import signal
+import sys
 import time
 import subprocess
 from collections.abc import Callable, ValuesView
@@ -59,7 +60,10 @@ def launcher(proc: str, name: str) -> None:
       except Exception:
         pass
 
-    # import the process
+    # Forked children inherit sys.modules from manager. After rsync, force a
+    # disk re-import so locationd daemons are not stuck on stale calibrationd.
+    sys.modules.pop(proc, None)
+    importlib.invalidate_caches()
     mod = importlib.import_module(proc)
 
     # rename the process
