@@ -5,6 +5,13 @@ from openpilot.sunnypilot.nav.snapshot import STALE_LINK_S, NavSnapshot, snapsho
 
 
 class TestSnapshotExecutable(unittest.TestCase):
+  def test_hmac_window_is_eight_seconds(self):
+    self.assertEqual(STALE_LINK_S, 8.0)
+
+  def test_apk_interval_of_three_seconds_still_executes(self):
+    snap = NavSnapshot(ts=10.0, link_ok=True, link_state=2, iqlink_enabled=True)
+    self.assertTrue(snapshot_executable(snap, now=13.0))
+
   def test_fresh_packet_executes(self):
     snap = NavSnapshot(ts=10.0, link_ok=True, link_state=2, iqlink_enabled=True)
     self.assertTrue(snapshot_executable(snap, now=10.0 + STALE_LINK_S))

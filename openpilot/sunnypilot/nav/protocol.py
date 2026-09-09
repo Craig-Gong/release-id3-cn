@@ -24,6 +24,7 @@ _offset_n = 0
 _YELLOW_STOP_DIST_M = 30.0
 LIGHT_TURN_WINDOW_M = 150.0
 TURN_DESIRE_WINDOW_M = 150.0
+NEAR_DEST_REMAIN_M = 150.0
 
 
 def _f(data: dict[str, Any], key: str, default: float = 0.0) -> float:
@@ -137,6 +138,8 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
   lane_rec = _s(data, "laneRecommend", "none").strip().lower() or "none"
 
   send_turn = bool(is_turn and near_turn)
+  # Urban: Gaode often labels intersections as lc_*. Promote toast / desire
+  # when near; maneuver stays fork so HUD / soft-curve still know it is LC.
   if is_lc and near_turn and lane_rec != "straight":
     send_turn = True
 
@@ -159,12 +162,19 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
     accel_target = _RED_LIGHT_ACCEL
 
   maneuver = "none"
-  if send_turn:
+  if bucket.startswith("turn"):
     maneuver = "turn"
   elif bucket.startswith("lc"):
     maneuver = "fork"
   elif bucket == "exit":
     maneuver = "exit"
+  elif bucket == "roundabout":
+    maneuver = "roundabout"
+
+  go_dist = _f(data, "nGoPosDist")
+  if 0.0 < go_dist <= NEAR_DEST_REMAIN_M:
+    send_turn = False
+    maneuver = "arrive"
 
   return NavSnapshot(
     ts=float(now),

@@ -20,9 +20,9 @@ def test_sticky_red_survives_stale_executable():
   live = _snap(ts=10.0)
   h.observe_nav(live, now=10.0, gas=False, v_ego=0.0)
   assert h.red_pin is True
-  # 3 s later: past STALE_LINK_S=2.5, but within sticky TTL 8 s
-  stale = _snap(ts=10.0, stop_for_light=True)
-  h.observe_nav(stale, now=13.0, gas=False, v_ego=0.0)
+  # HMAC / link_ok dropped; sticky TTL still holds the red pin.
+  stale = _snap(ts=10.0, link_ok=False, stop_for_light=True)
+  h.observe_nav(stale, now=12.0, gas=False, v_ego=0.0)
   assert h.sticky_red is True
   assert h.red_pin is True
 

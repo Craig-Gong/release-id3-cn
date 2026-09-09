@@ -1,4 +1,5 @@
 from openpilot.common.constants import CV
+from openpilot.sunnypilot.nav.snapshot import NavSnapshot
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import (
   STAGE_APPROACH,
   STAGE_OFF,
@@ -95,3 +96,55 @@ def test_gas_releases_cap():
 def test_disabled_lane_turn():
   helper = _prep(desire=False)
   assert _update(helper, 55.0) is None
+
+
+def _nav_turn_snap(*, dist=80.0, direction="left"):
+  return NavSnapshot(
+    ts=1.0, link_ok=True, link_state=2, iqlink_enabled=True,
+    send_turn=True, maneuver="turn", maneuver_dir=direction, tbt_dist=dist,
+  )
+
+
+def test_no_blinker_without_nav_does_nothing():
+  helper = _prep()
+  assert _update(helper, 55.0, left_blinker=False, right_blinker=False) is None
+
+
+def test_iqlink_nav_approach_without_blinker():
+  helper = _prep()
+  v = _update(helper, 55.0, left_blinker=False, right_blinker=False, snap=_nav_turn_snap())
+  assert v is not None
+  assert helper.stage == STAGE_APPROACH
+
+
+def test_iqlink_nav_turn_in_without_blinker():
+  helper = _prep()
+  _update(helper, 55.0, left_blinker=False, right_blinker=False, snap=_nav_turn_snap(dist=70.0))
+  v = _update(helper, 35.0, left_blinker=False, right_blinker=False, snap=_nav_turn_snap(dist=50.0))
+  assert helper.stage == STAGE_TURN_IN
+  assert abs(v - TURN_IN_MS) < 1e-6
+
+
+def test_highway_limit_fork_does_not_prep():
+  helper = _prep()
+  snap = NavSnapshot(
+    ts=1.0, link_ok=True, iqlink_enabled=True,
+    send_turn=True, maneuver="fork", maneuver_dir="left", tbt_dist=80.0,
+    road_limit_kph=80.0,
+  )
+  posted = 80.0 * CV.KPH_TO_MS
+  assert _update(helper, 55.0, left_blinker=False, right_blinker=False,
+                 posted_limit_ms=posted, snap=snap) is None
+  assert helper.stage == STAGE_OFF
+
+
+def test_urban_lc_send_turn_preps():
+  helper = _prep()
+  snap = NavSnapshot(
+    ts=1.0, link_ok=True, iqlink_enabled=True,
+    send_turn=True, maneuver="fork", maneuver_dir="left", tbt_dist=100.0,
+    road_limit_kph=50.0,
+  )
+  v = _update(helper, 55.0, left_blinker=False, right_blinker=False, snap=snap)
+  assert v is not None
+  assert helper.stage == STAGE_APPROACH

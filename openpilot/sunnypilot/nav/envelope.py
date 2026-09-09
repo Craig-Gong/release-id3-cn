@@ -30,35 +30,40 @@ class EnvelopeVerifier:
     self.psk = psk or FIXED_BLE_PSK
     self._seen: list[int] = []
 
-  def accept(self, raw: bytes, *, now_ms: int | None = None) -> dict[str, Any] | None:
+  def inspect(self, raw: bytes, *, now_ms: int | None = None) -> tuple[str, dict[str, Any] | None]:
+    """Return ('ok'|'replay'|'bad', data). Replay = valid HMAC, already-seen seq."""
     if not raw or len(raw) > MAX_ENVELOPE_BYTES:
-      return None
+      return "bad", None
     try:
       obj = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-      return None
+      return "bad", None
     if not isinstance(obj, dict):
-      return None
+      return "bad", None
     try:
       seq = int(obj["seq"])
       ts = int(obj["ts"])
       data = obj["data"]
       digest = str(obj["hmac"]).lower()
     except (KeyError, TypeError, ValueError):
-      return None
+      return "bad", None
     if not isinstance(data, dict) or len(digest) != 32:
-      return None
+      return "bad", None
     expect = envelope_hmac(self.psk, seq, ts, data)
     if not hmac.compare_digest(expect, digest):
-      return None
+      return "bad", None
     clock = int(time.time() * 1000) if now_ms is None else now_ms
     skew = abs(clock - ts)
     ts_plausible = _PLAUSIBLE_TS_MS_MIN <= ts <= _PLAUSIBLE_TS_MS_MAX
     if skew > MAX_SKEW_MS and not (skew > CLOCK_BROKEN_SKEW_MS and ts_plausible):
-      return None
+      return "bad", None
     if seq in self._seen:
-      return None
+      return "replay", data
     self._seen.append(seq)
     if len(self._seen) > SEQ_REPLAY_WINDOW:
       self._seen = self._seen[-SEQ_REPLAY_WINDOW:]
-    return data
+    return "ok", data
+
+  def accept(self, raw: bytes, *, now_ms: int | None = None) -> dict[str, Any] | None:
+    status, data = self.inspect(raw, now_ms=now_ms)
+    return data if status == "ok" else None

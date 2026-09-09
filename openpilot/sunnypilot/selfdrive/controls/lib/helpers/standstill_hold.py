@@ -18,6 +18,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead impor
   read_follow_lead,
 )
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, read_snapshot, snapshot_executable
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import nav_long_blocked, snapshot_long_ok
 
 _STANDSTILL_HOLD_RELEASE_S = 1.0
 _STANDSTILL_HOLD_LEAD_RELEASE_S = 0.15
@@ -75,9 +76,9 @@ class StandstillHold:
     self.sticky_red = False
     self._sticky_until = 0.0
 
-  def observe_nav(self, snap: NavSnapshot, now: float, *, gas: bool, v_ego: float) -> None:
+  def observe_nav(self, snap: NavSnapshot, now: float, *, gas: bool, v_ego: float, gear=None) -> None:
     """Arm / expire sticky red. Speed-limit stale rules stay separate."""
-    if gas or v_ego > _RELEASE_V_EGO or not snap.iqlink_enabled:
+    if gas or v_ego > _RELEASE_V_EGO or not snap.iqlink_enabled or nav_long_blocked(gear):
       self._clear_sticky()
       self.red_pin = False
       self._remain_go_s = 0.0
@@ -106,9 +107,13 @@ class StandstillHold:
 
     clock = float(now) if now is not None else 0.0
     snap = read_snapshot() if sm is not None else NavSnapshot()
-    self.observe_nav(snap, clock, gas=False, v_ego=v_ego)
+    try:
+      gear = sm['carState'].gearShifter if sm is not None else None
+    except Exception:
+      gear = None
+    self.observe_nav(snap, clock, gas=False, v_ego=v_ego, gear=gear)
 
-    nav_live = snapshot_executable(snap, now=clock)
+    nav_live = snapshot_long_ok(snap, gear, now=clock)
     follow_sm = sm if sm is not None else {}
     lead = read_follow_lead(follow_sm)
     lead_rolling = bool(lead.present and lead.v_lead >= LEAD_GO_SPEED_MPS)
