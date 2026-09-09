@@ -1,7 +1,13 @@
 from openpilot.cereal import log, custom
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
+from openpilot.sunnypilot.nav.snapshot import read_snapshot
 from openpilot.sunnypilot.selfdrive.controls.lib.auto_lane_change import AutoLaneChangeController, AutoLaneChangeMode
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import (
+  eval_nav_turn_desire,
+  nav_intersection_turn,
+  snapshot_long_ok,
+)
 from openpilot.sunnypilot.selfdrive.controls.lib.lane_turn_desire import LaneTurnController
 
 LaneChangeState = log.LaneChangeState
@@ -29,6 +35,7 @@ class DesireHelper:
     self.alc = AutoLaneChangeController(self)
     self.lane_turn_controller = LaneTurnController(self)
     self.lane_turn_direction = TurnDirection.none
+    self.nav_turn_direction = TurnDirection.none
 
   @staticmethod
   def get_lane_change_direction(CS):
@@ -47,13 +54,20 @@ class DesireHelper:
                                                left_blinker=carstate.leftBlinker, right_blinker=carstate.rightBlinker, v_ego=v_ego,
                                                path_x=path_x, path_y=path_y, steering_angle_deg=steer_deg)
     turn_raw = self.lane_turn_controller.get_turn_direction()
+    self.nav_turn_direction = self._nav_turn_desire(carstate)
+    if self.nav_turn_direction != TurnDirection.none:
+      turn_raw = self.nav_turn_direction
+    # Nav / blinker intersection turn owns the desire and clears LC.
     # A lane-change path yaws into the next lane; that is not an intersection turn.
-    if self.lane_change_state != LaneChangeState.off:
+    if turn_raw != TurnDirection.none:
+      self.lane_turn_direction = turn_raw
+      turn_active = True
+    elif self.lane_change_state != LaneChangeState.off:
       self.lane_turn_direction = TurnDirection.none
       turn_active = False
     else:
-      self.lane_turn_direction = turn_raw
-      turn_active = turn_raw != TurnDirection.none
+      self.lane_turn_direction = TurnDirection.none
+      turn_active = False
 
     if not lateral_active or self.lane_change_timer > LANE_CHANGE_TIME_MAX or self.alc.lane_change_set_timer == AutoLaneChangeMode.OFF:
       self.lane_change_state = LaneChangeState.off
@@ -128,3 +142,28 @@ class DesireHelper:
         self.keep_pulse_timer = 0.0
 
     self.alc.update_state()
+
+  @staticmethod
+  def _nav_turn_desire(carstate):
+    try:
+      snap = read_snapshot()
+    except Exception:
+      return TurnDirection.none
+    if not snapshot_long_ok(snap, getattr(carstate, "gearShifter", None)):
+      return TurnDirection.none
+    if not nav_intersection_turn(snap):
+      return TurnDirection.none
+    allowed = eval_nav_turn_desire(
+      direction=snap.maneuver_dir,
+      turn_dist_m=float(snap.tbt_dist),
+      v_ego_mps=float(carstate.vEgo),
+      left_blinker=bool(carstate.leftBlinker),
+      right_blinker=bool(carstate.rightBlinker),
+      left_blindspot=bool(getattr(carstate, "leftBlindspot", False)),
+      right_blindspot=bool(getattr(carstate, "rightBlindspot", False)),
+    )
+    if allowed == "left":
+      return TurnDirection.turnLeft
+    if allowed == "right":
+      return TurnDirection.turnRight
+    return TurnDirection.none

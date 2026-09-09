@@ -11,8 +11,10 @@ from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.nav.ble_gatt import BleGattServer
 from openpilot.sunnypilot.nav.envelope import FIXED_BLE_PSK, EnvelopeVerifier
+from openpilot.sunnypilot.nav.gatt_json import MAX_GATT_BUF, pop_complete_json
 from openpilot.sunnypilot.nav.protocol import parse_carrot
 from openpilot.sunnypilot.nav.snapshot import (
+  HMAC_FRESH_S,
   INJECT_SHM_PATH,
   NavSnapshot,
   write_snapshot,
@@ -21,6 +23,7 @@ from openpilot.sunnypilot.nav.snapshot import (
 LINK_OFF = 0
 LINK_CONNECTING = 1
 LINK_CONNECTED = 2
+BLE_RETRY_S = 5.0
 
 
 def _param_bool(params: Params, key: str, default: bool = False) -> bool:
@@ -63,29 +66,28 @@ class IqlinkDaemon:
     self.verifier = EnvelopeVerifier(_psk(self.params))
     self._last_snap = NavSnapshot()
     self._last_hmac_ts = 0.0
+    self._was_hmac_fresh = False
     self._buf = bytearray()
     self.ble = BleGattServer(self._on_gatt_write)
 
   def _on_gatt_write(self, raw: bytes) -> None:
     if not raw:
       return
-    # Reassemble fragmented ATT writes into one JSON object.
     self._buf.extend(raw)
-    if len(self._buf) > 64 * 1024:
+    if len(self._buf) > MAX_GATT_BUF:
       self._buf.clear()
       return
-    blob = bytes(self._buf)
-    try:
-      obj = json.loads(blob)
-    except json.JSONDecodeError:
-      return
-    self._buf.clear()
-    if not isinstance(obj, dict):
-      return
-    data = self.verifier.accept(blob)
-    if data is None:
-      return
-    self._ingest(data, hmac_ok=True)
+    while True:
+      blob = pop_complete_json(self._buf)
+      if blob is None:
+        return
+      status, data = self.verifier.inspect(blob)
+      if status == "bad" or data is None:
+        continue
+      if status == "replay":
+        self._heartbeat_only()
+        continue
+      self._ingest(data, hmac_ok=True)
 
   def _ingest(self, data: dict, *, hmac_ok: bool) -> None:
     enabled = _param_bool(self.params, "IqlinkEnabled", True)
@@ -109,6 +111,17 @@ class IqlinkDaemon:
     _param_put(self.params, "IqlinkBleLinkState", LINK_CONNECTED if hmac_ok else LINK_OFF)
     _param_put(self.params, "IqlinkBleConnected", bool(hmac_ok))
 
+  def _heartbeat_only(self) -> None:
+    """Valid HMAC, same seq: refresh link, keep last TBT / lights / limit."""
+    now = time.monotonic()
+    self._last_hmac_ts = now
+    self._last_snap.link_ok = True
+    self._last_snap.link_state = LINK_CONNECTED
+    self._last_snap.ts = now
+    write_snapshot(self._last_snap)
+    _param_put(self.params, "IqlinkBleLinkState", LINK_CONNECTED)
+    _param_put(self.params, "IqlinkBleConnected", True)
+
   def _poll_inject(self) -> None:
     try:
       st = os.stat(INJECT_SHM_PATH)
@@ -127,7 +140,11 @@ class IqlinkDaemon:
 
   def _publish_link(self, enabled: bool) -> None:
     now = time.monotonic()
-    hmac_fresh = (now - self._last_hmac_ts) < 8.0
+    hmac_fresh = bool(self._last_hmac_ts) and (now - self._last_hmac_ts) < HMAC_FRESH_S
+    if self._was_hmac_fresh and not hmac_fresh:
+      # Phone may restart seq after a drop; do not seq-replay the next session forever.
+      self.verifier = EnvelopeVerifier(_psk(self.params))
+    self._was_hmac_fresh = hmac_fresh
     if not enabled:
       state = LINK_OFF
       ok = False
@@ -149,17 +166,23 @@ class IqlinkDaemon:
   def run(self) -> None:
     rk = Ratekeeper(5)
     ble_wanted = False
+    last_ble_try = 0.0
     while True:
       enabled = _param_bool(self.params, "IqlinkEnabled", True)
-      if enabled and not ble_wanted:
-        self.verifier = EnvelopeVerifier(_psk(self.params))
-        started = self.ble.start()
+      now = time.monotonic()
+      if enabled:
+        if not self.ble.running and (now - last_ble_try) >= BLE_RETRY_S:
+          last_ble_try = now
+          self.verifier = EnvelopeVerifier(_psk(self.params))
+          started = self.ble.start()
+          cloudlog.info(f"iqlinkd BLE start ok={started}")
         ble_wanted = True
-        cloudlog.info(f"iqlinkd BLE start ok={started}")
-      elif not enabled and ble_wanted:
+      elif ble_wanted:
         self.ble.stop()
         ble_wanted = False
         self._last_hmac_ts = 0.0
+        self._was_hmac_fresh = False
+        last_ble_try = 0.0
       self._poll_inject()
       self._publish_link(enabled)
       rk.keep_time()

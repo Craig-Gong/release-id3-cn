@@ -12,7 +12,10 @@ NAV_SHM_PATH = "/dev/shm/sp_nav.json"
 HUD_SHM_PATH = "/dev/shm/sp_nav_hud.json"
 CLUSTER_SHM_PATH = "/dev/shm/sp_cluster_hud.json"
 INJECT_SHM_PATH = "/dev/shm/sp_nav_inject.json"
-STALE_LINK_S = 2.5
+# Same window as iqlinkd HMAC freshness. A tighter packet-age cut (2.5 s)
+# dropped nav control while the HUD was still green.
+HMAC_FRESH_S = 8.0
+STALE_LINK_S = HMAC_FRESH_S
 
 
 @dataclass
@@ -111,5 +114,4 @@ def snapshot_executable(snap: NavSnapshot, *, now: float | None = None) -> bool:
   clock = time.monotonic() if now is None else now
   if snap.ts <= 0.0:
     return False
-  # Keep HUD via link_ok; leftover speed/accel only while the last packet is fresh.
   return (clock - snap.ts) <= STALE_LINK_S

@@ -77,6 +77,15 @@ def test_right_blinker_is_a_no_op():
   assert _adjust(_build(3), a_target=-0.2, right_blinker=True) == (-0.2, False)
 
 
+def test_nav_red_skips_vision_offset():
+  c = _build(3)
+  a_target, should_stop = c.adjust(
+    -0.2, False, 8.0, _model_msg(12.0, 0.0),
+    stop_light=True, has_lead=False, right_blinker=False, nav_red=True,
+  )
+  assert (a_target, should_stop) == (-0.2, False)
+
+
 def test_no_stop_light_is_a_no_op():
   assert _adjust(_build(3), a_target=-0.2, stop_light=False) == (-0.2, False)
 

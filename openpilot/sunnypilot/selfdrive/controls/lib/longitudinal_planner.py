@@ -23,7 +23,8 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import 
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
 from openpilot.sunnypilot.nav.protocol import nav_red_speed_ms, nav_stop_margin_m
-from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable, write_cluster_hud
+from openpilot.sunnypilot.nav.snapshot import read_snapshot, write_cluster_hud
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import snapshot_long_ok
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_resolver import SpeedLimitResolver
@@ -64,7 +65,8 @@ class LongitudinalPlannerSP:
       return False
     try:
       snap = read_snapshot()
-      if snapshot_executable(snap) and snap.stop_for_light:
+      gear = sm['carState'].gearShifter
+      if snapshot_long_ok(snap, gear) and snap.stop_for_light:
         return False
     except Exception:
       pass
@@ -112,7 +114,7 @@ class LongitudinalPlannerSP:
     if prep_v is not None:
       self.output_v_target = min(float(self.output_v_target), float(prep_v))
     snap = read_snapshot()
-    if snapshot_executable(snap):
+    if snapshot_long_ok(snap, CS.gearShifter):
       curve = nav_soft_curve_ms(snap, v_ego)
       if curve is not None:
         self.output_v_target = min(float(self.output_v_target), float(curve))
@@ -140,6 +142,10 @@ class LongitudinalPlannerSP:
     except Exception:
       lane_change_state = 0
     big = bool(getattr(model, "big", False))
+    try:
+      snap = read_snapshot()
+    except Exception:
+      snap = None
     return self.turn_prep.update(
       v_ego=float(v_ego),
       enabled=bool(enabled),
@@ -152,6 +158,7 @@ class LongitudinalPlannerSP:
       path_x=path_x,
       path_y=path_y,
       big=big,
+      snap=snap,
     )
 
   def apply_stop_helpers(self, sm: messaging.SubMaster, v_ego: float, a_target: float,
@@ -164,9 +171,10 @@ class LongitudinalPlannerSP:
       return a_target, should_stop
     now = time.monotonic()
     snap = read_snapshot()
+    long_ok = snapshot_long_ok(snap, CS.gearShifter, now=now)
     # Arm sticky red before lead-gap / e2e so a stale link cannot re-enable creep.
     self.standstill_hold.observe_nav(
-      snap, now, gas=bool(CS.gasPressed), v_ego=float(v_ego),
+      snap, now, gas=bool(CS.gasPressed), v_ego=float(v_ego), gear=CS.gearShifter,
     )
     red_pin = bool(self.standstill_hold.red_pin)
 
@@ -177,16 +185,17 @@ class LongitudinalPlannerSP:
       lead_d_rel = None
     model_stop = bool(getattr(model.action, "shouldStop", False))
     self.traffic_stop_offset.update()
+    nav_red = bool(red_pin or (long_ok and snap.stop_for_light))
     a_target, should_stop = self.traffic_stop_offset.adjust(
       a_target, should_stop, v_ego, model,
       stop_light=model_stop, has_lead=has_lead, right_blinker=bool(CS.rightBlinker),
-      lead_d_rel=lead_d_rel,
+      lead_d_rel=lead_d_rel, nav_red=nav_red,
     )
     a_target, should_stop = apply_stopped_lead_gap(
       sm, v_ego, a_target, should_stop, red_pin=red_pin, model_stop=model_stop,
     )
     a_target, should_stop = apply_lead_stop_safety(sm, v_ego, a_target, should_stop)
-    if red_pin or (snapshot_executable(snap, now=now) and snap.stop_for_light):
+    if red_pin or (long_ok and snap.stop_for_light):
       # Never let lead-gap creep / e2e leave should_stop=False under a red.
       # Approach speed is only for high-speed braking; once crawling or near
       # the line, hard-stop or MEB RELEASE → creep → slam.

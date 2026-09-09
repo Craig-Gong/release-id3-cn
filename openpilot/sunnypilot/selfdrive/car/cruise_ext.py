@@ -10,7 +10,7 @@ from openpilot.cereal import custom
 from opendbc.car.structs import car
 from opendbc.car import structs
 from openpilot.common.constants import CV
-from openpilot.common.params import Params
+from openpilot.common.params import Params, UnknownKeyName
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.helpers import get_minimum_set_speed
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import ACTIVE_STATES as SLA_ACTIVE_STATES
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.helpers import compare_cluster_target
@@ -130,7 +130,18 @@ class VCruiseHelperSP:
 
     return False
 
+  def _iqlink_blocks_sla_set_speed(self) -> bool:
+    # IQ-link ON: nav / TBT owns speed. Do not auto-raise MAX to the limit.
+    try:
+      return bool(self.params.get_bool("IqlinkEnabled"))
+    except UnknownKeyName:
+      return False
+
   def update_speed_limit_assist_v_cruise_non_pcm(self) -> None:
+    if self._iqlink_blocks_sla_set_speed():
+      self.prev_sla_state = self.sla_state
+      self.prev_speed_limit_final_last_kph = self.speed_limit_final_last_kph
+      return
     if self.sla_state in SLA_ACTIVE_STATES and (self.prev_sla_state not in SLA_ACTIVE_STATES or
                                                 self.update_speed_limit_final_last_changed):
       self.v_cruise_kph = np.clip(round(self.speed_limit_final_last_kph, 1), self.v_cruise_min, V_CRUISE_MAX)

@@ -75,8 +75,8 @@ class TrafficStopOffset:
 
   def adjust(self, a_target: float, should_stop: bool, v_ego: float, model_msg,
              *, stop_light: bool, has_lead: bool, right_blinker: bool,
-             lead_d_rel: float | None = None) -> tuple[float, bool]:
-    if self.distance <= 0. or not stop_light or right_blinker:
+             lead_d_rel: float | None = None, nav_red: bool = False) -> tuple[float, bool]:
+    if self.distance <= 0. or not stop_light or right_blinker or nav_red:
       return a_target, should_stop
 
     x = model_msg.position.x

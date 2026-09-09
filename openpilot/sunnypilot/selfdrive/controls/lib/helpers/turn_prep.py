@@ -1,11 +1,11 @@
-"""Urban blinker turn-prep: cap planned speed before the corner, never MAX.
+"""Urban turn-prep: cap planned speed before the corner, never MAX.
 
 Two stages, matching Low-Speed Turn Planning:
-  1. Blinker on while still above the turn gate G → approach ~G-3.
-  2. Below G and the path / steering shows the matching turn → ~20 km/h.
+  1. Blinker (or IQ-link urban send_turn) while still above G → approach ~G-3.
+  2. Below G and path / steering / near nav turn matches → ~20 km/h.
      Applies to small and big models. E2E alone was too fast on 90° corners.
 
-Planner must only min() this onto v_cruise. No IQ-link / nav path.
+Planner must only min() this onto v_cruise. No auto blinker / NavExit ALC.
 """
 from __future__ import annotations
 
@@ -13,6 +13,11 @@ import time
 
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
+from openpilot.sunnypilot.nav.snapshot import NavSnapshot
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import (
+  nav_led_approach,
+  nav_near_matching_turn,
+)
 
 TURN_TRIGGER_MPS = 45.0 * CV.KPH_TO_MS
 DEFAULT_TURN_GATE_MPS = 40.0 * CV.KPH_TO_MS
@@ -142,9 +147,12 @@ class UrbanTurnPrep:
     path_x=None,
     path_y=None,
     big: bool = False,
+    snap: NavSnapshot | None = None,
   ) -> float | None:
     self._maybe_refresh_params()
     _ = big
+    nav = snap if snap is not None else NavSnapshot()
+    nav_led = nav_led_approach(nav)
 
     if self.stage == STAGE_POST:
       if gas_pressed or not enabled or time.monotonic() >= self._post_until:
@@ -155,7 +163,7 @@ class UrbanTurnPrep:
     if not enabled or gas_pressed or not self._turn_planning_on:
       self.reset()
       return None
-    if not _one_blinker(left_blinker, right_blinker):
+    if not _one_blinker(left_blinker, right_blinker) and not nav_led:
       # Typical: cancel the stalk on exit. Keep the 2 s 30 cap only after a
       # real turn-in, not after an aborted approach / lane-change blinker.
       if self.stage == STAGE_TURN_IN:
@@ -175,9 +183,14 @@ class UrbanTurnPrep:
       return None
 
     lat_m = _path_lateral_m(path_x, path_y)
+    nav_left = nav_led and nav.maneuver_dir == "left"
+    nav_right = nav_led and nav.maneuver_dir == "right"
+    left = bool(left_blinker or nav_left)
+    right = bool(right_blinker or nav_right)
     turning = (
-      _path_matches_blinker(lat_m, left_blinker, right_blinker)
-      or _steer_into_blinker(steering_angle_deg, left_blinker, right_blinker)
+      _path_matches_blinker(lat_m, left, right)
+      or _steer_into_blinker(steering_angle_deg, left, right)
+      or nav_near_matching_turn(left=left, right=right, snap=nav)
     )
     below_gate = v_ego < self._gate_mps
     finished = (
