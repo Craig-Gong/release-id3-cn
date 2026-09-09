@@ -42,6 +42,7 @@ from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan, smooth_value
 from openpilot.selfdrive.modeld.modeld import ChestnutState
+from openpilot.sunnypilot.modeld_v2.model_smoothing import lat_smooth_total_seconds, model_lat_smooth_max_sec
 
 from openpilot.selfdrive.modeld.compile_modeld import (
   MODELD_INPUTS,
@@ -173,6 +174,8 @@ class ModelState(ModelStateBase):
     self.LONG_SMOOTH_SECONDS = float(overrides.get('long', ".0"))
     self.MIN_LAT_CONTROL_SPEED = 0.3
     self.PLANPLUS_CONTROL: float = 1.0
+    # IQ ModelSmoothing: last-frame extra tau folded into lat_delay for the next inference.
+    self.lat_smooth_extra_sec = 0.0
     self.chestnut = chestnut
 
     pkl_path = _find_driving_pkl(model_bundle)
@@ -371,8 +374,14 @@ class ModelState(ModelStateBase):
     return validate_model_outputs(chestnut=self.chestnut, outputs=outputs)
 
   def get_action_from_model(self, model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
-                            lat_action_t: float, long_action_t: float, v_ego: float) -> log.ModelDataV2.Action:
-    if 'action' not in model_output:
+                            lat_action_t: float, long_action_t: float, v_ego: float,
+                            lat_smooth_seconds: float | None = None) -> log.ModelDataV2.Action:
+    # lat_smooth_seconds: IQ ModelSmoothing total tau (bundle lat + dynamic extra). None → bundle only.
+    if lat_smooth_seconds is None:
+      lat_smooth_seconds = self.LAT_SMOOTH_SECONDS
+
+    has_action = 'action' in model_output
+    if not has_action:
       plan = model_output['plan'][0]
       desired_accel = get_accel_from_plan(plan[:, Plan.VELOCITY][:, 0], plan[:, Plan.ACCELERATION][:, 0], self.constants.T_IDXS,
                                           action_t=long_action_t)
@@ -387,9 +396,11 @@ class ModelState(ModelStateBase):
     stop = v_ego < 0.3 and desired_accel < 0.1
     desired_accel = smooth_value(desired_accel, prev_action.desiredAcceleration, self.LONG_SMOOTH_SECONDS)
 
-    if self.generation is not None and self.generation >= 10: # smooth curvature for post FOF models
+    # IQ: action path always smooths; plan path only for generation >= 10 (post-FOF).
+    apply_lat_smooth = has_action or (self.generation is not None and self.generation >= 10)
+    if apply_lat_smooth:
       if v_ego > self.MIN_LAT_CONTROL_SPEED:
-        desired_curvature = smooth_value(desired_curvature, prev_action.desiredCurvature, self.LAT_SMOOTH_SECONDS)
+        desired_curvature = smooth_value(desired_curvature, prev_action.desiredCurvature, lat_smooth_seconds)
       else:
         desired_curvature = prev_action.desiredCurvature
 
@@ -496,6 +507,8 @@ def main(demo=False):
   # TODO Move smooth seconds to action function
   long_delay = CP.longitudinalActuatorDelay + model.LONG_SMOOTH_SECONDS
   prev_action = log.ModelDataV2.Action()
+  # IQ ModelSmoothing max extra (Params); refreshed periodically — not on the hot path every frame.
+  model_smoothing_max_extra_sec = model_lat_smooth_max_sec(params)
 
   DH = DesireHelper()
   meta_constants = load_meta_constants()
@@ -543,7 +556,9 @@ def main(demo=False):
       model.lat_delay = get_lat_delay(params, sm["lateralDelay"].lateralDelay)
       model.PLANPLUS_CONTROL = params.get("PlanplusControl", return_default=True)
       camera_offset_helper.set_offset(params.get("CameraOffset", return_default=True))
-    lat_delay = model.lat_delay + model.LAT_SMOOTH_SECONDS
+      model_smoothing_max_extra_sec = model_lat_smooth_max_sec(params)
+    # Bundle lat + last-frame IQ dynamic extra (matches iqmodeld lat_horizon accounting).
+    lat_delay = model.lat_delay + model.LAT_SMOOTH_SECONDS + model.lat_smooth_extra_sec
     if sm.updated["extrinsicsCalibration"] and sm.seen['narrowRoadCameraState'] and sm.seen['deviceState']:
       device_from_calib_euler = np.array(sm["extrinsicsCalibration"].rpyCalib, dtype=np.float32)
       dc = DEVICE_CAMERAS[(str(sm['deviceState'].deviceType), str(sm['narrowRoadCameraState'].sensor))]
@@ -620,7 +635,12 @@ def main(demo=False):
       posenet_send = messaging.new_message('cameraOdometry')
       mdv2sp_send = messaging.new_message('modelDataV2SP')
 
-      action = model.get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego)
+      lat_smooth_total, model.lat_smooth_extra_sec = lat_smooth_total_seconds(
+        model.LAT_SMOOTH_SECONDS, model_output, model_smoothing_max_extra_sec
+      )
+      action = model.get_action_from_model(
+        model_output, prev_action, lat_action_t, long_action_t, v_ego, lat_smooth_total
+      )
       prev_action = action
       fill_model_msg(drivingdata_send, modelv2_send, model_output, action,
                      publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,

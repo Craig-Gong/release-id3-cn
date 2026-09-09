@@ -240,6 +240,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     // sunnypilot model params
     {"CameraOffset", {PERSISTENT | BACKUP, FLOAT, "0.0"}},
+    // IQ ModelSmoothing: when plan y_std@1s is high, add up to ModelLatSmoothSec/100 s of lat tau
+    {"ModelSmoothingEnabled", {PERSISTENT | BACKUP, BOOL, "1"}},
+    {"ModelLatSmoothSec", {PERSISTENT | BACKUP, INT, "15"}},  // centiseconds, clamp 0–30 → 0–0.30 s
     {"LagdToggle", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"LagdToggleDelay", {PERSISTENT | BACKUP, FLOAT, "0.2"}},
     {"LagdValueCache", {PERSISTENT, FLOAT, "0.2"}},
