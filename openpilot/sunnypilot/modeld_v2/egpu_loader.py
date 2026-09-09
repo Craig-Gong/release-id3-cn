@@ -15,6 +15,34 @@ C3XL_TINYGRAD_CACHE_HOME = "/data/cache"
 # with ChestnutActive=1 and no fallback. 100 W is the rail cap, not a USB-link
 # fix. Other devices stay unset (max clocks). Export wins.
 C3XL_AM_POWER_LIMIT_W = "100"
+# Official SP/OP Chestnut default (onemiless 9/6: tried 100 µs, reverted).
+# tinygrad getenv default is already 500; set it explicitly so C3XL does not
+# inherit a tighter experimental poll.
+C3XL_AMD_USB_POLL_US = 500
+
+# Survives modeld restart during the same onroad; /dev/shm clears on reboot.
+# Offroad chestnut_statusd unlinks it so the next READY can try eGPU again.
+CHESTNUT_SKIP_DRIVE_PATH = "/dev/shm/chestnut_skip_drive"
+
+
+def chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> bool:
+  return os.path.exists(path)
+
+
+def set_chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> None:
+  fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+  try:
+    os.write(fd, b"1")
+    os.fsync(fd)
+  finally:
+    os.close(fd)
+
+
+def clear_chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> None:
+  try:
+    os.unlink(path)
+  except FileNotFoundError:
+    pass
 
 
 class EgpuModelLoadError(RuntimeError):
@@ -30,6 +58,7 @@ def configure_default_device(comma_hardware: bool, environment: MutableMapping[s
     # caches across reboots so model startup never depends on a live download.
     environment.setdefault("XDG_CACHE_HOME", C3XL_TINYGRAD_CACHE_HOME)
     environment.setdefault("AM_POWER_LIMIT", C3XL_AM_POWER_LIMIT_W)
+    environment.setdefault("AMD_USB_POLL_US", str(C3XL_AMD_USB_POLL_US))
 
 
 def load_with_timeout[T](load: Callable[[], T], timeout: float) -> T:

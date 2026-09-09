@@ -19,6 +19,9 @@ class FakeParams:
   def put(self, key, value, block=False):
     self.values[key] = value
 
+  def remove(self, key):
+    self.values.pop(key, None)
+
   def get(self, key):
     return self.values.get(key)
 
@@ -46,6 +49,32 @@ def test_initial_big_model_failure_falls_back_to_small():
   assert keep_loading is False
   assert params.values["ChestnutActive"] is False
   assert params.values["ChestnutLoading"] is False
+  assert params.values["ChestnutModelError"] is True
+
+
+def test_skip_drive_holds_loading_while_qcom_reloads():
+  params = FakeParams()
+  small_model = object()
+  loading_during_small = []
+
+  def load_small():
+    loading_during_small.append(params.values.get("ChestnutLoading"))
+    return small_model
+
+  model, fallback, keep_loading = modeld_module.load_models_with_fallback(
+    chestnut=False,
+    load_big=lambda: (_ for _ in ()).throw(AssertionError("must not load USB")),
+    load_small=load_small,
+    params=params,
+    update_loading_progress=lambda _progress: None,
+    hold_loading=True,
+  )
+
+  assert model is small_model
+  assert fallback is small_model
+  assert keep_loading is True
+  assert loading_during_small != [False]
+  assert params.values.get("ChestnutLoading") is True
 
 
 def test_successful_big_model_keeps_preloaded_small_for_runtime_fallback(monkeypatch):
@@ -77,6 +106,7 @@ def test_successful_big_model_keeps_preloaded_small_for_runtime_fallback(monkeyp
   assert calls == {"big": 1, "small": 1}
   assert params.values["ChestnutActive"] is True
   assert "ChestnutLoading" not in params.values
+  assert "ChestnutModelError" not in params.values
 
 
 def test_successful_big_model_survives_missing_small_fallback(monkeypatch):
@@ -113,13 +143,14 @@ def test_runtime_big_model_failure_switches_to_preloaded_small():
       raise RuntimeError("non-finite model output")
 
   active, output, fell_back = modeld_module.run_model_with_fallback(
-    FailingBigModel(), small_model, params, chestnut_state, (), {}, {}, False,
+    FailingBigModel(), small_model, params, chestnut_state, (), {}, {},
   )
 
   assert active is small_model
   assert output is None
   assert fell_back
   assert params.values["ChestnutActive"] is False
+  assert params.values["ChestnutModelError"] is True
   assert chestnut_state.big is False
   assert ("ChestnutActive", False) in params.blocking_bool_writes
 
@@ -134,10 +165,11 @@ def test_runtime_big_model_failure_without_small_fallback_is_explicit():
 
   with pytest.raises(RuntimeError, match="small fallback unavailable"):
     modeld_module.run_model_with_fallback(
-      FailingBigModel(), None, params, None, (), {}, {}, False,
+      FailingBigModel(), None, params, None, (), {}, {},
     )
 
   assert params.values["ChestnutActive"] is False
+  assert params.values["ChestnutModelError"] is True
 
 
 def test_non_finite_big_model_plan_becomes_fallback_error():
@@ -145,6 +177,25 @@ def test_non_finite_big_model_plan_becomes_fallback_error():
 
   with pytest.raises(RuntimeError, match="not finite"):
     modeld_module.validate_model_outputs(chestnut=True, outputs=outputs)
+
+
+def test_runtime_forwards_enqueue_callback_without_losing_fallback():
+  params = FakeParams()
+  calls = []
+
+  class Model:
+    def run(self, *args, after_enqueue=None):
+      after_enqueue()
+      return {"plan": np.array([1.0])}
+
+  model = Model()
+  active, output, fell_back = modeld_module.run_model_with_fallback(
+    model, None, params, None, (), {}, {}, after_enqueue=lambda: calls.append("telemetry"),
+  )
+  assert active is model
+  assert not fell_back
+  assert calls == ["telemetry"]
+  assert output["plan"][0] == 1.0
 
 
 def test_missing_qcom_selection_queues_exact_default_fallback_ref():
@@ -177,3 +228,17 @@ def test_default_fallback_never_overwrites_user_model_or_download(existing):
     assert params.values["ModelManager_DownloadRef"] == "user-request"
   else:
     assert "ModelManager_DownloadRef" not in params.values
+
+
+def test_chestnut_skip_drive_roundtrip(tmp_path):
+  from openpilot.sunnypilot.modeld_v2.egpu_loader import (
+    chestnut_skip_drive, clear_chestnut_skip_drive, set_chestnut_skip_drive,
+  )
+
+  path = str(tmp_path / "chestnut_skip_drive")
+  assert chestnut_skip_drive(path) is False
+  set_chestnut_skip_drive(path)
+  assert chestnut_skip_drive(path) is True
+  clear_chestnut_skip_drive(path)
+  assert chestnut_skip_drive(path) is False
+  clear_chestnut_skip_drive(path)
