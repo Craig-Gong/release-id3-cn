@@ -94,6 +94,10 @@ class Calibrator:
                   wide_from_device_euler_init: np.ndarray = WIDE_FROM_DEVICE_EULER_INIT,
                   height_init: np.ndarray = HEIGHT_INIT,
                   smooth_from: np.ndarray | None = None) -> None:
+    prev_vb = getattr(self, "valid_blocks", None)
+    prev_idx = getattr(self, "idx", None)
+    if prev_vb:
+      cloudlog.warning(f"calibrator.reset prev_vb={prev_vb} prev_idx={prev_idx} new_vb={valid_blocks}")
     if not np.isfinite(rpy_init).all():
       self.rpy = RPY_INIT.copy()
     else:
@@ -270,6 +274,8 @@ def main() -> NoReturn:
 
   calibrator = Calibrator(param_put=True)
   calibrator.not_car = CP.notCar
+  print("CALD_V3_NO_HOT_RESET", flush=True)
+  cloudlog.warning(f"calibrationd start hot_reset=off has_params={params_reader.get('CalibrationParams') is not None}")
 
   while 1:
     timeout = 0 if sm.frame == -1 else 100
@@ -289,12 +295,6 @@ def main() -> NoReturn:
 
     # 4Hz driven by cameraOdometry
     if sm.frame % 5 == 0:
-      # UI "Reset calibration" clears the param. On C3XL we skip OnroadCycle so
-      # pick that up here instead of restarting modeld.
-      if calibrator.param_put and calibrator.valid_blocks > 0 and params_reader.get("CalibrationParams") is None:
-        cloudlog.warning("CalibrationParams cleared; resetting calibrator")
-        calibrator.reset()
-        calibrator.update_status()
       calibrator.send_data(pm, sm.all_checks())
 
 

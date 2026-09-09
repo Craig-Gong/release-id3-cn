@@ -12,6 +12,7 @@ from openpilot.common.realtime import config_realtime_process, DT_MDL
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.locationd.helpers import PointBuckets, ParameterEstimator, PoseCalibrator, Pose
+from openpilot.selfdrive.locationd.c3xl_calib_reset import consume_c3xl_calib_reset
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
 from openpilot.sunnypilot.selfdrive.locationd.torqued_ext import TorqueEstimatorExt
 
@@ -279,9 +280,8 @@ def main(demo=False):
 
     # Cache points every 60 seconds while onroad
     if sm.frame % 240 == 0:
-      # Cleared by UI reset-calibration (C3XL avoids OnroadCycle).
-      if params.get("LiveTorqueParameters") is None:
-        cloudlog.warning("LiveTorqueParameters cleared; resetting torque estimator")
+      if consume_c3xl_calib_reset("torqued"):
+        cloudlog.warning("C3XL calibration reset requested; resetting torque estimator")
         estimator.reset()
       msg = estimator.get_msg(valid=sm.all_checks(), with_points=True)
       params.put("LiveTorqueParameters", msg.to_bytes())

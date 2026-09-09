@@ -10,6 +10,7 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.selfdrive.ui.layouts.onboarding import TrainingGuide
 from openpilot.selfdrive.ui.widgets.pairing_dialog import PairingDialog
 from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
+from openpilot.selfdrive.locationd.c3xl_calib_reset import request_c3xl_calib_reset
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.multilang import multilang, tr, tr_noop
 from openpilot.system.ui.widgets import Widget, DialogResult
@@ -115,6 +116,7 @@ class DeviceLayout(Widget):
         self._params.put_bool("OnroadCycleRequested", True, block=True)
       else:
         cloudlog.info("C3XL calibration reset without OnroadCycle")
+        request_c3xl_calib_reset()
       self._update_calib_description()
 
     dialog = ConfirmDialog(tr("Are you sure you want to reset calibration?"), tr("Reset"), callback=reset_calibration)
@@ -165,7 +167,7 @@ class DeviceLayout(Widget):
     desc += "<br><br>"
     if get_hardware_profile() == HardwareProfile.C3XL:
       desc += tr("sunnypilot is continuously calibrating, resetting is rarely required. " +
-                 "On C3XL, reset clears calibration without restarting the driving model.")
+                 "On C3XL, reset clears saved calibration. Cycle ignition (off then READY) to start a new calibration without restarting the driving model.")
     else:
       desc += tr("sunnypilot is continuously calibrating, resetting is rarely required. " +
                  "Resetting calibration will restart sunnypilot if the car is powered on.")
