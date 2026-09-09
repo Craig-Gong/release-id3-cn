@@ -94,7 +94,7 @@ class CruiseLayout(Widget):
 
     self.traffic_stop_offset = option_item_sp(
       title=tr("Traffic Stop Offset"),
-      description=tr("Brake this far short of the model's stop point at a red light or stop. Does not change follow gap. 0 disables."),
+      description=tr("Brake this far short of the model's stop point, and of IQ-link red-light distance. Does not change follow gap. 0 disables vision offset (nav still uses 3 m)."),
       param="TrafficStopOffset",
       min_value=0, max_value=1000, value_change_step=50,
       use_float_scaling=True,

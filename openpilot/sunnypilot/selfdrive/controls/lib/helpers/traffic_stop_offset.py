@@ -3,7 +3,8 @@
 TrafficStopOffset (meters, 0..10 in 0.5 steps, default 3): when the model
 wants to stop and there is no real lead short of that point, brake toward a
 point this far short of model.position.x[-1] and hold there. Larger = stop
-sooner (before the line).
+sooner (before the line). IQ-link nav red uses the same value (see
+nav_red_speed_ms); 0 keeps a 3 m nav default and disables the vision offset.
 
 A radar track past the stop point (phantom / cross-traffic) must not cancel
 this — that used to disable the offset and let stopped-lead creep push past
@@ -12,7 +13,6 @@ the line.
 from opendbc.car.interfaces import ACCEL_MIN
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import DT_MDL
-from openpilot.selfdrive.modeld.constants import ModelConstants
 
 TRAFFIC_STOP_OFFSET_PARAM = "TrafficStopOffset"
 MIN_OFFSET_M = 0.0
@@ -23,9 +23,8 @@ OFFSET_STEP_M = 0.5
 # Model "shouldStop" plans often end ~1–2 m/s while still stopping; only skip
 # clearly non-stopping trajectories (stop-sign cruise-through).
 E2E_STOP_PLAN_VEL_THRESHOLD = 2.5
-E2E_STOP_MIN_DIST = 2.0
-E2E_STOP_HOLD_MAX_V = 0.5
 E2E_STOP_HOLD_BUFFER = 2.0
+E2E_STOP_MIN_SAMPLES = 4
 
 
 def _sanitize_offset_m(raw) -> float:
@@ -82,7 +81,7 @@ class TrafficStopOffset:
 
     x = model_msg.position.x
     v = model_msg.velocity.x
-    if len(x) != ModelConstants.IDX_N or len(v) != ModelConstants.IDX_N:
+    if len(x) < E2E_STOP_MIN_SAMPLES or len(v) < E2E_STOP_MIN_SAMPLES or len(x) != len(v):
       return a_target, should_stop
 
     stop_distance = float(x[-1])
@@ -92,12 +91,14 @@ class TrafficStopOffset:
     if float(v[-1]) > E2E_STOP_PLAN_VEL_THRESHOLD:
       return a_target, should_stop
 
-    if v_ego < E2E_STOP_HOLD_MAX_V:
-      if stop_distance <= self.distance + E2E_STOP_HOLD_BUFFER:
-        should_stop = True
+    remaining = stop_distance - self.distance
+    if remaining <= E2E_STOP_HOLD_BUFFER:
+      should_stop = True
+      brake_d = max(remaining, 0.3)
+      a_required = max(-(v_ego ** 2) / (2.0 * brake_d), ACCEL_MIN)
+      a_target = min(float(a_target), float(a_required))
     else:
-      adjusted_distance = max(stop_distance - self.distance, E2E_STOP_MIN_DIST)
-      a_required = max(-(v_ego ** 2) / (2 * adjusted_distance), ACCEL_MIN)
+      a_required = max(-(v_ego ** 2) / (2.0 * remaining), ACCEL_MIN)
       if a_required < a_target:
         a_target = float(a_required)
 
