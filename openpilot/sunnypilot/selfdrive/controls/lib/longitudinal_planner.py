@@ -22,6 +22,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import StandstillHold, apply_follow_launch
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
+from openpilot.sunnypilot.nav.protocol import nav_red_speed_ms, nav_stop_margin_m
 from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable, write_cluster_hud
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
@@ -116,7 +117,9 @@ class LongitudinalPlannerSP:
       if curve is not None:
         self.output_v_target = min(float(self.output_v_target), float(curve))
       if snap.stop_for_light:
-        self.output_v_target = min(float(self.output_v_target), float(snap.speed_target))
+        margin = nav_stop_margin_m(self.traffic_stop_offset.distance)
+        v_nav = nav_red_speed_ms(snap.dist_m, 0.0, margin)
+        self.output_v_target = min(float(self.output_v_target), v_nav)
         self.output_a_target = min(float(self.output_a_target), float(snap.accel_target))
     return self.output_v_target, self.output_a_target
 

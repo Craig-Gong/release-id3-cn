@@ -16,8 +16,11 @@ _EXIT = {6, 11}
 
 _RED_LIGHT_ACCEL = -2.0
 _RED_LIGHT_DECEL = 2.0
-# Brake as if the stop is this far short of amap trafficLightDistM (overshoot fix).
+# Fallback when TrafficStopOffset is 0. Live offset is applied in parse_carrot
+# and again in the planner so a long-lived iqlinkd cannot keep the old 3 m.
 _STOP_BEFORE_LINE_M = 3.0
+_offset_cache = _STOP_BEFORE_LINE_M
+_offset_n = 0
 _YELLOW_STOP_DIST_M = 30.0
 LIGHT_TURN_WINDOW_M = 150.0
 TURN_DESIRE_WINDOW_M = 150.0
@@ -79,6 +82,43 @@ def approach_speed_ms(dist_m: float, decel: float, cap_ms: float = 0.0) -> float
   return v
 
 
+def nav_stop_margin_m(offset_m: float) -> float:
+  """Meters short of amap trafficLightDistM. Offset 0 keeps the 3 m default."""
+  try:
+    o = float(offset_m)
+  except (TypeError, ValueError):
+    return _STOP_BEFORE_LINE_M
+  return o if o > 0.0 else _STOP_BEFORE_LINE_M
+
+
+def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float) -> float:
+  """Target speed for a nav red. Already at/past the intended stop → 0, not a 0.5 m crawl."""
+  d = float(light_dist or 0.0)
+  m = float(margin)
+  if d <= 0.0 or d <= m:
+    return 0.0
+  v = approach_speed_ms(d - m, _RED_LIGHT_DECEL, cap_ms=road_ms)
+  return 0.0 if v <= 0.05 else v
+
+
+def _traffic_stop_margin_m() -> float:
+  global _offset_cache, _offset_n
+  _offset_n += 1
+  if _offset_n % 15 != 1:
+    return _offset_cache
+  try:
+    from openpilot.common.params import Params
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import (
+      DEFAULT_OFFSET_M, TRAFFIC_STOP_OFFSET_PARAM, _sanitize_offset_m,
+    )
+    raw = Params().get(TRAFFIC_STOP_OFFSET_PARAM, return_default=True)
+    offset = _sanitize_offset_m(raw if raw is not None else DEFAULT_OFFSET_M)
+    _offset_cache = nav_stop_margin_m(offset)
+  except Exception:
+    pass
+  return _offset_cache
+
+
 def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
                  link_state: int, enabled: bool) -> NavSnapshot | None:
   data = flatten_payload(payload)
@@ -115,13 +155,7 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
     elif light == "yellow" and 0.0 < light_dist <= _YELLOW_STOP_DIST_M:
       stop_for_light = True
   if stop_for_light:
-    if light_dist > 0.0:
-      stop_dist = max(light_dist - _STOP_BEFORE_LINE_M, 0.5)
-      speed_target = approach_speed_ms(stop_dist, _RED_LIGHT_DECEL, cap_ms=road_ms)
-      if speed_target <= 0.05:
-        speed_target = 0.0
-    else:
-      speed_target = 0.0
+    speed_target = nav_red_speed_ms(light_dist, road_ms, _traffic_stop_margin_m())
     accel_target = _RED_LIGHT_ACCEL
 
   maneuver = "none"

@@ -2,9 +2,8 @@
 
 Two stages, matching Low-Speed Turn Planning:
   1. Blinker on while still above the turn gate G → approach ~G-3.
-  2. Below G and the path / steering shows the matching turn → ~20 km/h
-     on the small model. A live big model (modelV2.big) skips that 20 cap
-     and lets E2E set the corner speed; approach G-3 still applies.
+  2. Below G and the path / steering shows the matching turn → ~20 km/h.
+     Applies to small and big models. E2E alone was too fast on 90° corners.
 
 Planner must only min() this onto v_cruise. No IQ-link / nav path.
 """
@@ -145,6 +144,7 @@ class UrbanTurnPrep:
     big: bool = False,
   ) -> float | None:
     self._maybe_refresh_params()
+    _ = big
 
     if self.stage == STAGE_POST:
       if gas_pressed or not enabled or time.monotonic() >= self._post_until:
@@ -200,7 +200,5 @@ class UrbanTurnPrep:
       self.stage = STAGE_TURN_IN
 
     if self.stage == STAGE_TURN_IN:
-      if big:
-        return None
       return TURN_IN_MS
     return self._approach_target()

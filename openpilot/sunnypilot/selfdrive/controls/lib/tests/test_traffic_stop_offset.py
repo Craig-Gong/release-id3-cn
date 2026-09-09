@@ -45,6 +45,27 @@ def test_phantom_lead_past_stop_still_offsets():
   )
   assert a_target < 0.0
   assert a_target >= ACCEL_MIN
+  assert should_stop is True
+
+
+def test_past_intended_stop_hard_stops():
+  a_target, should_stop = _adjust(
+    _build(10), a_target=0.0, v_ego=3.0, stop_distance=6.0, end_velocity=0.4,
+  )
+  assert should_stop is True
+  assert a_target < 0.0
+
+
+def test_short_trajectory_still_offsets():
+  c = _build(3)
+  model = SimpleNamespace(
+    position=SimpleNamespace(x=[0.0, 4.0, 8.0, 12.0]),
+    velocity=SimpleNamespace(x=[8.0, 4.0, 1.0, 0.0]),
+  )
+  a_target, should_stop = c.adjust(
+    0.0, False, 8.0, model, stop_light=True, has_lead=False, right_blinker=False,
+  )
+  assert a_target < 0.0
   assert should_stop is False
 
 
