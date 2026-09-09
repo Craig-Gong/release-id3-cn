@@ -4,6 +4,7 @@ from __future__ import annotations
 import ctypes
 import fcntl
 import os
+import struct
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -32,6 +33,15 @@ class ChestnutLinkStatus:
   pcie_ltssm: int | None = None
 
 
+@dataclass(frozen=True)
+class ChestnutAsmTelemetry:
+  link_valid: bool
+  pcie_ltssm: int = 0
+  supply_valid: bool = False
+  supply_voltage_mv: int = 0
+  supply_current_ma: int = 0
+
+
 def _usb_speed_mbps(usb_state: list[dict]) -> int:
   return max((int(device.get("speedMbps", 0)) for device in usb_state
               if (int(device.get("vendorId", 0)), int(device.get("productId", 0))) in CHESTNUT_USB_IDS), default=0)
@@ -50,6 +60,29 @@ def classify_chestnut_link(usb_state: list[dict], pcie_ltssm: int | None, *, rea
   if pcie_ltssm != PCIE_L0:
     return ChestnutLinkStatus(ChestnutLinkState.pcie_down, speed, pcie_ltssm)
   return ChestnutLinkStatus(ChestnutLinkState.ready, speed, pcie_ltssm)
+
+
+def read_runtime_asm_telemetry(asm, *, read_supply: bool = True) -> ChestnutAsmTelemetry:
+  """Read PCIe LTSSM independently of optional legacy supply telemetry.
+
+  B450 is the authoritative link signal. Official EP0 0xC0/5 often times out
+  3 s on this C3XL CLEAN dock (use carrot INA instead); that must not
+  invalidate an already successful LTSSM read or GPU SMU metrics.
+  """
+  try:
+    pcie_ltssm = int(asm.read(PCIE_LTSSM_ADDRESS, 1)[0])
+  except Exception:
+    return ChestnutAsmTelemetry(False)
+
+  if not read_supply:
+    return ChestnutAsmTelemetry(True, pcie_ltssm)
+
+  try:
+    supply = bytes(asm.usb.control_read(0xC0, 5))
+    supply_voltage_mv, supply_current_ma = struct.unpack('<Hh', supply[:4])
+  except Exception:
+    return ChestnutAsmTelemetry(True, pcie_ltssm)
+  return ChestnutAsmTelemetry(True, pcie_ltssm, True, supply_voltage_mv, supply_current_ma)
 
 
 def read_pcie_ltssm() -> int:
