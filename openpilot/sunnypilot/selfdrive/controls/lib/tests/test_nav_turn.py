@@ -20,11 +20,18 @@ def _cs(v_kph, *, left=False, right=False, bsl=False, bsr=False):
 
 
 def test_nav_turn_blocked_far_and_fast():
+  # Outside toast window, or still ≥45 km/h → no unblinkered desire
+  assert eval_nav_turn_desire(direction="left", turn_dist_m=200.0, **_cs(50.0)) == "none"
   assert eval_nav_turn_desire(direction="left", turn_dist_m=120.0, **_cs(50.0)) == "none"
 
 
 def test_nav_turn_near_and_slow():
   assert eval_nav_turn_desire(direction="left", turn_dist_m=50.0, **_cs(40.0)) == "left"
+
+
+def test_nav_turn_toast_window_when_slow_no_blinker():
+  # After toast (≤150 m), already <45 → auto turn desire without stalk
+  assert eval_nav_turn_desire(direction="right", turn_dist_m=120.0, **_cs(40.0)) == "right"
 
 
 def test_nav_turn_blinker_confirms_when_fast():

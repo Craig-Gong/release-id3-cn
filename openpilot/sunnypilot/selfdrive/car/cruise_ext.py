@@ -64,6 +64,8 @@ class VCruiseHelperSP:
     self.prev_speed_limit_final_last_kph = 0.
     self.req_plus = False
     self.req_minus = False
+    # IQ-link nav road limit → MAX (only on change so gas-sync above limit can stick)
+    self.prev_iqlink_road_limit_kph = -1.0
 
   def read_custom_set_speed_params(self) -> None:
     self.custom_acc_enabled = self.params.get_bool("CustomAccIncrementsEnabled")
@@ -130,15 +132,47 @@ class VCruiseHelperSP:
 
     return False
 
-  def _iqlink_blocks_sla_set_speed(self) -> bool:
-    # IQ-link ON: nav / TBT owns speed. Do not auto-raise MAX to the limit.
+  def _iqlink_nav_limit_kph(self) -> float | None:
+    """Live IQ-link road limit (km/h), or None if link/nav not executable."""
     try:
-      return bool(self.params.get_bool("IqlinkEnabled"))
+      if not self.params.get_bool("IqlinkEnabled"):
+        return None
     except UnknownKeyName:
+      return None
+    try:
+      from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable
+      snap = read_snapshot()
+    except Exception:
+      return None
+    if not snapshot_executable(snap):
+      return None
+    limit = float(snap.road_limit_kph or 0.0)
+    if limit < 20.0:
+      return None
+    return round(limit, 1)
+
+  def _apply_iqlink_nav_to_max(self) -> bool:
+    """IQ-link ON: MAX tracks nav road limit.
+
+    - Limit change → set MAX to the new limit (raise or lower).
+    - MAX below limit (manual SET / first engage) → raise to limit.
+    - MAX above limit (gas sync) → leave until the next limit change.
+    """
+    limit_kph = self._iqlink_nav_limit_kph()
+    if limit_kph is None:
+      self.prev_iqlink_road_limit_kph = -1.0
       return False
+    limit_changed = limit_kph != self.prev_iqlink_road_limit_kph
+    unset = self.v_cruise_kph >= V_CRUISE_UNSET or self.v_cruise_kph <= 0
+    below_limit = (not unset) and self.v_cruise_kph < limit_kph
+    if limit_changed or below_limit or unset:
+      self.v_cruise_kph = float(np.clip(limit_kph, self.v_cruise_min, V_CRUISE_MAX))
+      self.prev_iqlink_road_limit_kph = limit_kph
+    return True
 
   def update_speed_limit_assist_v_cruise_non_pcm(self) -> None:
-    if self._iqlink_blocks_sla_set_speed():
+    # Nav limit owns MAX while IQ-link is live; else Speed Limit Assist (map/camera).
+    if self._apply_iqlink_nav_to_max():
       self.prev_sla_state = self.sla_state
       self.prev_speed_limit_final_last_kph = self.speed_limit_final_last_kph
       return
