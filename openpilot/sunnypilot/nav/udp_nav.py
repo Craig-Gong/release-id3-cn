@@ -8,6 +8,9 @@ from typing import Callable
 # Not the deprecated Carrot 7705/7706 plain JSON ports — HMAC envelope only.
 IQLINK_UDP_PORT = 17710
 MAX_DATAGRAM = 64 * 1024
+# Short plaintext ACK so the phone can tell "car received" vs "local send ok".
+# LAN-only; not authenticated (EcoFlow hotspot threat model).
+UDP_ACK_PAYLOAD = b'{"ok":1,"v":1}'
 
 
 def _log(msg: str) -> None:
@@ -21,12 +24,14 @@ def _log(msg: str) -> None:
 class UdpNavServer:
   """Bind 0.0.0.0:IQLINK_UDP_PORT and forward complete datagrams to on_datagram."""
 
-  def __init__(self, on_datagram: Callable[[bytes], None], port: int = IQLINK_UDP_PORT):
+  def __init__(self, on_datagram: Callable[[bytes, tuple[str, int]], None],
+               port: int = IQLINK_UDP_PORT):
     self.on_datagram = on_datagram
     self.port = int(port)
     self._thread: threading.Thread | None = None
     self._stop = threading.Event()
     self._sock: socket.socket | None = None
+    self._sock_lock = threading.Lock()
     self.running = False
 
   def start(self) -> bool:
@@ -42,7 +47,8 @@ class UdpNavServer:
     except OSError as e:
       _log(f"iqlink UDP bind :{self.port} failed: {e}")
       return False
-    self._sock = sock
+    with self._sock_lock:
+      self._sock = sock
     self._thread = threading.Thread(target=self._run, name="iqlink-udp", daemon=True)
     self._thread.start()
     self.running = True
@@ -51,8 +57,9 @@ class UdpNavServer:
 
   def stop(self) -> None:
     self._stop.set()
-    sock = self._sock
-    self._sock = None
+    with self._sock_lock:
+      sock = self._sock
+      self._sock = None
     if sock is not None:
       try:
         sock.close()
@@ -63,15 +70,28 @@ class UdpNavServer:
       self._thread = None
     self.running = False
 
+  def reply(self, addr: tuple[str, int], payload: bytes = UDP_ACK_PAYLOAD) -> bool:
+    """Best-effort ACK to the phone's ephemeral UDP source port."""
+    with self._sock_lock:
+      sock = self._sock
+    if sock is None or not payload:
+      return False
+    try:
+      sock.sendto(payload, addr)
+      return True
+    except OSError:
+      return False
+
   def _run(self) -> None:
-    sock = self._sock
+    with self._sock_lock:
+      sock = self._sock
     if sock is None:
       self.running = False
       return
     try:
       while not self._stop.is_set():
         try:
-          data, _addr = sock.recvfrom(MAX_DATAGRAM)
+          data, addr = sock.recvfrom(MAX_DATAGRAM)
         except socket.timeout:
           continue
         except OSError:
@@ -79,7 +99,7 @@ class UdpNavServer:
         if not data:
           continue
         try:
-          self.on_datagram(data)
+          self.on_datagram(data, addr)
         except Exception:
           _log("iqlink UDP datagram handler error")
     finally:

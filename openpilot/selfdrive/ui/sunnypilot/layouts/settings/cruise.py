@@ -103,7 +103,7 @@ class CruiseLayout(Widget):
 
     self.iqlink_toggle = toggle_item_sp(
       title=tr("IQ-link"),
-      description=tr("Phone BLE nav (amapauto / IQ-link). Pair once, PSK 999999. Green at a light waits for the lead to move when one is close."),
+      description=tr("Follow phone nav (amapauto / IQ-link UDP or BLE, PSK 999999). Off = do not control from nav; the car still listens for packets. Green at a light waits for a close lead to move."),
       param="IqlinkEnabled")
 
     self.ecoflow_toggle = toggle_item_sp(

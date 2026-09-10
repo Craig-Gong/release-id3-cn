@@ -98,7 +98,11 @@ def _param_flag(params: Params, key: str, default: bool = False) -> bool:
     return default
 
 def iqlink_needed(started, params: Params, CP: car.CarParams) -> bool:
-  return _param_flag(params, "IqlinkEnabled", True)
+  # Always run iqlinkd so UDP :17710 keeps listening. IqlinkEnabled only gates
+  # nav *execution* (snapshot_executable / MAX / turn), not the daemon lifetime.
+  # Tying the process to the toggle caused silent "nobody listening" when the
+  # param was 0 while the phone still looked connected.
+  return True
 
 def ecoflow_needed(started, params: Params, CP: car.CarParams) -> bool:
   return _param_flag(params, "EcoflowEnabled", False)
