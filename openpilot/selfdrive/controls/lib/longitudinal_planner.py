@@ -15,6 +15,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import follow_lead_present
 from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlannerSP
 
 A_CRUISE_MAX_VALS = [1.6, 1.2, 0.8, 0.6]
@@ -25,12 +26,22 @@ CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
 
+# Empty-road catch-up (no lead): ~25–30% softer than stock. EV torque makes
+# stock 1.2–1.6 feel like a punch when MAX is far above ego (IQ-link road limit).
+# Lead follow / queue launch floors are unchanged (override only when no near lead).
+A_EMPTY_ROAD_MAX_VALS = [1.15, 0.85, 0.55, 0.40]
+# Radar tracks beyond this still count as empty-road for the soft cap.
+EMPTY_ROAD_LEAD_GATE_M = 50.0
+
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
 _A_TOTAL_MAX_BP = [20., 40.]
 
 def get_max_accel(v_ego):
   return np.interp(v_ego, A_CRUISE_MAX_BP, A_CRUISE_MAX_VALS)
+
+def get_empty_road_max_accel(v_ego):
+  return float(np.interp(v_ego, A_CRUISE_MAX_BP, A_EMPTY_ROAD_MAX_VALS))
 
 def get_coast_accel(pitch):
   return np.sin(pitch) * -5.65 - 0.3  # fitted from data using xx/projects/allow_throttle/compute_coast_accel.py
@@ -44,12 +55,14 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
     a_y = v_ego ** 2 * angle_steers * CV.DEG_TO_RAD / (CP.steerRatio * CP.wheelbase)
     a_x_allowed = math.sqrt(max(a_total_max ** 2 - a_y ** 2, 0.))
     max_accel = min(max_accel, a_x_allowed)
-    if max_accel_override is not None:
-      max_accel = min(max_accel, max_accel_override)
     if not allow_throttle:
       clipped_accel_coast = max(accel_coast, ACCEL_MIN)
       coast_limit = np.interp(v_ego, [MIN_ALLOW_THROTTLE_SPEED, MIN_ALLOW_THROTTLE_SPEED*2], [max_accel, clipped_accel_coast])
       max_accel = min(max_accel, coast_limit)
+
+  # Apply in ACC and e2e/blended catch-up so empty-road soft cap still wins vs ACCEL_MAX=2.0.
+  if max_accel_override is not None:
+    max_accel = min(max_accel, float(max_accel_override))
 
   target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, max_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)
@@ -145,9 +158,26 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     is_e2e = self.is_e2e(sm)
 
+    # Soften empty-road catch-up only. Near/mid lead keeps stock / launch floors.
+    # Do NOT treat a far radar track (80–150 m) as "has lead" — that left soft
+    # cap off on almost every Chinese road and felt like stock punch again.
+    has_lead = False
+    try:
+      if follow_lead_present(sm):
+        has_lead = True
+      else:
+        lead = sm['radarState'].leadOne
+        d_rel = float(getattr(lead, "dRel", 0.0) or 0.0)
+        if bool(getattr(lead, "present", False)) and 0.5 < d_rel <= EMPTY_ROAD_LEAD_GATE_M:
+          has_lead = True
+    except Exception:
+      has_lead = False
+    empty_cap = None if has_lead else get_empty_road_max_accel(v_ego)
+
     self.a_cruise = get_cruise_accel(is_e2e, v_cruise, v_ego,
                                      self.a_cruise, steer_angle_without_offset, self.CP, self.dt,
-                                     accel_coast, self.allow_throttle)
+                                     accel_coast, self.allow_throttle,
+                                     max_accel_override=empty_cap)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
@@ -158,9 +188,14 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
+    # Cap e2e/mpc winners the same way (min() alone cannot raise a soft cruise above a hard e2e).
+    if empty_cap is not None:
+      self.output_a_target = min(float(self.output_a_target), float(empty_cap))
     self.output_a_target, self.output_should_stop = self.apply_stop_helpers(
       sm, v_ego, float(self.output_a_target), bool(self.output_should_stop))
     self.output_a_target = np.clip(self.output_a_target, ACCEL_MIN, ACCEL_MAX)
+    if empty_cap is not None:
+      self.output_a_target = min(float(self.output_a_target), float(empty_cap))
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
 

@@ -8,6 +8,7 @@ After a nav go, sticky vision-stop does not re-arm until the car moves.
 """
 from __future__ import annotations
 
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import radar_lead_departed
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
   FOLLOW_LEAD_GO_FLOOR_A,
   FOLLOW_LEAD_LAUNCH_V_EGO,
@@ -171,8 +172,25 @@ class StandstillHold:
         self.hold_s = 0.0
       return should_stop, a_target
 
+    # Radar, not the nav bar: lead has left the settle gap and is really moving.
+    # Do not wait for 8 m or a missing green packet. still honor a live red pin.
+    if radar_lead_departed(follow_sm) and not self.red_pin:
+      self.hold = False
+      self.hold_s = 0.0
+      self.hold_released = True
+      self._nav_go_latched = True
+      a_out = float(a_target)
+      if v_ego <= _STANDSTILL_V + 0.5:
+        a_out = max(a_out, _GO_LAUNCH_FLOOR_A)
+      return False, a_out
+
     # Congestion: lead already rolling, or closing a too-large gap.
     if lead_rolling or closing_gap:
+      # Nose-to-bumper only. 8 m was "a short lead start" and left ego sitting.
+      if lead.present and lead.d_rel < STOPPED_LEAD_GAP_M:
+        self.hold = True
+        self.hold_released = False
+        return True, min(float(a_target), 0.0)
       release_s = _STANDSTILL_HOLD_LEAD_RELEASE_S if lead_rolling else 0.0
       if self.hold:
         self.hold_s += _DT_MDL
@@ -182,8 +200,9 @@ class StandstillHold:
         self.hold_s = 0.0
         self.hold_released = True
       a_out = float(a_target)
-      # Floor only with a usable gap — tight queue leaves authority to MPC/gap.
-      if lead_rolling and lead.d_rel >= STOPPED_LEAD_GAP_M:
+      # Lead rolling with a usable gap. Under CREEP: radar noise is not a go —
+      # leave accel to gap brake, do not add a positive floor.
+      if lead_rolling and lead.d_rel >= STOPPED_LEAD_CREEP_M:
         a_out = max(a_out, _GO_LAUNCH_FLOOR_A)
       return should_stop, a_out
 
@@ -228,15 +247,16 @@ def apply_follow_launch(sm, v_ego: float, a_target: float) -> float:
   lead = read_follow_lead(sm)
   if not lead.present:
     return float(a_target)
-  # Lead rolling: takeoff floor only when gap is not critically closed —
-  # otherwise radar creep noise at ~3 m would punch into the bumper.
+  # Past settle gap and lead actually rolling (~3 km/h): follow, don't wait for 5 m.
+  if lead.d_rel >= STOPPED_LEAD_GAP_M and lead.v_lead >= 0.8:
+    return max(float(a_target), FOLLOW_LEAD_GO_FLOOR_A)
+  # Critically closed: never add a positive floor. Stopped lead also forbids accel.
+  if lead.d_rel < STOPPED_LEAD_CREEP_M:
+    if lead.v_lead < LEAD_GO_SPEED_MPS:
+      return min(float(a_target), 0.0)
+    return float(a_target)
   if lead.v_lead >= LEAD_GO_SPEED_MPS:
-    if lead.d_rel >= STOPPED_LEAD_GAP_M:
-      return max(float(a_target), FOLLOW_LEAD_GO_FLOOR_A)
-    return float(a_target)
-  if lead.d_rel > STOPPED_LEAD_CREEP_M:
-    return float(a_target)
-  # Still closed-up on a stopped bumper: never punch harder than the soft cap.
+    return max(float(a_target), FOLLOW_LEAD_GO_FLOOR_A)
   if follow_lead_soft_launch(sm, v_ego):
     return min(float(a_target), FOLLOW_LEAD_START_ACCEL)
   return float(a_target)

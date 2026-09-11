@@ -75,7 +75,9 @@ def _lane_kind(snap: NavSnapshot) -> str:
 
 
 def build_lane_guide_view(*, engaged: bool, snap: NavSnapshot) -> LaneGuideView:
-  if not engaged:
+  # IQ-link navigation is the product cue; do not hide TBT until engage.
+  # Pre-engage the driver still needs "前方左转" / lane rec while READY.
+  if not (engaged or snap.iqlink_enabled):
     return LaneGuideView(False, "", "none")
   text = lane_hint(snap)
   if not text:

@@ -18,8 +18,11 @@ LEAD_CLOSE_M = 8.0
 LEAD_MIN_D_M = 0.5
 # Congestion: lead often creeps <0.4 before we used to release.
 LEAD_GO_SPEED_MPS = 0.25
-LEAD_GO_CONFIRM_S = 0.05
+# Was 0.05 s (~1 frame): radar creep noise released into the bumper.
+LEAD_GO_CONFIRM_S = 0.30
 LEAD_GAP_M = 0.3
+# Only time out a *far* queue lock (≥ this). Closer stopped leads wait forever.
+FOLLOW_TIMEOUT_MIN_D_M = 12.0
 FOLLOW_TIMEOUT_S = 4.0
 # Cap when still nose-to-bumper and lead is stopped (do not punch into it).
 FOLLOW_LEAD_START_ACCEL = 1.5
@@ -222,8 +225,14 @@ class GreenFollowLeadGate:
     else:
       self._lead_moving_s = 0.0
 
+    # Close or slow-creep: do not treat a one-step distance jump as "go".
+    # 0.3 m in one frame is radar noise at 2–4 m and used to release into the bumper.
     gap_opening = False
-    if self._drel_prev is not None and lead.d_rel > self._drel_prev + LEAD_GAP_M:
+    if (
+      lead.d_rel >= STOPPED_LEAD_CREEP_M
+      and self._drel_prev is not None
+      and lead.d_rel > self._drel_prev + LEAD_GAP_M
+    ):
       gap_opening = True
     self._drel_prev = lead.d_rel
 
@@ -234,8 +243,8 @@ class GreenFollowLeadGate:
       self.reset()
       return True
 
-    # Close stopped bumper: wait for real motion. No 4 s timeout.
-    if lead.close_queue and lead.v_lead < LEAD_GO_SPEED_MPS:
+    # Close stopped bumper: wait for real motion. No timeout.
+    if lead.v_lead < LEAD_GO_SPEED_MPS and lead.d_rel <= FOLLOW_TIMEOUT_MIN_D_M:
       return False
 
     if self._nav_go_since is not None and (now - self._nav_go_since) >= FOLLOW_TIMEOUT_S:

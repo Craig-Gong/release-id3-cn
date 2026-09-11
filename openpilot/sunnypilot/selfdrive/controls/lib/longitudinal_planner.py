@@ -18,7 +18,10 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_soft_curve import n
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
   apply_stopped_lead_gap, follow_lead_present, lead_owns_nav_stop,
 )
-from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import apply_lead_stop_safety
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import (
+  apply_lead_stop_safety,
+  apply_radar_range_floor,
+)
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import StandstillHold, apply_follow_launch
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
@@ -231,6 +234,10 @@ class LongitudinalPlannerSP:
       sm=sm, now=now,
     )
     a_target = apply_follow_launch(sm, v_ego, a_target)
+    # Radar dRel is the last word — green / launch floors cannot punch a close bumper.
+    a_target, should_stop = apply_radar_range_floor(
+      sm, v_ego, a_target, should_stop, gas=bool(CS.gasPressed),
+    )
     approaching = junction_stop_active(
       has_lead=has_lead,
       nav_red=bool((self.standstill_hold.red_pin or snap.stop_for_light) and not lead_owns),

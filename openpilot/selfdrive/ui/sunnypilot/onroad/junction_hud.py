@@ -155,7 +155,7 @@ class JunctionHudRenderer(Widget):
       snap=snap,
       green_flash=flashing,
     )
-    self._lane = build_lane_guide_view(engaged=engaged, snap=snap)
+    self._lane = build_lane_guide_view(engaged=True, snap=snap)
     self._egpu = self._build_egpu_view(started=started)
 
   def _ecoflow_enabled(self) -> bool:
