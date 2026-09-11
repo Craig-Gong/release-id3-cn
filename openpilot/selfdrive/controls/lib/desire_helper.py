@@ -118,7 +118,14 @@ class DesireHelper:
 
     if self.lane_turn_direction != TurnDirection.none:
       self.desire = TURN_DESIRES[self.lane_turn_direction]
-      self.keep_pulse_timer = 0.0
+      # modeld only injects desire on a rising edge. Hold continuous turnLeft/
+      # turnRight once, and the pulse is spent far from the corner. Mirror the
+      # LC keep-pulse (~1 Hz) so near-corner steering re-asserts.
+      self.keep_pulse_timer += DT_MDL
+      if self.keep_pulse_timer > 1.0:
+        self.keep_pulse_timer = 0.0
+      elif self.desire in (log.Desire.turnLeft, log.Desire.turnRight):
+        self.desire = log.Desire.none
     else:
       self.desire = log.Desire.none
       if self.lane_change_state == LaneChangeState.laneChangeStarting:

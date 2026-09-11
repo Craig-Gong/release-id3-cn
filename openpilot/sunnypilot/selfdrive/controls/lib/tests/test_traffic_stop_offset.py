@@ -5,6 +5,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import (
   TrafficStopOffset,
   _sanitize_offset_m,
+  soft_release_remaining,
 )
 
 
@@ -12,6 +13,8 @@ def _build(distance):
   c = TrafficStopOffset.__new__(TrafficStopOffset)
   c.frame = 0
   c.distance = float(distance)
+  c._filtered_stop = None
+  c._engaged = False
   return c
 
 
@@ -22,11 +25,12 @@ def _model_msg(stop_distance, end_velocity):
 
 
 def _adjust(c, a_target=-0.1, should_stop=False, v_ego=8.0, stop_distance=12.0, end_velocity=0.0,
-            stop_light=True, has_lead=False, right_blinker=False, lead_d_rel=None):
+            stop_light=True, has_lead=False, right_blinker=False, lead_d_rel=None,
+            nav_red=False, steering_angle_deg=0.0):
   return c.adjust(
     a_target, should_stop, v_ego, _model_msg(stop_distance, end_velocity),
     stop_light=stop_light, has_lead=has_lead, right_blinker=right_blinker,
-    lead_d_rel=lead_d_rel,
+    lead_d_rel=lead_d_rel, nav_red=nav_red, steering_angle_deg=steering_angle_deg,
   )
 
 
@@ -126,3 +130,49 @@ def test_sanitize_keeps_half_meter_steps():
   assert _sanitize_offset_m(9) == 9.0
   assert _sanitize_offset_m(12) == 10.0
   assert _sanitize_offset_m("nope") == 3.0
+
+
+def test_soft_release_far_fades_offset():
+  # Far: almost no offset yet
+  rem = soft_release_remaining(77.0, 80.0, release_distance=50.0)
+  assert rem > 77.0
+  assert rem < 80.0
+  # Near release: full hard
+  assert soft_release_remaining(40.0, 43.0, release_distance=50.0) == 40.0
+
+
+def test_far_stop_brakes_gentler_than_hard_offset():
+  c_far = _build(3)
+  a_soft, _ = _adjust(c_far, a_target=0.0, v_ego=14.0, stop_distance=80.0)
+  # Bypass soft release by using a near stop with same offset geometry
+  c_near = _build(3)
+  a_hard, _ = _adjust(c_near, a_target=0.0, v_ego=14.0, stop_distance=12.0)
+  # Far soft remaining ≈79.7 → weaker |a| than near remaining=9
+  assert a_soft < 0.0
+  assert a_hard < a_soft  # more negative when near
+
+
+def test_steer_blocks_new_entry_then_allows_once_engaged():
+  c = _build(3)
+  assert _adjust(c, a_target=-0.2, steering_angle_deg=55.0) == (-0.2, False)
+  a_target, _ = _adjust(c, a_target=0.0, steering_angle_deg=0.0, stop_distance=12.0)
+  assert a_target < 0.0
+  # Stay engaged through a later big steer
+  a2, _ = _adjust(c, a_target=0.0, steering_angle_deg=60.0, stop_distance=12.0)
+  assert a2 < 0.0
+
+
+def test_noisy_near_jump_is_rate_limited():
+  c = _build(3)
+  _adjust(c, a_target=0.0, v_ego=0.0, stop_distance=20.0)
+  assert c._filtered_stop == 20.0
+  _adjust(c, a_target=0.0, v_ego=0.0, stop_distance=18.0)
+  # v=0 → max close 0.5 m/frame
+  assert c._filtered_stop == 19.5
+
+
+def test_large_near_replan_snaps():
+  c = _build(3)
+  _adjust(c, a_target=0.0, v_ego=8.0, stop_distance=40.0)
+  _adjust(c, a_target=0.0, v_ego=8.0, stop_distance=20.0)
+  assert c._filtered_stop == 20.0

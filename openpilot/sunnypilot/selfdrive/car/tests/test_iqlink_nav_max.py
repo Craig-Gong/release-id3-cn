@@ -57,7 +57,10 @@ def test_iqlink_raises_max_to_nav_limit():
   snap = NavSnapshot(ts=10.0, link_ok=True, iqlink_enabled=True, road_limit_kph=50.0)
   with patch("openpilot.sunnypilot.nav.snapshot.read_snapshot", return_value=snap):
     with patch("openpilot.sunnypilot.nav.snapshot.snapshot_executable", return_value=True):
-      h.update_speed_limit_assist_v_cruise_non_pcm()
+      # dt capped at 0.2 s → +1.6 km/h/step; ~13 steps from 30 → 50
+      for _ in range(15):
+        h._iqlink_max_t = __import__("time").monotonic() - 1.0
+        h.update_speed_limit_assist_v_cruise_non_pcm()
   assert h.v_cruise_kph == 50.0
 
 
@@ -66,7 +69,9 @@ def test_iqlink_limit_unchanged_leaves_gas_raised_max():
   snap = NavSnapshot(ts=10.0, link_ok=True, iqlink_enabled=True, road_limit_kph=50.0)
   with patch("openpilot.sunnypilot.nav.snapshot.read_snapshot", return_value=snap):
     with patch("openpilot.sunnypilot.nav.snapshot.snapshot_executable", return_value=True):
-      h.update_speed_limit_assist_v_cruise_non_pcm()
+      for _ in range(15):
+        h._iqlink_max_t = __import__("time").monotonic() - 1.0
+        h.update_speed_limit_assist_v_cruise_non_pcm()
       h.v_cruise_kph = 58.0  # gas sync raised above limit
       h.update_speed_limit_assist_v_cruise_non_pcm()
   assert h.v_cruise_kph == 58.0
@@ -77,10 +82,27 @@ def test_iqlink_raises_max_when_below_unchanged_limit():
   snap = NavSnapshot(ts=10.0, link_ok=True, iqlink_enabled=True, road_limit_kph=50.0)
   with patch("openpilot.sunnypilot.nav.snapshot.read_snapshot", return_value=snap):
     with patch("openpilot.sunnypilot.nav.snapshot.snapshot_executable", return_value=True):
-      h.update_speed_limit_assist_v_cruise_non_pcm()
+      for _ in range(15):
+        h._iqlink_max_t = __import__("time").monotonic() - 1.0
+        h.update_speed_limit_assist_v_cruise_non_pcm()
       h.v_cruise_kph = 35.0  # manual SET below nav
-      h.update_speed_limit_assist_v_cruise_non_pcm()
+      for _ in range(12):
+        h._iqlink_max_t = __import__("time").monotonic() - 1.0
+        h.update_speed_limit_assist_v_cruise_non_pcm()
   assert h.v_cruise_kph == 50.0
+
+
+def test_iqlink_raise_is_slewed_not_instant():
+  h = _helper()
+  h.v_cruise_kph = 30.0
+  snap = NavSnapshot(ts=10.0, link_ok=True, iqlink_enabled=True, road_limit_kph=60.0)
+  with patch("openpilot.sunnypilot.nav.snapshot.read_snapshot", return_value=snap):
+    with patch("openpilot.sunnypilot.nav.snapshot.snapshot_executable", return_value=True):
+      h._iqlink_max_t = __import__("time").monotonic() - 1.0
+      h.update_speed_limit_assist_v_cruise_non_pcm()
+  # dt capped at 0.2 → ~+1.6 km/h, not jump to 60
+  assert 31.0 <= h.v_cruise_kph <= 34.0
+  assert h.v_cruise_kph < 60.0
 
 
 def test_iqlink_limit_drop_lowers_max():

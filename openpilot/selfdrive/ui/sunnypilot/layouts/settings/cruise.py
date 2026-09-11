@@ -94,7 +94,7 @@ class CruiseLayout(Widget):
 
     self.traffic_stop_offset = option_item_sp(
       title=tr("Traffic Stop Offset"),
-      description=tr("Brake this far short of the model's stop point, and of IQ-link red-light distance. Does not change follow gap. 0 disables vision offset (nav still uses 3 m)."),
+      description=tr("Vision only (IQ-link OFF): brake this far short of the model's stop point. Larger = earlier stop. Does not change follow gap or IQ-link red distance (nav uses a fixed ~3 m). 0 disables. Default 3 m; try 2–4 — avoid 8+."),
       param="TrafficStopOffset",
       min_value=0, max_value=1000, value_change_step=50,
       use_float_scaling=True,
@@ -103,7 +103,7 @@ class CruiseLayout(Widget):
 
     self.iqlink_toggle = toggle_item_sp(
       title=tr("IQ-link"),
-      description=tr("Follow phone nav (amapauto / IQ-link UDP or BLE, PSK 999999). Off = do not control from nav; the car still listens for packets. Green at a light waits for a close lead to move."),
+      description=tr("Follow phone nav over Wi‑Fi UDP (PSK 999999). BLE is off by default. Off = do not control from nav; the car still listens for UDP. Green at a light waits for a close lead to move."),
       param="IqlinkEnabled")
 
     self.ecoflow_toggle = toggle_item_sp(

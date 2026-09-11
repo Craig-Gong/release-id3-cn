@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""IQ-link daemon: BLE + LAN UDP HMAC → /dev/shm/sp_nav.json. Isolated from modeld."""
+"""IQ-link daemon: LAN UDP HMAC (+ optional BLE) → /dev/shm/sp_nav.json.
+
+Primary transport is Wi‑Fi UDP (:17710). BLE GATT is off by default
+(IqlinkBleEnabled=0) — AGNOS rarely has a working HCI advertiser.
+"""
 from __future__ import annotations
 
 import json
@@ -196,10 +200,11 @@ class IqlinkDaemon:
     return now
 
   def _ensure_ble(self, now: float, last_ble_try: float, *, want: bool) -> float:
-    """BLE is optional (AGNOS often has no HCI). Only attempt while feature enabled."""
+    """BLE off unless IqlinkBleEnabled — AGNOS HCI/GATT usually fails anyway."""
     if not want:
       if self.ble.running:
         self.ble.stop()
+        cloudlog.info("iqlinkd BLE stopped (disabled)")
       return 0.0
     if self.ble.running:
       return last_ble_try
@@ -217,10 +222,12 @@ class IqlinkDaemon:
     last_udp_try = 0.0
     while True:
       enabled = _param_bool(self.params, "IqlinkEnabled", True)
+      # Wi‑Fi UDP only by default. Opt-in BLE via IqlinkBleEnabled=1.
+      ble_want = enabled and _param_bool(self.params, "IqlinkBleEnabled", False)
       now = time.monotonic()
       # UDP always on — do not stop when the Cruise toggle is off.
       last_udp_try = self._ensure_udp(now, last_udp_try)
-      last_ble_try = self._ensure_ble(now, last_ble_try, want=enabled)
+      last_ble_try = self._ensure_ble(now, last_ble_try, want=ble_want)
       self._poll_inject()
       self._publish_link(enabled)
       rk.keep_time()

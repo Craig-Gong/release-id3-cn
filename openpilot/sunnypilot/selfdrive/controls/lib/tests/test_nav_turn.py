@@ -29,9 +29,10 @@ def test_nav_turn_near_and_slow():
   assert eval_nav_turn_desire(direction="left", turn_dist_m=50.0, **_cs(40.0)) == "left"
 
 
-def test_nav_turn_toast_window_when_slow_no_blinker():
-  # After toast (≤150 m), already <45 → auto turn desire without stalk
-  assert eval_nav_turn_desire(direction="right", turn_dist_m=120.0, **_cs(40.0)) == "right"
+def test_nav_turn_no_desire_in_toast_only_window():
+  # Toast / prep still ≤150 m, but unblinkered lateral desire only ≤80 m
+  assert eval_nav_turn_desire(direction="right", turn_dist_m=120.0, **_cs(40.0)) == "none"
+  assert eval_nav_turn_desire(direction="right", turn_dist_m=80.0, **_cs(40.0)) == "right"
 
 
 def test_nav_turn_blinker_confirms_when_fast():

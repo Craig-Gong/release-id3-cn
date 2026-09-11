@@ -99,7 +99,7 @@ def _param_flag(params: Params, key: str, default: bool = False) -> bool:
 
 def iqlink_needed(started, params: Params, CP: car.CarParams) -> bool:
   # Always run iqlinkd so UDP :17710 keeps listening. IqlinkEnabled only gates
-  # nav *execution* (snapshot_executable / MAX / turn), not the daemon lifetime.
+  # nav *execution*; IqlinkBleEnabled (default off) gates optional BLE GATT.
   # Tying the process to the toggle caused silent "nobody listening" when the
   # param was 0 while the phone still looked connected.
   return True

@@ -16,15 +16,19 @@ _EXIT = {6, 11}
 
 _RED_LIGHT_ACCEL = -2.0
 _RED_LIGHT_DECEL = 2.0
-# Fallback when TrafficStopOffset is 0. Live offset is applied in parse_carrot
-# and again in the planner so a long-lived iqlinkd cannot keep the old 3 m.
-_STOP_BEFORE_LINE_M = 3.0
-_offset_cache = _STOP_BEFORE_LINE_M
-_offset_n = 0
+# Nav red stop margin is fixed. TrafficStopOffset is vision-only (overshoot fix
+# with IQ-link OFF) — binding it here made head-car stops absurdly early when
+# the slider was raised to 8–10 m for CD210 overshoot.
+NAV_STOP_MARGIN_M = 3.0
 _YELLOW_STOP_DIST_M = 30.0
 LIGHT_TURN_WINDOW_M = 150.0
+# Toast / send_turn / nav-led longitudinal prep.
 TURN_DESIRE_WINDOW_M = 150.0
+# Lateral desire + turn-in speed cap (modeld rising-edge needs a nearer pulse).
+NAV_LATERAL_TURN_M = 80.0
 NEAR_DEST_REMAIN_M = 150.0
+# Only force nav red accel when ego is clearly above the approach target.
+_NAV_RED_BRAKE_SLACK_MPS = 0.5
 
 
 def _f(data: dict[str, Any], key: str, default: float = 0.0) -> float:
@@ -83,13 +87,9 @@ def approach_speed_ms(dist_m: float, decel: float, cap_ms: float = 0.0) -> float
   return v
 
 
-def nav_stop_margin_m(offset_m: float) -> float:
-  """Meters short of amap trafficLightDistM. Offset 0 keeps the 3 m default."""
-  try:
-    o = float(offset_m)
-  except (TypeError, ValueError):
-    return _STOP_BEFORE_LINE_M
-  return o if o > 0.0 else _STOP_BEFORE_LINE_M
+def nav_stop_margin_m(_offset_m: float | None = None) -> float:
+  """Meters short of amap trafficLightDistM for *nav* red. Ignores vision slider."""
+  return NAV_STOP_MARGIN_M
 
 
 def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float) -> float:
@@ -102,22 +102,16 @@ def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float) -> float:
   return 0.0 if v <= 0.05 else v
 
 
-def _traffic_stop_margin_m() -> float:
-  global _offset_cache, _offset_n
-  _offset_n += 1
-  if _offset_n % 15 != 1:
-    return _offset_cache
-  try:
-    from openpilot.common.params import Params
-    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import (
-      DEFAULT_OFFSET_M, TRAFFIC_STOP_OFFSET_PARAM, _sanitize_offset_m,
-    )
-    raw = Params().get(TRAFFIC_STOP_OFFSET_PARAM, return_default=True)
-    offset = _sanitize_offset_m(raw if raw is not None else DEFAULT_OFFSET_M)
-    _offset_cache = nav_stop_margin_m(offset)
-  except Exception:
-    pass
-  return _offset_cache
+def nav_red_accel_cap(v_ego: float, v_nav: float, accel_target: float,
+                      *, slack: float = _NAV_RED_BRAKE_SLACK_MPS) -> float | None:
+  """Accel ceiling for nav red only when ego is above the approach curve.
+
+  Unconditional accel_target=-2 from first red packet caused far-early stops
+  (constant -2 from 100 m+ lands tens of meters short of the light).
+  """
+  if float(v_ego) > float(v_nav) + float(slack):
+    return float(accel_target)
+  return None
 
 
 def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
@@ -158,7 +152,7 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
     elif light == "yellow" and 0.0 < light_dist <= _YELLOW_STOP_DIST_M:
       stop_for_light = True
   if stop_for_light:
-    speed_target = nav_red_speed_ms(light_dist, road_ms, _traffic_stop_margin_m())
+    speed_target = nav_red_speed_ms(light_dist, road_ms, NAV_STOP_MARGIN_M)
     accel_target = _RED_LIGHT_ACCEL
 
   maneuver = "none"

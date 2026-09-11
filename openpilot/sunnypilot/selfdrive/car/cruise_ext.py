@@ -4,6 +4,8 @@ Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
+import time
+
 import numpy as np
 
 from openpilot.cereal import custom
@@ -25,6 +27,8 @@ CRUISE_BUTTON_TIMER = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0,
 V_CRUISE_MIN = 8
 V_CRUISE_MAX = 145
 V_CRUISE_UNSET = 255
+# Human-like raise toward nav road limit; lowers stay instant for safety.
+NAV_MAX_RAISE_KPH_S = 8.0
 
 
 def update_manual_button_timers(CS: car.CarState, button_timers: dict[car.CarState.ButtonEvent.Type, int]) -> None:
@@ -66,6 +70,7 @@ class VCruiseHelperSP:
     self.req_minus = False
     # IQ-link nav road limit → MAX (only on change so gas-sync above limit can stick)
     self.prev_iqlink_road_limit_kph = -1.0
+    self._iqlink_max_t = 0.0
 
   def read_custom_set_speed_params(self) -> None:
     self.custom_acc_enabled = self.params.get_bool("CustomAccIncrementsEnabled")
@@ -154,20 +159,46 @@ class VCruiseHelperSP:
   def _apply_iqlink_nav_to_max(self) -> bool:
     """IQ-link ON: MAX tracks nav road limit.
 
-    - Limit change → set MAX to the new limit (raise or lower).
-    - MAX below limit (manual SET / first engage) → raise to limit.
+    - Limit drop → set MAX immediately (safety).
+    - Limit raise / MAX below limit → slew ~8 km/h/s (human-like catch-up).
     - MAX above limit (gas sync) → leave until the next limit change.
+    - Unset (first engage) → snap to limit.
     """
     limit_kph = self._iqlink_nav_limit_kph()
     if limit_kph is None:
       self.prev_iqlink_road_limit_kph = -1.0
+      self._iqlink_max_t = 0.0
       return False
+
+    now = time.monotonic()
+    dt = 0.05 if self._iqlink_max_t <= 0.0 else min(0.2, max(0.0, now - self._iqlink_max_t))
+    self._iqlink_max_t = now
+
     limit_changed = limit_kph != self.prev_iqlink_road_limit_kph
     unset = self.v_cruise_kph >= V_CRUISE_UNSET or self.v_cruise_kph <= 0
     below_limit = (not unset) and self.v_cruise_kph < limit_kph
-    if limit_changed or below_limit or unset:
+    above_limit = (not unset) and self.v_cruise_kph > limit_kph
+
+    if unset:
       self.v_cruise_kph = float(np.clip(limit_kph, self.v_cruise_min, V_CRUISE_MAX))
       self.prev_iqlink_road_limit_kph = limit_kph
+      return True
+
+    if limit_changed and above_limit:
+      # Dropped posted limit (or gas-raised MAX above a new lower limit).
+      self.v_cruise_kph = float(np.clip(limit_kph, self.v_cruise_min, V_CRUISE_MAX))
+      self.prev_iqlink_road_limit_kph = limit_kph
+      return True
+
+    if limit_changed:
+      self.prev_iqlink_road_limit_kph = limit_kph
+
+    if below_limit or (limit_changed and self.v_cruise_kph < limit_kph):
+      step = NAV_MAX_RAISE_KPH_S * dt
+      self.v_cruise_kph = float(np.clip(
+        min(limit_kph, self.v_cruise_kph + step),
+        self.v_cruise_min, V_CRUISE_MAX,
+      ))
     return True
 
   def update_speed_limit_assist_v_cruise_non_pcm(self) -> None:

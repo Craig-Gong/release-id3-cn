@@ -9,12 +9,15 @@ After a nav go, sticky vision-stop does not re-arm until the car moves.
 from __future__ import annotations
 
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
+  FOLLOW_LEAD_GO_FLOOR_A,
   FOLLOW_LEAD_LAUNCH_V_EGO,
   FOLLOW_LEAD_START_ACCEL,
   LEAD_GO_SPEED_MPS,
   STOPPED_LEAD_CREEP_M,
+  STOPPED_LEAD_GAP_M,
   GreenFollowLeadGate,
   follow_lead_soft_launch,
+  lead_owns_nav_stop,
   read_follow_lead,
 )
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, read_snapshot, snapshot_executable
@@ -24,7 +27,8 @@ _STANDSTILL_HOLD_RELEASE_S = 1.0
 _STANDSTILL_HOLD_LEAD_RELEASE_S = 0.15
 _REMAIN_GO_CONFIRM_S = 0.15  # 3 frames @ 50 ms — filter single-packet false go
 _STICKY_RED_TTL_S = 8.0
-_GO_LAUNCH_FLOOR_A = 0.4
+# MEB needs clearly positive accel for ANFAHREN; 0.4 felt like release-without-go.
+_GO_LAUNCH_FLOOR_A = 0.9
 _DT_MDL = 0.05
 _RELEASE_V_EGO = 2.0
 _STANDSTILL_V = 0.3
@@ -76,9 +80,17 @@ class StandstillHold:
     self.sticky_red = False
     self._sticky_until = 0.0
 
-  def observe_nav(self, snap: NavSnapshot, now: float, *, gas: bool, v_ego: float, gear=None) -> None:
+  def observe_nav(self, snap: NavSnapshot, now: float, *, gas: bool, v_ego: float,
+                  gear=None, sm=None) -> None:
     """Arm / expire sticky red. Speed-limit stale rules stay separate."""
     if gas or v_ego > _RELEASE_V_EGO or not snap.iqlink_enabled or nav_long_blocked(gear):
+      self._clear_sticky()
+      self.red_pin = False
+      self._remain_go_s = 0.0
+      return
+
+    # Queue behind a stopped lead short of the light: follow lead, not nav pin.
+    if sm is not None and lead_owns_nav_stop(sm, snap):
       self._clear_sticky()
       self.red_pin = False
       self._remain_go_s = 0.0
@@ -111,7 +123,7 @@ class StandstillHold:
       gear = sm['carState'].gearShifter if sm is not None else None
     except Exception:
       gear = None
-    self.observe_nav(snap, clock, gas=False, v_ego=v_ego, gear=gear)
+    self.observe_nav(snap, clock, gas=False, v_ego=v_ego, gear=gear, sm=sm)
 
     nav_live = snapshot_long_ok(snap, gear, now=clock)
     follow_sm = sm if sm is not None else {}
@@ -170,7 +182,8 @@ class StandstillHold:
         self.hold_s = 0.0
         self.hold_released = True
       a_out = float(a_target)
-      if lead_rolling:
+      # Floor only with a usable gap — tight queue leaves authority to MPC/gap.
+      if lead_rolling and lead.d_rel >= STOPPED_LEAD_GAP_M:
         a_out = max(a_out, _GO_LAUNCH_FLOOR_A)
       return should_stop, a_out
 
@@ -215,10 +228,15 @@ def apply_follow_launch(sm, v_ego: float, a_target: float) -> float:
   lead = read_follow_lead(sm)
   if not lead.present:
     return float(a_target)
+  # Lead rolling: takeoff floor only when gap is not critically closed —
+  # otherwise radar creep noise at ~3 m would punch into the bumper.
   if lead.v_lead >= LEAD_GO_SPEED_MPS:
+    if lead.d_rel >= STOPPED_LEAD_GAP_M:
+      return max(float(a_target), FOLLOW_LEAD_GO_FLOOR_A)
     return float(a_target)
   if lead.d_rel > STOPPED_LEAD_CREEP_M:
     return float(a_target)
+  # Still closed-up on a stopped bumper: never punch harder than the soft cap.
   if follow_lead_soft_launch(sm, v_ego):
     return min(float(a_target), FOLLOW_LEAD_START_ACCEL)
   return float(a_target)

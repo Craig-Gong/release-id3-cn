@@ -1,19 +1,19 @@
 """IQ-link intersection turn gates (shm snapshot). No auto blinker / NavExit ALC.
 
 Toast / send_turn / nav-led prep: ≤150 m.
-Lateral turn desire (no stalk): ≤150 m and vEgo < 45 km/h, or same-side blinker
-confirms farther/faster. Same-side BSM blocks. Product: steer the turn without
-auto EA_02; driver may still stalk for indicators.
+Lateral turn desire (no stalk) + turn-in 20 cap: ≤80 m and vEgo < 45 km/h,
+or same-side blinker confirms farther/faster. Same-side BSM blocks.
+Product: steer the turn without auto EA_02; driver may still stalk for indicators.
 """
 from __future__ import annotations
 
 from openpilot.common.constants import CV
-from openpilot.sunnypilot.nav.protocol import TURN_DESIRE_WINDOW_M
+from openpilot.sunnypilot.nav.protocol import NAV_LATERAL_TURN_M, TURN_DESIRE_WINDOW_M
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, snapshot_executable
 
 TURN_TRIGGER_MPS = 45.0 * CV.KPH_TO_MS
-# Align with toast / send_turn window when already under the turn-speed gate.
-NAV_NEAR_TURN_M = TURN_DESIRE_WINDOW_M
+# Desire + turn-in near the corner (modeld only pulses on rising edge).
+NAV_NEAR_TURN_M = NAV_LATERAL_TURN_M
 
 
 def _dir(value) -> str:

@@ -16,13 +16,18 @@ from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAle
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import junction_stop_active
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_soft_curve import nav_soft_curve_ms
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
-  apply_stopped_lead_gap, follow_lead_present,
+  apply_stopped_lead_gap, follow_lead_present, lead_owns_nav_stop,
 )
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import apply_lead_stop_safety
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import StandstillHold, apply_follow_launch
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
-from openpilot.sunnypilot.nav.protocol import nav_red_speed_ms, nav_stop_margin_m
+from openpilot.sunnypilot.nav.protocol import (
+  NAV_STOP_MARGIN_M,
+  nav_red_accel_cap,
+  nav_red_speed_ms,
+  nav_stop_margin_m,
+)
 from openpilot.sunnypilot.nav.snapshot import read_snapshot, write_cluster_hud
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import snapshot_long_ok
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
@@ -118,11 +123,16 @@ class LongitudinalPlannerSP:
       curve = nav_soft_curve_ms(snap, v_ego)
       if curve is not None:
         self.output_v_target = min(float(self.output_v_target), float(curve))
-      if snap.stop_for_light:
-        margin = nav_stop_margin_m(self.traffic_stop_offset.distance)
+      # Head-car nav red only. Queue behind a stopped lead: do not clamp cruise
+      # to far-light approach (fights lead MPC → stutter).
+      if snap.stop_for_light and not lead_owns_nav_stop(sm, snap):
+        margin = nav_stop_margin_m()
         v_nav = nav_red_speed_ms(snap.dist_m, 0.0, margin)
         self.output_v_target = min(float(self.output_v_target), v_nav)
-        self.output_a_target = min(float(self.output_a_target), float(snap.accel_target))
+        # Only force -2 when above the approach curve — far red must coast on v_nav.
+        a_cap = nav_red_accel_cap(v_ego, v_nav, float(snap.accel_target or -2.0))
+        if a_cap is not None:
+          self.output_a_target = min(float(self.output_a_target), a_cap)
     return self.output_v_target, self.output_a_target
 
   def _turn_prep_speed(self, sm: messaging.SubMaster, v_ego: float, enabled: bool) -> float | None:
@@ -174,9 +184,10 @@ class LongitudinalPlannerSP:
     long_ok = snapshot_long_ok(snap, CS.gearShifter, now=now)
     # Arm sticky red before lead-gap / e2e so a stale link cannot re-enable creep.
     self.standstill_hold.observe_nav(
-      snap, now, gas=bool(CS.gasPressed), v_ego=float(v_ego), gear=CS.gearShifter,
+      snap, now, gas=bool(CS.gasPressed), v_ego=float(v_ego), gear=CS.gearShifter, sm=sm,
     )
     red_pin = bool(self.standstill_hold.red_pin)
+    lead_owns = lead_owns_nav_stop(sm, snap)
 
     has_lead = follow_lead_present(sm) or bool(getattr(lead, "present", False))
     try:
@@ -185,23 +196,32 @@ class LongitudinalPlannerSP:
       lead_d_rel = None
     model_stop = bool(getattr(model.action, "shouldStop", False))
     self.traffic_stop_offset.update()
-    nav_red = bool(red_pin or (long_ok and snap.stop_for_light))
+    nav_red = bool((red_pin or (long_ok and snap.stop_for_light)) and not lead_owns)
     a_target, should_stop = self.traffic_stop_offset.adjust(
       a_target, should_stop, v_ego, model,
       stop_light=model_stop, has_lead=has_lead, right_blinker=bool(CS.rightBlinker),
       lead_d_rel=lead_d_rel, nav_red=nav_red,
+      steering_angle_deg=float(CS.steeringAngleDeg or 0.0),
     )
     a_target, should_stop = apply_stopped_lead_gap(
       sm, v_ego, a_target, should_stop, red_pin=red_pin, model_stop=model_stop,
     )
     a_target, should_stop = apply_lead_stop_safety(sm, v_ego, a_target, should_stop)
-    if red_pin or (long_ok and snap.stop_for_light):
-      # Never let lead-gap creep / e2e leave should_stop=False under a red.
-      # Approach speed is only for high-speed braking; once crawling or near
-      # the line, hard-stop or MEB RELEASE → creep → slam.
-      a_target = min(float(a_target), float(snap.accel_target if snap.stop_for_light else -2.0))
-      near_line = snap.dist_m <= 0.0 or 0.0 < snap.dist_m <= 12.0 or snap.speed_target <= 0.5
-      if v_ego <= 1.5 or near_line or red_pin:
+    if (red_pin or (long_ok and snap.stop_for_light)) and not lead_owns:
+      # Approach speed for far braking; hard-stop only near the intended stop
+      # (margin + small slack) — a fixed 12 m near_line + unconditional -2 caused
+      # far-early stops and creep/slam at the residual approach speed.
+      margin = float(NAV_STOP_MARGIN_M)
+      v_nav = nav_red_speed_ms(snap.dist_m, 0.0, margin)
+      a_cap = nav_red_accel_cap(v_ego, v_nav, float(snap.accel_target if snap.stop_for_light else -2.0))
+      if a_cap is not None:
+        a_target = min(float(a_target), a_cap)
+      near_line = (
+        snap.dist_m <= 0.0
+        or (0.0 < snap.dist_m <= margin + 3.0)
+        or v_nav <= 0.5
+      )
+      if near_line or (red_pin and v_ego <= 1.5):
         should_stop = True
         if v_ego <= 0.6 or red_pin:
           a_target = min(float(a_target), -1.0)
@@ -213,7 +233,7 @@ class LongitudinalPlannerSP:
     a_target = apply_follow_launch(sm, v_ego, a_target)
     approaching = junction_stop_active(
       has_lead=has_lead,
-      nav_red=bool(self.standstill_hold.red_pin or snap.stop_for_light),
+      nav_red=bool((self.standstill_hold.red_pin or snap.stop_for_light) and not lead_owns),
       model_stop=model_stop,
       standstill_hold=self.standstill_hold.hold, light=snap.light_token,
     )

@@ -120,6 +120,7 @@ _PREBUILT_KEY_DEFAULTS = {
   "TrafficStopOffset": 3.0,
   "AutoGasSyncSpeed": True,
   "IqlinkEnabled": True,
+  "IqlinkBleEnabled": False,
   "IqlinkBlePsk": "999999",
   "IqlinkBleLinkState": 0,
   "IqlinkBleConnected": False,

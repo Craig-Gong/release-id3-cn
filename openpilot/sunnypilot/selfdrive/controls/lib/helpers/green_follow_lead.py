@@ -21,13 +21,18 @@ LEAD_GO_SPEED_MPS = 0.25
 LEAD_GO_CONFIRM_S = 0.05
 LEAD_GAP_M = 0.3
 FOLLOW_TIMEOUT_S = 4.0
+# Cap when still nose-to-bumper and lead is stopped (do not punch into it).
 FOLLOW_LEAD_START_ACCEL = 1.5
+# Floor once lead is rolling and ego is still slow (queue takeoff / MEB ANFAHREN).
+FOLLOW_LEAD_GO_FLOOR_A = 1.2
 FOLLOW_LEAD_LAUNCH_V_EGO = 2.5
 VISION_LEAD_PROB = 0.5
 
 # Settle ~3.5 m behind a stopped lead (LongitudinalTuning.stop_distance).
 # Hold 3.5–5.0 m (no creep). Only creep when clearly farther than 5.0 m.
-STOPPED_LEAD_V_MPS = 0.5
+# Must match LEAD_GO_SPEED_MPS: otherwise 0.25–threshold band holds the gap
+# brake while standstill/follow_launch already treat the bumper as rolling.
+STOPPED_LEAD_V_MPS = LEAD_GO_SPEED_MPS
 STOPPED_LEAD_GAP_M = 3.5
 STOPPED_LEAD_CREEP_M = 5.0
 STOPPED_LEAD_SOFT_M = 8.0
@@ -109,19 +114,41 @@ def follow_lead_soft_launch(sm: Any, v_ego: float) -> bool:
   return follow_lead_present(sm)
 
 
+def lead_owns_nav_stop(sm: Any, snap: Any) -> bool:
+  """In-queue lead short of the light: follow the bumper, not nav hard-stop.
+
+  Far red with a queue lead used to disable lead-gap and force red_pin →
+  creep/slam. Must stay true when the lead *starts moving*, otherwise far
+  red snaps back and launch feels stuck/lazy. Head car (no lead) still
+  nav-stops. Lead beyond LEAD_QUEUE_M falls out of read_follow_lead.
+  """
+  if snap is None or not bool(getattr(snap, "stop_for_light", False)):
+    return False
+  lead = read_follow_lead(sm)
+  if not lead.present:
+    return False
+  light_d = float(getattr(snap, "dist_m", 0.0) or 0.0)
+  # No usable light range: any in-queue lead owns (congestion).
+  if light_d <= 0.0:
+    return True
+  # Lead is between ego and the light (1 m slack for bumper vs light point).
+  return float(lead.d_rel) < (light_d - 1.0)
+
+
 def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: bool,
                            *, red_pin: bool = False, model_stop: bool = False) -> tuple[float, bool]:
   """Keep ~3.5 m behind a stopped lead; only creep when clearly too far (>5.0 m)."""
-  # Never creep into a red / yellow nav stop — that fights standstill hold.
-  if red_pin:
-    return float(a_target), bool(should_stop)
+  # Never creep into a head-car nav red — that fights standstill hold.
+  # Queue behind a stopped bumper: lead owns; keep gap logic.
   try:
     from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable
     snap = read_snapshot()
-    if snapshot_executable(snap) and snap.stop_for_light:
+    nav_red = bool(red_pin or (snapshot_executable(snap) and snap.stop_for_light))
+    if nav_red and not lead_owns_nav_stop(sm, snap):
       return float(a_target), bool(should_stop)
   except Exception:
-    pass
+    if red_pin:
+      return float(a_target), bool(should_stop)
 
   lead = read_follow_lead(sm)
   if not lead.present or lead.v_lead >= STOPPED_LEAD_V_MPS:
