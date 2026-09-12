@@ -4,6 +4,10 @@ from openpilot.system.ui.lib.application import FONT_SCALE, font_fallback
 _cache: dict[int, rl.Vector2] = {}
 
 
+def clear_text_measure_cache() -> None:
+  _cache.clear()
+
+
 def measure_text_cached(font: rl.Font, text: str, font_size: int, spacing: float = 0) -> rl.Vector2:
   """Caches text measurements to avoid redundant calculations."""
   font = font_fallback(font)

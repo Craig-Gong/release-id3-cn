@@ -216,6 +216,7 @@ class GuiApplication(GuiApplicationExt):
 
     self._fonts: dict[FontWeight, rl.Font] = {}
     self._fallback_fonts: dict[str, rl.Font] = {}
+    self._fallback_charsets: dict[str, set[str]] = {}
     self._width = width if width is not None else GuiApplication._default_width()
     self._height = height if height is not None else GuiApplication._default_height()
 
@@ -583,6 +584,7 @@ class GuiApplication(GuiApplicationExt):
     for font in self._fallback_fonts.values():
       rl.unload_font(font)
     self._fallback_fonts = {}
+    self._fallback_charsets = {}
 
     if self._render_texture is not None:
       rl.unload_render_texture(self._render_texture)
@@ -711,16 +713,43 @@ class GuiApplication(GuiApplicationExt):
   def fallback_font(self) -> rl.Font:
     language = multilang.language
     if language not in self._fallback_fonts:
-      chars = fallback_font_characters(language, EXTRA_FONT_CHARS)
-      codepoints = sorted(map(ord, chars))
-      codepoint_buffer = rl.ffi.new("int[]", codepoints)
-      with as_file(FONT_DIR) as fspath:
-        font = rl.load_font_ex((fspath / NOTO_FONTS[language]).as_posix(), 48,
-                               rl.ffi.cast("int *", codepoint_buffer), len(codepoints))
-      rl.gen_texture_mipmaps(font.texture)
-      rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
-      self._fallback_fonts[language] = font
+      self._load_fallback_font(language)
     return self._fallback_fonts[language]
+
+  def ensure_fallback_characters(self, text: str) -> None:
+    """Reload zh Noto fallback if dynamic nav text needs glyphs not yet in the atlas."""
+    if not text or not multilang.requires_font_fallback():
+      return
+    language = multilang.language
+    charset = self._fallback_charsets.get(language)
+    if charset is None:
+      self.fallback_font()
+      charset = self._fallback_charsets.get(language, set())
+    missing = {c for c in text if c not in charset}
+    if not missing:
+      return
+    charset.update(missing)
+    self._load_fallback_font(language, extra_characters="".join(charset))
+
+  def _load_fallback_font(self, language: str, extra_characters: str | None = None) -> None:
+    from openpilot.system.ui.lib.text_measure import clear_text_measure_cache
+
+    chars = fallback_font_characters(language, EXTRA_FONT_CHARS)
+    if extra_characters:
+      chars.update(extra_characters)
+    self._fallback_charsets[language] = set(chars)
+    codepoints = sorted(map(ord, chars))
+    codepoint_buffer = rl.ffi.new("int[]", codepoints)
+    with as_file(FONT_DIR) as fspath:
+      font = rl.load_font_ex((fspath / NOTO_FONTS[language]).as_posix(), 48,
+                             rl.ffi.cast("int *", codepoint_buffer), len(codepoints))
+    rl.gen_texture_mipmaps(font.texture)
+    rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+    old = self._fallback_fonts.pop(language, None)
+    if old is not None:
+      rl.unload_font(old)
+    self._fallback_fonts[language] = font
+    clear_text_measure_cache()
 
   @property
   def width(self):

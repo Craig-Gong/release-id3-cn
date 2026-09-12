@@ -309,6 +309,7 @@ class JunctionHudRenderer(Widget):
     body_font_sz = float(LANE_BODY_SIZE)
     if lane.enter and not empty:
       enter_s = lane.enter if lane.enter.startswith("进入") else f"{ENTER_PREFIX}{lane.enter}"
+      gui_app.ensure_fallback_characters(enter_s)
       enter_sz = measure_text_cached(self._font_detail, enter_s, body_font_sz)
       full_w = bar.width - 56
       while enter_sz.x > full_w and len(enter_s) > 4:
