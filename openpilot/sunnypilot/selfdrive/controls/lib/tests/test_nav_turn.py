@@ -30,9 +30,19 @@ def test_nav_turn_near_and_slow():
 
 
 def test_nav_turn_no_desire_in_toast_only_window():
-  # Toast / prep still ≤150 m, but unblinkered lateral desire only ≤80 m
-  assert eval_nav_turn_desire(direction="right", turn_dist_m=120.0, **_cs(40.0)) == "none"
+  # Toast / prep still ≤150 m, but unblinkered lateral desire only ≤120 m
+  assert eval_nav_turn_desire(direction="right", turn_dist_m=140.0, **_cs(40.0)) == "none"
+  assert eval_nav_turn_desire(direction="right", turn_dist_m=120.0, **_cs(40.0)) == "right"
   assert eval_nav_turn_desire(direction="right", turn_dist_m=80.0, **_cs(40.0)) == "right"
+
+
+def test_nav_turn_keep_pulse_speeds_up_near_corner():
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import (
+    nav_turn_keep_pulse_s, NAV_CORNER_PULSE_S, NAV_APPROACH_PULSE_S, NAV_DEFAULT_PULSE_S,
+  )
+  assert nav_turn_keep_pulse_s(30.0) == NAV_CORNER_PULSE_S
+  assert nav_turn_keep_pulse_s(80.0) == NAV_APPROACH_PULSE_S
+  assert nav_turn_keep_pulse_s(200.0) == NAV_DEFAULT_PULSE_S
 
 
 def test_nav_turn_blinker_confirms_when_fast():

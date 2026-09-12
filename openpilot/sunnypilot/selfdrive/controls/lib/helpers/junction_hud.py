@@ -4,10 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from openpilot.sunnypilot.nav.hud_copy import (
-  FOLLOW_LEAD, GO_AHEAD, NO_SIGNAL, STOP_AHEAD, STOP_GREEN, STOP_RED,
-  STOP_YELLOW, WAIT_DETECT, WAIT_PAIR, WATCH_AHEAD,
+  FOLLOW_LEAD, GO_AHEAD, NAV_EMPTY, NO_SIGNAL, STOP_AHEAD, STOP_GREEN, STOP_RED,
+  STOP_YELLOW, STRAIGHT_AHEAD, STRAIGHT_LANE, WAIT_DETECT, WAIT_PAIR, WATCH_AHEAD,
 )
-from openpilot.sunnypilot.nav.protocol import lane_hint
+from openpilot.sunnypilot.nav.protocol import format_tbt_capsule, lane_hint
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot
 
 GREEN_FLASH_S = 1.5
@@ -48,7 +48,10 @@ class JunctionView:
 class LaneGuideView:
   show: bool
   text: str
-  kind: str  # left | right | turn_left | turn_right | none
+  kind: str  # left | right | turn_left | turn_right | straight | exit | arrive | none
+  empty: bool = False
+  enter: str = ""
+  capsule: tuple[str, str] | None = None
 
 
 def _stop_headline(light: str) -> str:
@@ -61,7 +64,7 @@ def _stop_headline(light: str) -> str:
   return STOP_AHEAD
 
 
-def _lane_kind(snap: NavSnapshot) -> str:
+def _lane_kind(snap: NavSnapshot, text: str) -> str:
   rec = (snap.lane_recommend or "none").lower()
   if rec == "left":
     return "left"
@@ -71,18 +74,39 @@ def _lane_kind(snap: NavSnapshot) -> str:
     return "turn_left"
   if snap.send_turn and snap.maneuver_dir == "right":
     return "turn_right"
+  maneuver = (snap.maneuver or "none").lower()
+  if maneuver == "exit":
+    return "exit"
+  if maneuver == "arrive":
+    return "arrive"
+  if text in (STRAIGHT_AHEAD, STRAIGHT_LANE) or rec == "straight":
+    return "straight"
   return "none"
 
 
-def build_lane_guide_view(*, engaged: bool, snap: NavSnapshot) -> LaneGuideView:
-  # IQ-link navigation is the product cue; do not hide TBT until engage.
-  # Pre-engage the driver still needs "前方左转" / lane rec while READY.
-  if not (engaged or snap.iqlink_enabled):
-    return LaneGuideView(False, "", "none")
+def build_lane_guide_view(*, onroad: bool, snap: NavSnapshot) -> LaneGuideView:
+  """Persistent nav card: always shown onroad (empty → 暂无导航推送)."""
+  if not onroad:
+    return LaneGuideView(False, "", "none", True)
+
   text = lane_hint(snap)
+  kind = _lane_kind(snap, text)
+  enter = (snap.enter_road or "").strip()
+  # Avoid duplicating maneuver words as "进入 · 右转"
+  if enter in ("左转", "右转", "调头", "直行", "测试右转", "前方红灯"):
+    enter = ""
+
+  capsule = None
+  if float(snap.tbt_dist or 0.0) >= 1.0 and kind not in ("none", "left", "right"):
+    capsule = format_tbt_capsule(snap.tbt_dist)
+
+  empty = not text and not enter
+  if empty:
+    return LaneGuideView(True, NAV_EMPTY, "none", True)
   if not text:
-    return LaneGuideView(False, "", "none")
-  return LaneGuideView(True, text, _lane_kind(snap))
+    text = NAV_EMPTY
+    kind = "none"
+  return LaneGuideView(True, text, kind, False, enter, capsule)
 
 
 def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,

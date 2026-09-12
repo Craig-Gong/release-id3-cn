@@ -26,10 +26,10 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import 
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
 from openpilot.sunnypilot.nav.protocol import (
-  NAV_STOP_MARGIN_M,
   nav_red_accel_cap,
+  nav_red_force_stop,
   nav_red_speed_ms,
-  nav_stop_margin_m,
+  traffic_stop_margin_m,
 )
 from openpilot.sunnypilot.nav.snapshot import read_snapshot, write_cluster_hud
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import snapshot_long_ok
@@ -72,15 +72,19 @@ class LongitudinalPlannerSP:
     if getattr(self.standstill_hold, "red_pin", False):
       return False
     try:
+      CS = sm['carState']
       snap = read_snapshot()
-      gear = sm['carState'].gearShifter
+      gear = CS.gearShifter
       if snapshot_long_ok(snap, gear) and snap.stop_for_light:
         return False
-    except Exception:
-      pass
-    try:
-      CS = sm['carState']
-      if (CS.standstill or float(CS.vEgo) <= 0.6) and bool(sm['modelV2'].action.shouldStop):
+      # After IQ-link green / while latched, do not let vision shouldStop
+      # force cruise-only — that fought the green launch with a hitch.
+      nav_go_guard = bool(
+        getattr(self.standstill_hold, "_nav_go_latched", False)
+        or (snapshot_long_ok(snap, gear) and snap.light_token == "green")
+      )
+      if (not nav_go_guard and (CS.standstill or float(CS.vEgo) <= 0.6)
+          and bool(sm['modelV2'].action.shouldStop)):
         return False
     except Exception:
       pass
@@ -129,13 +133,13 @@ class LongitudinalPlannerSP:
       # Head-car nav red only. Queue behind a stopped lead: do not clamp cruise
       # to far-light approach (fights lead MPC → stutter).
       if snap.stop_for_light and not lead_owns_nav_stop(sm, snap):
-        margin = nav_stop_margin_m()
+        margin = traffic_stop_margin_m()
         v_nav = nav_red_speed_ms(snap.dist_m, 0.0, margin)
         self.output_v_target = min(float(self.output_v_target), v_nav)
-        # Only force -2 when above the approach curve — far red must coast on v_nav.
-        a_cap = nav_red_accel_cap(v_ego, v_nav, float(snap.accel_target or -2.0))
-        if a_cap is not None:
-          self.output_a_target = min(float(self.output_a_target), a_cap)
+        a_cap = nav_red_accel_cap(
+          v_ego, float(snap.dist_m), margin, float(snap.accel_target or -2.0),
+        )
+        self.output_a_target = min(float(self.output_a_target), a_cap)
     return self.output_v_target, self.output_a_target
 
   def _turn_prep_speed(self, sm: messaging.SubMaster, v_ego: float, enabled: bool) -> float | None:
@@ -200,10 +204,17 @@ class LongitudinalPlannerSP:
     model_stop = bool(getattr(model.action, "shouldStop", False))
     self.traffic_stop_offset.update()
     nav_red = bool((red_pin or (long_ok and snap.stop_for_light)) and not lead_owns)
+    # IQ-link owns the junction when a light color is live (incl. green).
+    # Otherwise TrafficStopOffset still brakes on model shouldStop after green
+    # release → one hitch as ego starts with no lead.
+    nav_owns_light = bool(long_ok and snap.light_token in ("red", "yellow", "green"))
+    skip_vision_stop = bool(
+      nav_red or nav_owns_light or getattr(self.standstill_hold, "_nav_go_latched", False)
+    )
     a_target, should_stop = self.traffic_stop_offset.adjust(
       a_target, should_stop, v_ego, model,
       stop_light=model_stop, has_lead=has_lead, right_blinker=bool(CS.rightBlinker),
-      lead_d_rel=lead_d_rel, nav_red=nav_red,
+      lead_d_rel=lead_d_rel, nav_red=skip_vision_stop,
       steering_angle_deg=float(CS.steeringAngleDeg or 0.0),
     )
     a_target, should_stop = apply_stopped_lead_gap(
@@ -211,23 +222,18 @@ class LongitudinalPlannerSP:
     )
     a_target, should_stop = apply_lead_stop_safety(sm, v_ego, a_target, should_stop)
     if (red_pin or (long_ok and snap.stop_for_light)) and not lead_owns:
-      # Approach speed for far braking; hard-stop only near the intended stop
-      # (margin + small slack) — a fixed 12 m near_line + unconditional -2 caused
-      # far-early stops and creep/slam at the residual approach speed.
-      margin = float(NAV_STOP_MARGIN_M)
-      v_nav = nav_red_speed_ms(snap.dist_m, 0.0, margin)
-      a_cap = nav_red_accel_cap(v_ego, v_nav, float(snap.accel_target if snap.stop_for_light else -2.0))
-      if a_cap is not None:
-        a_target = min(float(a_target), a_cap)
-      near_line = (
-        snap.dist_m <= 0.0
-        or (0.0 < snap.dist_m <= margin + 3.0)
-        or v_nav <= 0.5
+      # Live TrafficStopOffset (3–6 m). Kinematic brake toward light_dist - margin
+      # so ego cannot coast past the line when on/under the soft approach curve.
+      margin = float(traffic_stop_margin_m())
+      a_cap = nav_red_accel_cap(
+        v_ego, float(snap.dist_m), margin,
+        float(snap.accel_target if snap.stop_for_light else -2.0),
       )
-      if near_line or (red_pin and v_ego <= 1.5):
+      a_target = min(float(a_target), a_cap)
+      if nav_red_force_stop(v_ego, float(snap.dist_m), margin) or (red_pin and v_ego <= 1.5):
         should_stop = True
-        if v_ego <= 0.6 or red_pin:
-          a_target = min(float(a_target), -1.0)
+        if v_ego <= 0.6 or red_pin or (float(snap.dist_m) - margin) <= 0.0:
+          a_target = min(float(a_target), -1.5)
     should_stop, a_target = self.standstill_hold.apply(
       should_stop, a_target, v_ego,
       standstill=bool(CS.standstill), gas=bool(CS.gasPressed), model_stop=model_stop,

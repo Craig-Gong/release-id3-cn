@@ -50,15 +50,16 @@ class TestEgpuHudLayout(unittest.TestCase):
   def test_lane_and_egpu_type_matches_junction_chinese(self):
     from openpilot.sunnypilot.nav.hud_layout import (
       EGPU_DC_UNIT, EGPU_DC_VALUE, EGPU_DETAIL_SIZE, EGPU_HEAD_SIZE, HUD_CN_DETAIL,
-      HUD_CN_HEAD, HUD_CN_STOP, LANE_TEXT_SIZE,
+      HUD_CN_STOP, LANE_TEXT_SIZE,
     )
-    self.assertEqual(LANE_TEXT_SIZE, HUD_CN_HEAD)
+    # Tall nav card body tracks 前方停车 (44), not junction 红灯 (52).
+    self.assertEqual(LANE_TEXT_SIZE, HUD_CN_STOP)
     # eGPU title + 12V chip track 前方停车 (44), not capsule 红灯 (52).
     self.assertEqual(EGPU_HEAD_SIZE, HUD_CN_STOP)
     self.assertEqual(EGPU_DC_UNIT, HUD_CN_STOP)
     self.assertEqual(EGPU_DC_VALUE, HUD_CN_STOP)
     self.assertEqual(EGPU_DETAIL_SIZE, HUD_CN_DETAIL)
-    self.assertGreaterEqual(LANE_GUIDE_HEIGHT, 110)
+    self.assertGreaterEqual(LANE_GUIDE_HEIGHT, 160)
     self.assertGreaterEqual(EGPU_HUD_HEIGHT, 350)
     self.assertGreaterEqual(EGPU_HUD_HEIGHT_COMPACT, 130)
 

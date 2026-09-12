@@ -6,6 +6,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.auto_lane_change import AutoLan
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import (
   eval_nav_turn_desire,
   nav_intersection_turn,
+  nav_turn_keep_pulse_s,
   snapshot_long_ok,
 )
 from openpilot.sunnypilot.selfdrive.controls.lib.lane_turn_desire import LaneTurnController
@@ -120,9 +121,15 @@ class DesireHelper:
       self.desire = TURN_DESIRES[self.lane_turn_direction]
       # modeld only injects desire on a rising edge. Hold continuous turnLeft/
       # turnRight once, and the pulse is spent far from the corner. Mirror the
-      # LC keep-pulse (~1 Hz) so near-corner steering re-asserts.
+      # LC keep-pulse; speed up near a nav corner so steering re-asserts there.
+      pulse_s = 1.0
+      if self.nav_turn_direction != TurnDirection.none:
+        try:
+          pulse_s = float(nav_turn_keep_pulse_s(float(read_snapshot().tbt_dist)))
+        except Exception:
+          pulse_s = 1.0
       self.keep_pulse_timer += DT_MDL
-      if self.keep_pulse_timer > 1.0:
+      if self.keep_pulse_timer > pulse_s:
         self.keep_pulse_timer = 0.0
       elif self.desire in (log.Desire.turnLeft, log.Desire.turnRight):
         self.desire = log.Desire.none

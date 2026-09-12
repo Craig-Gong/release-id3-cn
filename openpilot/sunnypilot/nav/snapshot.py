@@ -37,6 +37,11 @@ class NavSnapshot:
   tbt_dist: float = 0.0
   road_limit_kph: float = 0.0
   send_turn: bool = False
+  # Trip / enter (partner: szTBTMainText=NEXT_ROAD, nGoPos*, szGoalName)
+  enter_road: str = ""
+  go_dist_m: float = 0.0
+  go_time_s: float = 0.0
+  goal_name: str = ""
 
   @property
   def apk_green(self) -> bool:

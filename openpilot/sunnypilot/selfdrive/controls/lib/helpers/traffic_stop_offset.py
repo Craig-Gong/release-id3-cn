@@ -1,12 +1,14 @@
-"""Vision red / model-stop offset (IQ-link OFF / no nav red).
+"""Vision red / model-stop offset (IQ-link OFF / no live nav light).
 
 TrafficStopOffset (meters, 0..10 in 0.5 steps, default 3): when the model
 wants to stop and there is no real lead short of that point, brake toward a
 point this far short of a *filtered* model.position.x[-1] and hold there.
 Larger = stop sooner (before the line). 0 disables.
 
-IQ-link nav red does **not** use this slider — see NAV_STOP_MARGIN_M in
-nav/protocol.py. Lead follow gap is LeadStopDistance / stopped-lead helpers.
+IQ-link nav red uses the same slider via traffic_stop_margin_m() in
+nav/protocol.py (floored at 3 m, capped at 6 m so vision-only 8–10 m does
+not make head-car nav absurdly early). Lead follow gap is LeadStopDistance /
+stopped-lead helpers.
 
 Carrot-inspired (without TrafficState / fake ACC obstacles):
   - rate-limit xStop so the stop point cannot jump nearer faster than ego closes

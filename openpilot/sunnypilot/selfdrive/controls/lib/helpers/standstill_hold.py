@@ -4,7 +4,8 @@ Vision-only: ~1 s dwell after the model stops asking to stop.
 IQ-link: remainS==1 is immediate after a short flicker filter if
 GreenFollowLeadGate agrees; APK green dwells ~1 s, then the same lead
 gate. Sticky red keeps pinning briefly when BLE drops executable.
-After a nav go, sticky vision-stop does not re-arm until the car moves.
+After a nav go, keep `_nav_go_latched` until vEgo > ~2 m/s so vision
+short-trajectory / TrafficStopOffset cannot tap the brake on takeoff.
 """
 from __future__ import annotations
 
@@ -80,6 +81,19 @@ class StandstillHold:
   def _clear_sticky(self) -> None:
     self.sticky_red = False
     self._sticky_until = 0.0
+
+  def _launch_a(self, a_target: float, sm, v_ego: float) -> float:
+    """Positive takeoff after nav green; do not pass through a vision hitch.
+
+    Radar range floor still runs after this and can brake a close bumper.
+    """
+    a_out = float(a_target)
+    if v_ego <= _STANDSTILL_V + 0.5:
+      return max(a_out, _GO_LAUNCH_FLOOR_A)
+    lead = read_follow_lead(sm)
+    if lead.present and lead.d_rel < STOPPED_LEAD_CREEP_M:
+      return a_out
+    return max(a_out, 0.0)
 
   def observe_nav(self, snap: NavSnapshot, now: float, *, gas: bool, v_ego: float,
                   gear=None, sm=None) -> None:
@@ -165,11 +179,13 @@ class StandstillHold:
 
     at_rest = standstill or v_ego <= _STANDSTILL_V
     if not at_rest:
-      self.hold_released = False
-      self._nav_go_latched = False
       if self.hold:
         self.hold = False
         self.hold_s = 0.0
+      if self._nav_go_latched:
+        # Drop residual e2e/vision hitch; radar floor still owns a close bumper.
+        return False, self._launch_a(a_target, follow_sm, v_ego)
+      self.hold_released = False
       return should_stop, a_target
 
     # Radar, not the nav bar: lead has left the settle gap and is really moving.
@@ -179,10 +195,7 @@ class StandstillHold:
       self.hold_s = 0.0
       self.hold_released = True
       self._nav_go_latched = True
-      a_out = float(a_target)
-      if v_ego <= _STANDSTILL_V + 0.5:
-        a_out = max(a_out, _GO_LAUNCH_FLOOR_A)
-      return False, a_out
+      return False, self._launch_a(a_target, follow_sm, v_ego)
 
     # Congestion: lead already rolling, or closing a too-large gap.
     if lead_rolling or closing_gap:
@@ -224,8 +237,9 @@ class StandstillHold:
         self.red_pin = False
         return False, max(float(a_target), _GO_LAUNCH_FLOOR_A)
 
+    # Latched after nav/APK green: ignore vision shouldStop until rolling.
     if self._nav_go_latched:
-      return should_stop, a_target
+      return False, self._launch_a(a_target, follow_sm, v_ego)
 
     arm = should_stop if self.hold_released else (should_stop or model_stop)
     if arm:

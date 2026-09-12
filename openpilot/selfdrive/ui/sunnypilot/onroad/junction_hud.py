@@ -1,8 +1,8 @@
-"""C3XL onroad traffic + lane-guide chips aligned with MAX + speed-limit edges.
+"""C3XL onroad traffic + persistent nav card aligned with MAX + speed-limit edges.
 
-Junction signal bar on top; when navigation recommends a lane / turn, a
-compact guide strip sits directly underneath (same width). eGPU status sits
-under the light bar, or under the lane-guide strip when that is showing.
+Junction signal bar on top; compact lane/nav card underneath (empty → 暂无导航推送).
+No trip footer (remain/goal) — eGPU strip needs the vertical room.
+eGPU status sits under the nav card when that is showing.
 """
 from __future__ import annotations
 
@@ -14,14 +14,18 @@ from openpilot.common.params import UnknownKeyName
 from openpilot.sunnypilot.selfdrive.ui.egpu_hud import HudEgpuView, build_hud_egpu_view
 from openpilot.selfdrive.ui.egpu_status import chestnut_usb_speed_mbps, resolve_egpu_connection
 from openpilot.selfdrive.ui.ui_state import ui_state
-from openpilot.sunnypilot.nav.hud_copy import METERS, SECONDS
+from openpilot.sunnypilot.nav.hud_copy import (
+  ARRIVE_HINT, ENTER_PREFIX, EXIT_HINT, LANE_GUIDE, METERS, NAV_EMPTY, NAV_GUIDE,
+  SECONDS, STRAIGHT_HINT, TURN_HINT,
+)
 from openpilot.sunnypilot.nav.hud_layout import (
   CAPSULE_GAP, CAPSULE_H, CAPSULE_RIGHT_PAD, CAPSULE_W,
   CONTENT_GAP, EGPU_DC_PILL_GAP, EGPU_DC_PILL_H, EGPU_DC_UNIT, EGPU_DC_VALUE, EGPU_DETAIL_SIZE,
   EGPU_HEAD_SIZE, EGPU_HUD_HEIGHT, EGPU_HUD_HEIGHT_COMPACT, EGPU_PAD, EGPU_RAIL_W,
   EGPU_RAIL_X, EGPU_TILE_GAP, EGPU_TILE_LINE_GAP, EGPU_TILE_UNIT, EGPU_TILE_VALUE,
-  HUD_CN_DETAIL, HUD_CN_STOP, LANE_BADGE_W, LANE_TEXT_SIZE,
-  SIGNAL_PAD_X, SIGNAL_W, HudBand,
+  HUD_CN_DETAIL, HUD_CN_STOP, LANE_BADGE_W, LANE_BODY_SIZE, LANE_CAP_NUM, LANE_CAP_UNIT,
+  LANE_CAPSULE_H, LANE_CAPSULE_TEXT_GAP, LANE_CAPSULE_W, LANE_ENTER_GAP, LANE_KICKER_SIZE,
+  LANE_TEXT_SIZE, SIGNAL_PAD_X, SIGNAL_W, HudBand,
   dc_pill_width, egpu_status_rect, junction_bar_rect, lane_guide_rect,
 )
 from openpilot.sunnypilot.nav.snapshot import read_snapshot
@@ -39,9 +43,11 @@ from openpilot.system.ui.widgets import Widget
 
 _BG = rl.Color(10, 12, 16, 210)
 _BG_IDLE = rl.Color(12, 14, 18, 188)
-_BG_LANE = rl.Color(14, 18, 24, 176)
+_BG_LANE = rl.Color(12, 16, 21, 214)
+_BG_LANE_EMPTY = rl.Color(11, 14, 18, 168)
 _BORDER = rl.Color(255, 255, 255, 38)
-_BORDER_LANE = rl.Color(120, 190, 220, 55)
+_BORDER_LANE = rl.Color(148, 204, 224, 72)
+_BORDER_LANE_EMPTY = rl.Color(100, 118, 136, 55)
 _HEAD = rl.Color(250, 252, 255, 250)
 _DETAIL = rl.Color(168, 184, 204, 235)
 _IDLE_HEAD = rl.Color(198, 208, 220, 230)
@@ -53,10 +59,12 @@ _CAPSULE_EDGE = rl.Color(255, 255, 255, 36)
 _CAPSULE_NUM = rl.Color(250, 252, 255, 250)
 _CAPSULE_UNIT = rl.Color(148, 164, 184, 230)
 _LANE_ACCENT = rl.Color(88, 198, 220, 255)
-_LANE_BADGE_BG = rl.Color(18, 28, 36, 220)
-_LANE_BADGE_RIM = rl.Color(88, 198, 220, 70)
-_LANE_TEXT = rl.Color(230, 244, 250, 245)
-_LANE_SUB = rl.Color(140, 178, 196, 210)
+_LANE_BADGE_BG = rl.Color(15, 22, 30, 240)
+_LANE_BADGE_RIM = rl.Color(88, 198, 220, 95)
+_LANE_TEXT = rl.Color(248, 251, 255, 250)
+_LANE_KICK = rl.Color(156, 180, 200, 235)
+_LANE_ENTER = rl.Color(248, 251, 255, 255)
+_LANE_EMPTY_TEXT = rl.Color(158, 174, 192, 230)
 _BG_EGPU = rl.Color(10, 14, 18, 214)
 _BORDER_EGPU = rl.Color(255, 255, 255, 32)
 _EGPU_TEXT = rl.Color(250, 252, 255, 250)
@@ -99,7 +107,7 @@ class JunctionHudRenderer(Widget):
   def __init__(self):
     super().__init__()
     self._view = JunctionView(False, "none", "", "", True, False)
-    self._lane = LaneGuideView(False, "", "none")
+    self._lane = LaneGuideView(False, "", "none", True)
     self._egpu = HudEgpuView()
     self._flash = GreenFlashState()
     try:
@@ -122,7 +130,7 @@ class JunctionHudRenderer(Widget):
     started = bool(ui_state.started)
     if ui_state.sm.recv_frame["carState"] < ui_state.started_frame:
       self._view = JunctionView(False, "none", "", "", True, False)
-      self._lane = LaneGuideView(False, "", "none")
+      self._lane = LaneGuideView(False, "", "none", True)
       self._egpu = self._build_egpu_view(started=started)
       return
     snap = read_snapshot()
@@ -155,7 +163,7 @@ class JunctionHudRenderer(Widget):
       snap=snap,
       green_flash=flashing,
     )
-    self._lane = build_lane_guide_view(engaged=True, snap=snap)
+    self._lane = build_lane_guide_view(onroad=started, snap=snap)
     self._egpu = self._build_egpu_view(started=started)
 
   def _ecoflow_enabled(self) -> bool:
@@ -257,51 +265,115 @@ class JunctionHudRenderer(Widget):
       self._draw_egpu(rl.Rectangle(egpu_band.x, egpu_band.y, egpu_band.w, egpu_band.h), self._egpu)
 
   def _draw_lane_guide(self, bar: rl.Rectangle, lane: LaneGuideView) -> None:
-    rl.draw_rectangle_rounded(bar, 0.28, 12, _BG_LANE)
-    rl.draw_rectangle_rounded_lines_ex(bar, 0.28, 12, 1.5, _BORDER_LANE)
+    empty = bool(lane.empty)
+    simple = empty or (not lane.enter and not lane.capsule)
+    bg = _BG_LANE_EMPTY if simple else _BG_LANE
+    border = _BORDER_LANE_EMPTY if simple else _BORDER_LANE
+    rl.draw_rectangle_rounded(bar, 0.12, 14, bg)
+    rl.draw_rectangle_rounded_lines_ex(bar, 0.12, 14, 1.8, border)
 
-    # Same left rail as junction bar
-    wash = rl.Rectangle(bar.x + 6, bar.y + 10, 3, bar.height - 20)
-    rl.draw_rectangle_rounded(wash, 0.9, 4, _LANE_ACCENT)
+    accent = _MUTED if empty else _LANE_ACCENT
+    wash = rl.Rectangle(bar.x + 7, bar.y + 20, 3, bar.height - 40)
+    rl.draw_rectangle_rounded(wash, 0.9, 4, accent)
 
-    # Badge centered in the traffic-signal column (SIGNAL_PAD_X + SIGNAL_W)
     signal_x = bar.x + SIGNAL_PAD_X
-    cx = signal_x + SIGNAL_W / 2
-    cy = bar.y + bar.height / 2
-    rl.draw_circle_v(rl.Vector2(cx, cy), LANE_BADGE_W / 2, _LANE_BADGE_BG)
-    rl.draw_ring(rl.Vector2(cx, cy), LANE_BADGE_W / 2 - 1.2, LANE_BADGE_W / 2, 0, 360, 36, _LANE_BADGE_RIM)
-    self._draw_lane_arrow(cx, cy, lane.kind)
+    label_map = {
+      "left": LANE_GUIDE, "right": LANE_GUIDE,
+      "turn_left": TURN_HINT, "turn_right": TURN_HINT,
+      "straight": STRAIGHT_HINT, "exit": EXIT_HINT, "arrive": ARRIVE_HINT,
+    }
+    label = NAV_GUIDE if empty else label_map.get(lane.kind, NAV_GUIDE)
+    body = lane.text or NAV_EMPTY
+    body_fill = _LANE_EMPTY_TEXT if empty else _LANE_TEXT
+    kick_fill = _MUTED if empty else _LANE_KICK
 
-    label = "车道引导" if lane.kind in ("left", "right") else "转向提示"
-    # Stack like 绿灯 / 可通行: kicker 34, recommendation matches 红灯 (~52).
-    head_size = LANE_TEXT_SIZE
-    det_size = HUD_CN_DETAIL
     text_left = signal_x + SIGNAL_W + CONTENT_GAP
     text_right = bar.x + bar.width - CAPSULE_RIGHT_PAD
+    if lane.capsule and not empty:
+      text_right = bar.x + bar.width - CAPSULE_RIGHT_PAD - LANE_CAPSULE_W - LANE_CAPSULE_TEXT_GAP
     avail = max(48.0, text_right - text_left)
-    lab_sz = measure_text_cached(self._font_detail, label, det_size)
-    txt_sz = measure_text_cached(self._font_head, lane.text, head_size)
-    while (lab_sz.x > avail or txt_sz.x > avail) and head_size > 36:
-      head_size -= 1
-      det_size = max(28, det_size - 1)
-      lab_sz = measure_text_cached(self._font_detail, label, det_size)
-      txt_sz = measure_text_cached(self._font_head, lane.text, head_size)
+
+    kick_size = float(LANE_KICKER_SIZE)
+    body_size = 46.0 if simple else float(LANE_TEXT_SIZE)
+    lab_sz = measure_text_cached(self._font_detail, label, kick_size)
+    txt_sz = measure_text_cached(self._font_head, body, body_size)
+    while txt_sz.x > avail and body_size > 34:
+      body_size -= 1
+      txt_sz = measure_text_cached(self._font_head, body, body_size)
+
     gap = 6.0
     block = lab_sz.y + gap + txt_sz.y
-    ty = bar.y + (bar.height - block) / 2
+    enter_s = ""
+    enter_h = 0.0
+    enter_gap = 0.0
+    body_font_sz = float(LANE_BODY_SIZE)
+    if lane.enter and not empty:
+      enter_s = lane.enter if lane.enter.startswith("进入") else f"{ENTER_PREFIX}{lane.enter}"
+      enter_sz = measure_text_cached(self._font_detail, enter_s, body_font_sz)
+      full_w = bar.width - 56
+      while enter_sz.x > full_w and len(enter_s) > 4:
+        enter_s = enter_s[:-2] + "…"
+        enter_sz = measure_text_cached(self._font_detail, enter_s, body_font_sz)
+      enter_h = enter_sz.y
+      enter_gap = float(LANE_ENTER_GAP)
+
+    stack_h = block + enter_gap + enter_h
+    ty = bar.y + (bar.height - stack_h) / 2
+
+    # kicker + body
+    rl.draw_text_ex(self._font_detail, label, rl.Vector2(text_left, ty), kick_size, 0, kick_fill)
+    body_y = ty + lab_sz.y + gap
+    rl.draw_text_ex(self._font_head, body, rl.Vector2(text_left, body_y), body_size, 0, body_fill)
+    body_mid = body_y + txt_sz.y / 2
+
+    # badge aligned to body mid
+    cx = signal_x + SIGNAL_W / 2
+    cy = body_mid
+    rl.draw_circle_v(rl.Vector2(cx, cy), LANE_BADGE_W / 2 + 3.5, rl.Color(accent.r, accent.g, accent.b, 26))
+    rl.draw_circle_v(rl.Vector2(cx, cy), LANE_BADGE_W / 2, _LANE_BADGE_BG)
+    rl.draw_ring(rl.Vector2(cx, cy), LANE_BADGE_W / 2 - 1.2, LANE_BADGE_W / 2, 0, 360, 36, _LANE_BADGE_RIM)
+    if empty:
+      rl.draw_line_ex(rl.Vector2(cx - 9, cy), rl.Vector2(cx + 9, cy), 3.0, accent)
+    else:
+      self._draw_lane_arrow(cx, cy, lane.kind)
+
+    if lane.capsule and not empty:
+      self._draw_lane_capsule(bar, lane.capsule, body_mid)
+
+    if enter_s:
+      enter_y = body_y + txt_sz.y + enter_gap
+      full_left = bar.x + 28
+      mid = enter_y + enter_h / 2
+      pip = rl.Rectangle(full_left - 12, mid - 1.5, 8, 3)
+      rl.draw_rectangle_rounded(pip, 0.9, 4, _LANE_ACCENT)
+      rl.draw_text_ex(
+        self._font_detail, enter_s, rl.Vector2(full_left, enter_y), body_font_sz, 0, _LANE_ENTER,
+      )
+
+  def _draw_lane_capsule(self, bar: rl.Rectangle, capsule: tuple[str, str], mid_y: float) -> None:
+    num, unit = capsule
+    cw, ch = float(LANE_CAPSULE_W), float(LANE_CAPSULE_H)
+    x = bar.x + bar.width - CAPSULE_RIGHT_PAD - cw
+    y = mid_y - ch / 2
+    box = rl.Rectangle(x, y, cw, ch)
+    rl.draw_rectangle_rounded(box, 0.42, 10, _CAPSULE_BG)
+    rl.draw_rectangle_rounded_lines_ex(box, 0.42, 10, 1.4, _CAPSULE_EDGE)
+    pip = rl.Rectangle(x + 9, y + 12, 4, ch - 24)
+    rl.draw_rectangle_rounded(pip, 0.9, 4, _LANE_ACCENT)
+
+    num_sz = measure_text_cached(self._font_head, num, LANE_CAP_NUM)
+    unit_sz = measure_text_cached(self._font_detail, unit, LANE_CAP_UNIT)
+    content_w = num_sz.x + 7 + unit_sz.x
+    tx = x + 18 + (cw - 28 - content_w) / 2
+    rl.draw_text_ex(self._font_head, num, rl.Vector2(tx, mid_y - num_sz.y / 2), LANE_CAP_NUM, 0, _CAPSULE_NUM)
     rl.draw_text_ex(
-      self._font_detail, label,
-      rl.Vector2(text_left, ty),
-      det_size, 0, _DETAIL,
-    )
-    rl.draw_text_ex(
-      self._font_head, lane.text,
-      rl.Vector2(text_left, ty + lab_sz.y + gap),
-      head_size, 0, _LANE_TEXT,
+      self._font_detail, unit,
+      rl.Vector2(tx + num_sz.x + 7, mid_y - unit_sz.y / 2 + 1),
+      LANE_CAP_UNIT, 0, _CAPSULE_UNIT,
     )
 
   def _draw_lane_arrow(self, cx: float, cy: float, kind: str) -> None:
-    """Thin stroke-style chevron / turn — keeps the badge light."""
+    """Thin stroke chevron / turn / straight — matches mockup."""
     c = _LANE_ACCENT
     thick = 3.0
     scale = LANE_BADGE_W / 40.0
@@ -313,7 +385,21 @@ class JunctionHudRenderer(Widget):
       rl.draw_line_ex(tip, rl.Vector2(cx + s * 1.8 * scale, cy - 9.0 * scale), thick, c)
       rl.draw_line_ex(tip, rl.Vector2(cx + s * 1.8 * scale, cy + 9.0 * scale), thick, c)
       return
-    # Turn: classic ↰ / ↱ — stem rises from bottom, tip high
+    if kind in ("straight", "exit", "arrive"):
+      rl.draw_line_ex(
+        rl.Vector2(cx, cy + 11.0 * scale), rl.Vector2(cx, cy - 6.0 * scale), thick, c,
+      )
+      tip = rl.Vector2(cx, cy - 11.5 * scale)
+      rl.draw_triangle(
+        tip,
+        rl.Vector2(cx - 7.5 * scale, cy - 2.5 * scale),
+        rl.Vector2(cx + 7.5 * scale, cy - 2.5 * scale),
+        c,
+      )
+      return
+    if kind not in ("turn_left", "turn_right"):
+      rl.draw_line_ex(rl.Vector2(cx - 9, cy), rl.Vector2(cx + 9, cy), thick, c)
+      return
     s = 1.0 if kind == "turn_right" else -1.0
     stem_x = cx - s * 4.5 * scale
     arm_y = cy - 9.5 * scale

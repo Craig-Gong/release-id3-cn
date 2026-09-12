@@ -73,3 +73,40 @@ def test_remain_go_needs_confirm_then_floors_accel():
 
 def test_apk_green_dwell_is_one_second():
   assert _STANDSTILL_HOLD_RELEASE_S == 1.0
+
+
+def test_nav_go_latch_blocks_vision_hitch_while_creeping():
+  """Green release then model shouldStop must not tap the brake under ~2 m/s."""
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers import standstill_hold as mod
+
+  h = StandstillHold()
+  green = _snap(
+    ts=30.0, traffic_light="green", remain_s=0.0, remain_go=False,
+    stop_for_light=False, dist_m=20.0,
+  )
+  orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
+  mod.read_snapshot = lambda: green
+  mod.snapshot_executable = lambda snap, now=None: True
+  try:
+    h._nav_go_latched = True
+    h.hold_released = True
+    h.red_pin = False
+    # Still stopped: floor launch, ignore vision should_stop / negative a.
+    stop, a = h.apply(True, -1.5, 0.0, standstill=True, gas=False, model_stop=True,
+                      sm={}, now=30.0)
+    assert stop is False
+    assert a >= _GO_LAUNCH_FLOOR_A
+    assert h._nav_go_latched is True
+    # Creeping past standstill threshold — old code cleared the latch here.
+    stop, a = h.apply(True, -1.8, 0.6, standstill=False, gas=False, model_stop=True,
+                      sm={}, now=30.1)
+    assert stop is False
+    assert a >= 0.0
+    assert h._nav_go_latched is True
+    # Rolling out clears via reset at _RELEASE_V_EGO.
+    stop, a = h.apply(False, 0.4, 2.5, standstill=False, gas=False, model_stop=False,
+                      sm={}, now=30.2)
+    assert h._nav_go_latched is False
+  finally:
+    mod.read_snapshot = orig_read
+    mod.snapshot_executable = orig_exec

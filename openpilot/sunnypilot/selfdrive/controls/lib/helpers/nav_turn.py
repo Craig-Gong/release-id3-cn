@@ -1,7 +1,7 @@
 """IQ-link intersection turn gates (shm snapshot). No auto blinker / NavExit ALC.
 
 Toast / send_turn / nav-led prep: ≤150 m.
-Lateral turn desire (no stalk) + turn-in 20 cap: ≤80 m and vEgo < 45 km/h,
+Lateral turn desire (no stalk) + turn-in 20 cap: ≤120 m and vEgo < 45 km/h,
 or same-side blinker confirms farther/faster. Same-side BSM blocks.
 Product: steer the turn without auto EA_02; driver may still stalk for indicators.
 """
@@ -14,6 +14,11 @@ from openpilot.sunnypilot.nav.snapshot import NavSnapshot, snapshot_executable
 TURN_TRIGGER_MPS = 45.0 * CV.KPH_TO_MS
 # Desire + turn-in near the corner (modeld only pulses on rising edge).
 NAV_NEAR_TURN_M = NAV_LATERAL_TURN_M
+# Inside this, desire_helper keep-pulses faster so the rising edge hits the corner.
+NAV_CORNER_PULSE_M = 50.0
+NAV_CORNER_PULSE_S = 0.40
+NAV_APPROACH_PULSE_S = 0.70
+NAV_DEFAULT_PULSE_S = 1.0
 
 
 def _dir(value) -> str:
@@ -53,6 +58,16 @@ def eval_nav_turn_desire(
   if blinker_ok or (near_exec and slow_enough):
     return d
   return "none"
+
+
+def nav_turn_keep_pulse_s(turn_dist_m: float) -> float:
+  """Faster rising-edge pulses as the corner approaches (modeld edge-triggers)."""
+  d = float(turn_dist_m or 0.0)
+  if 0.0 < d <= NAV_CORNER_PULSE_M:
+    return NAV_CORNER_PULSE_S
+  if 0.0 < d <= NAV_NEAR_TURN_M:
+    return NAV_APPROACH_PULSE_S
+  return NAV_DEFAULT_PULSE_S
 
 
 def nav_led_approach(snap: NavSnapshot, *, now: float | None = None) -> bool:

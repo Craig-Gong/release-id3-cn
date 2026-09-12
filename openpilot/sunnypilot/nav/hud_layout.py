@@ -32,9 +32,19 @@ HUD_CN_HEAD = 52
 HUD_CN_STOP = 44  # 前方停车 / short headline with side detail
 HUD_CN_DETAIL = 34
 LANE_GUIDE_GAP = 10
-LANE_GUIDE_HEIGHT = 120
+# Persistent nav card: hero (+ optional 进入). No trip footer — leave room for eGPU.
+LANE_GUIDE_HEIGHT = 176
+LANE_PRIMARY_H = 176
 LANE_BADGE_W = 52  # fill the SIGNAL_W column
-LANE_TEXT_SIZE = HUD_CN_HEAD
+LANE_TEXT_SIZE = 44
+LANE_KICKER_SIZE = 36  # was 24; ~1.5× for 到达提示 / 直行提示 etc.
+LANE_BODY_SIZE = 36  # 进入 · (was 32)
+LANE_CAPSULE_W = 136
+LANE_CAPSULE_H = 54
+LANE_CAP_NUM = 36  # was 32
+LANE_CAP_UNIT = 26  # was 22
+LANE_CAPSULE_TEXT_GAP = 20
+LANE_ENTER_GAP = 28  # 前方×× ↔ 进入 ·
 # eGPU strip: title + 12V chip match 前方停车 (44), not the taller 红灯 size.
 EGPU_HUD_GAP = 10
 EGPU_HUD_HEIGHT = 372
