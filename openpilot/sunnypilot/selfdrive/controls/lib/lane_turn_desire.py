@@ -44,10 +44,12 @@ class LaneTurnController:
     self.param_read_counter += 1
 
   def update_lane_turn(self, blindspot_left: bool, blindspot_right: bool, left_blinker: bool, right_blinker: bool,
-                       v_ego: float, path_x=None, path_y=None, steering_angle_deg: float = 0.0) -> None:
+                       v_ego: float, path_x=None, path_y=None, steering_angle_deg: float = 0.0,
+                       force_turn: bool = False) -> None:
     # Turn vs lane-change split is fixed at 45 km/h (same as DesireHelper). Do not let LaneTurnValue open a 40–45 gap.
     # Below 45 + blinker is a turn unless the path is clearly straight (lane change).
     # Ambiguous / missing path stays a turn so intersections are not late.
+    # force_turn: IQ-link send_turn matches stalk — do not demote to LC while path still looks straight.
     below_turn_speed = v_ego < LANE_CHANGE_SPEED_MIN
     left = bool(left_blinker) and not bool(right_blinker) and below_turn_speed and not blindspot_left
     right = bool(right_blinker) and not bool(left_blinker) and below_turn_speed and not blindspot_right
@@ -55,10 +57,11 @@ class LaneTurnController:
       self.turn_direction = TurnDirection.none
       return
 
-    lat_m = _path_lateral_m(path_x, path_y)
-    if lat_m is not None and _path_straight(lat_m) and not _steer_into_blinker(float(steering_angle_deg), left, right):
-      self.turn_direction = TurnDirection.none
-      return
+    if not force_turn:
+      lat_m = _path_lateral_m(path_x, path_y)
+      if lat_m is not None and _path_straight(lat_m) and not _steer_into_blinker(float(steering_angle_deg), left, right):
+        self.turn_direction = TurnDirection.none
+        return
 
     if left:
       self.turn_direction = TurnDirection.turnLeft

@@ -104,6 +104,16 @@ class TestLaneTurnDesire(OpenpilotTestCase):
     controller.update_lane_turn(False, False, True, False, 10.0, path_x=xs, path_y=ys, steering_angle_deg=25.0)
     assert controller.get_turn_direction() == TurnDirection.turnLeft
 
+  def test_force_turn_skips_straight_path_demotion(self):
+    dh = DesireHelper()
+    controller = LaneTurnController(dh)
+    controller.enabled = True
+    xs, ys = _path(0.0)
+    controller.update_lane_turn(
+      False, False, True, False, 10.0, path_x=xs, path_y=ys, steering_angle_deg=0.0, force_turn=True,
+    )
+    assert controller.get_turn_direction() == TurnDirection.turnLeft
+
 
 def _path(y_far=0.0, n=33, xs_max=60.0):
   xs = [i * (xs_max / (n - 1)) for i in range(n)]

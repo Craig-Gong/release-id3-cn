@@ -302,8 +302,9 @@ def lane_hint(snap: NavSnapshot) -> str:
     return ARRIVE_SOON
   if rec == "straight":
     return STRAIGHT_LANE if float(snap.tbt_dist or 0.0) < 1.0 else STRAIGHT_AHEAD
-  # Far TBT still ahead (toast window) → show 前方直行 with distance when no turn yet.
-  if float(snap.tbt_dist or 0.0) >= 1.0 and maneuver in ("none", "fork") and not snap.send_turn:
-    if (snap.maneuver_dir or "none") == "none" and rec in ("none", "straight"):
+  # Still driving straight toward a far TBT (turn/lc not yet in the ≤150 m
+  # send_turn window). Show 前方直行 + distance instead of an empty card.
+  if float(snap.tbt_dist or 0.0) >= 1.0 and not snap.send_turn:
+    if maneuver in ("none", "fork", "turn", "roundabout") or rec in ("none", "straight"):
       return STRAIGHT_AHEAD
   return ""

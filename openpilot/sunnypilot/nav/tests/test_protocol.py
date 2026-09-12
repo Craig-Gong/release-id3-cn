@@ -56,3 +56,20 @@ def test_arrive_drops_send_turn():
 
 def test_keepalive_without_limit_is_none():
   assert _parse({"trafficLight": "red"}) is None
+
+
+def test_far_turn_hud_is_straight_ahead():
+  from openpilot.sunnypilot.nav.hud_copy import STRAIGHT_AHEAD, TURN_LEFT
+  from openpilot.sunnypilot.nav.protocol import lane_hint
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_lane_guide_view
+
+  far = _parse({"nRoadLimitSpeed": 60, "nTBTTurnType": 1, "nTBTDist": 400})
+  assert far is not None and far.send_turn is False
+  assert lane_hint(far) == STRAIGHT_AHEAD
+  view = build_lane_guide_view(onroad=True, snap=far)
+  assert view.kind == "straight" and view.empty is False
+  assert view.capsule is not None
+
+  near = _parse({"nRoadLimitSpeed": 60, "nTBTTurnType": 1, "nTBTDist": 80})
+  assert near is not None and near.send_turn is True
+  assert lane_hint(near) == TURN_LEFT

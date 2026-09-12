@@ -45,6 +45,24 @@ def test_nav_turn_keep_pulse_speeds_up_near_corner():
   assert nav_turn_keep_pulse_s(200.0) == NAV_DEFAULT_PULSE_S
 
 
+def test_nav_turn_commit_hold_near_corner():
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import nav_turn_commit_hold
+  assert nav_turn_commit_hold(turn_dist_m=30.0, committed=False) is True
+  assert nav_turn_commit_hold(turn_dist_m=50.0, committed=False) is True
+  assert nav_turn_commit_hold(turn_dist_m=80.0, committed=False) is False
+  assert nav_turn_commit_hold(turn_dist_m=80.0, committed=True) is True
+  assert nav_turn_commit_hold(turn_dist_m=0.0, committed=False) is False
+
+
+def test_nav_blinker_matches_turn():
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import nav_blinker_matches_turn
+  snap = NavSnapshot(send_turn=True, maneuver="turn", maneuver_dir="left", tbt_dist=100.0)
+  assert nav_blinker_matches_turn(snap, left_blinker=True, right_blinker=False) is True
+  assert nav_blinker_matches_turn(snap, left_blinker=False, right_blinker=True) is False
+  snap2 = NavSnapshot(send_turn=False, maneuver="fork", maneuver_dir="left", tbt_dist=80.0)
+  assert nav_blinker_matches_turn(snap2, left_blinker=True, right_blinker=False) is False
+
+
 def test_nav_turn_blinker_confirms_when_fast():
   assert eval_nav_turn_desire(direction="left", turn_dist_m=120.0, **_cs(55.0, left=True)) == "left"
 
