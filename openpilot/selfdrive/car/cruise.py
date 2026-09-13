@@ -60,8 +60,10 @@ class VCruiseHelper(VCruiseHelperSP):
       if not self.CP.pcmCruise or (not self.CP_SP.pcmCruiseSpeed and _enabled):
         # if stock cruise is completely disabled, then we can use our own set speed logic
         self._update_v_cruise_non_pcm(CS, _enabled, is_metric)
-        self._sync_v_cruise_from_gas(CS, _enabled)
+        # Nav/SLA first, then gas-sync so a held accel can raise MAX above the
+        # posted IQ-link limit in the same frame (and stick afterward).
         self.update_speed_limit_assist_v_cruise_non_pcm()
+        self._sync_v_cruise_from_gas(CS, _enabled)
         self.v_cruise_cluster_kph = self.v_cruise_kph
       else:
         self.v_cruise_kph = CS.cruiseState.speed * CV.MS_TO_KPH

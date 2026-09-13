@@ -68,7 +68,7 @@ class VCruiseHelperSP:
     self.prev_speed_limit_final_last_kph = 0.
     self.req_plus = False
     self.req_minus = False
-    # IQ-link nav road limit → MAX (only on change so gas-sync above limit can stick)
+    # IQ-link nav road limit → MAX (gas sync above limit sticks until limit drops)
     self.prev_iqlink_road_limit_kph = -1.0
     self._iqlink_max_t = 0.0
 
@@ -161,31 +161,43 @@ class VCruiseHelperSP:
 
     - Limit drop → set MAX immediately (safety).
     - Limit raise / MAX below limit → slew ~8 km/h/s (human-like catch-up).
-    - MAX above limit (gas sync) → leave until the next limit change.
+    - MAX above limit (gas sync) → leave; do not yank back on limit raise or
+      brief executable gaps (those used to snap MAX then car slowly re-settles).
     - Unset (first engage) → snap to limit.
     """
     limit_kph = self._iqlink_nav_limit_kph()
     if limit_kph is None:
-      self.prev_iqlink_road_limit_kph = -1.0
       self._iqlink_max_t = 0.0
+      try:
+        iqlink_on = bool(self.params.get_bool("IqlinkEnabled"))
+      except UnknownKeyName:
+        iqlink_on = False
+      if not iqlink_on:
+        self.prev_iqlink_road_limit_kph = -1.0
+        return False
+      # Link still enabled but snapshot not executable: keep owning MAX so SLA
+      # cannot pull a gas-raised set speed back to the posted limit.
+      if self.prev_iqlink_road_limit_kph >= 20.0:
+        return True
       return False
 
     now = time.monotonic()
     dt = 0.05 if self._iqlink_max_t <= 0.0 else min(0.2, max(0.0, now - self._iqlink_max_t))
     self._iqlink_max_t = now
 
-    limit_changed = limit_kph != self.prev_iqlink_road_limit_kph
+    prev = self.prev_iqlink_road_limit_kph
+    limit_changed = limit_kph != prev
+    limit_drop = bool(limit_changed and prev >= 20.0 and limit_kph < prev)
     unset = self.v_cruise_kph >= V_CRUISE_UNSET or self.v_cruise_kph <= 0
     below_limit = (not unset) and self.v_cruise_kph < limit_kph
-    above_limit = (not unset) and self.v_cruise_kph > limit_kph
 
     if unset:
       self.v_cruise_kph = float(np.clip(limit_kph, self.v_cruise_min, V_CRUISE_MAX))
       self.prev_iqlink_road_limit_kph = limit_kph
       return True
 
-    if limit_changed and above_limit:
-      # Dropped posted limit (or gas-raised MAX above a new lower limit).
+    if limit_drop:
+      # Posted limit fell — always follow for safety (clears gas-raised MAX).
       self.v_cruise_kph = float(np.clip(limit_kph, self.v_cruise_min, V_CRUISE_MAX))
       self.prev_iqlink_road_limit_kph = limit_kph
       return True
@@ -193,7 +205,7 @@ class VCruiseHelperSP:
     if limit_changed:
       self.prev_iqlink_road_limit_kph = limit_kph
 
-    if below_limit or (limit_changed and self.v_cruise_kph < limit_kph):
+    if below_limit:
       step = NAV_MAX_RAISE_KPH_S * dt
       self.v_cruise_kph = float(np.clip(
         min(limit_kph, self.v_cruise_kph + step),
