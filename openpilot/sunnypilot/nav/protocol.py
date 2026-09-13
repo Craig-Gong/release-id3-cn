@@ -19,9 +19,15 @@ _EXIT = {6, 11}
 
 _RED_LIGHT_ACCEL = -2.0
 _RED_LIGHT_DECEL = 2.0
-# Comfort gate for forced brake: while v_ego is still under √(2·a·d), do not
-# grind average speed with −v²/(2d). Literature comfort ~1.0–1.5 m/s².
+# Required-decel tiers (a_req = v²/(2·remaining)). Avoid far grind AND late slam:
+# hold → light coast → track −a_req → hard floor. Comfort √ used by helpers/tests.
 _NAV_RED_COMFORT_DECEL = 1.5
+_NAV_RED_HOLD_REQ = 0.55    # a_req below → no forced brake (keep traffic pace)
+_NAV_RED_COAST_REQ = 1.20   # a_req below → chauffeur step-1 coast (~60 km/h @ 120 m)
+_NAV_RED_COAST_A = -0.50
+_NAV_RED_MAIN_REQ = 1.60    # a_req below → main brake tracks −a_req
+_NAV_RED_JERK = 0.85        # m/s³ slew on a_cap (no single-frame 0→−1.5)
+_NAV_RED_DT = 0.05
 # Floor when TrafficStopOffset is 0 / unset. Live slider applies to IQ-link red
 # (amap light distance ≠ stop line). Cap at 6 m so a vision-only 8–10 m CD210
 # setting does not make head-car nav stops absurdly early.
@@ -44,6 +50,8 @@ _NAV_RED_HARD_A = -3.5
 _NAV_RED_HOLD_A = -1.5
 # Final meters before the intended stop: force shouldStop even if still rolling.
 _NAV_RED_NEAR_M = 3.5
+# Bumper gap when fusing mmWave dRel into the nav stop point.
+_NAV_RED_LEAD_STOP_GAP_M = 3.5
 
 
 def _f(data: dict[str, Any], key: str, default: float = 0.0) -> float:
@@ -119,59 +127,109 @@ def nav_stop_margin_m(offset_m: float | None = None) -> float:
   return min(max(o, NAV_STOP_MARGIN_M), NAV_STOP_MARGIN_MAX_M)
 
 
-def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float) -> float:
+def nav_red_remaining_m(light_dist: float, margin: float,
+                        lead_d_rel: float | None = None,
+                        stop_gap: float = _NAV_RED_LEAD_STOP_GAP_M) -> float:
+  """Meters left to the intended stop (light − margin, optionally fused with radar).
+
+  When a mmWave track sits between ego and the light, use min(light, bumper−gap)
+  so we do not plan past a stopped queue as if the light were the only stop.
+  """
+  light_rem = float(light_dist or 0.0) - float(margin)
+  if lead_d_rel is None:
+    return light_rem
+  d = float(lead_d_rel)
+  if d <= 0.5:
+    return light_rem
+  light_d = float(light_dist or 0.0)
+  # Lead at/behind the light point → do not treat bumper as earlier stop.
+  if light_d > 1.0 and d >= (light_d - 1.0):
+    return light_rem
+  lead_rem = d - float(stop_gap)
+  if light_rem <= 0.0:
+    return lead_rem
+  return min(light_rem, lead_rem)
+
+
+def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float,
+                     remaining_m: float | None = None) -> float:
   """Target speed ceiling for a nav red (√(2·2·d) envelope, capped by road).
 
   Far away this stays above urban cruise so min() does not grind speed; closer
   it drops along a constant-decel curve. Forced brake uses nav_red_accel_cap.
   """
-  d = float(light_dist or 0.0)
-  m = float(margin)
-  if d <= 0.0 or d <= m:
+  rem = float(remaining_m) if remaining_m is not None else (
+    float(light_dist or 0.0) - float(margin)
+  )
+  if rem <= 0.0:
     return 0.0
-  v = approach_speed_ms(d - m, _RED_LIGHT_DECEL, cap_ms=road_ms)
+  v = approach_speed_ms(rem, _RED_LIGHT_DECEL, cap_ms=road_ms)
   return 0.0 if v <= 0.05 else v
 
 
-def nav_red_comfort_speed_ms(light_dist: float, margin: float) -> float:
-  """Max speed that can still stop with comfort decel at (light − margin)."""
-  remaining = float(light_dist or 0.0) - float(margin)
+def nav_red_comfort_speed_ms(light_dist: float, margin: float,
+                             remaining_m: float | None = None) -> float:
+  """Max speed that can still stop with comfort decel at remaining."""
+  remaining = float(remaining_m) if remaining_m is not None else (
+    float(light_dist or 0.0) - float(margin)
+  )
   if remaining <= 0.0:
     return 0.0
   return math.sqrt(2.0 * _NAV_RED_COMFORT_DECEL * remaining)
 
 
-def nav_red_accel_cap(v_ego: float, light_dist: float, margin: float,
+def nav_red_accel_raw(v_ego: float, remaining: float,
                       accel_target: float = _RED_LIGHT_ACCEL) -> float:
-  """Accel ceiling toward the stop. Comfort-curve gated.
-
-  While v_ego is still under √(2·comfort·remaining), return 0 so cruise can
-  hold road speed (fixes far-light average-speed grind / cut-ins). Above the
-  curve, apply kinematic brake floored at _NAV_RED_HARD_A.
-  """
-  remaining = float(light_dist or 0.0) - float(margin)
+  """Unsmoothed a_cap from a_req tiers (hold / coast / main / hard)."""
+  rem = float(remaining)
   v = max(0.0, float(v_ego))
-  if remaining <= 0.0:
+  if rem <= 0.0:
     return min(float(accel_target), _NAV_RED_HOLD_A)
-  v_comfort = math.sqrt(2.0 * _NAV_RED_COMFORT_DECEL * remaining)
-  # Hysteresis: small slack so we do not chatter on the curve.
-  if v <= v_comfort + 0.35:
+  a_req = (v * v) / (2.0 * max(rem, 0.3))
+  if a_req <= _NAV_RED_HOLD_REQ:
     return 0.0
-  a_kin = -(v * v) / (2.0 * max(remaining, 0.3))
-  a_kin = max(a_kin, _NAV_RED_HARD_A)
-  # Once committed above the comfort curve, brake at least at comfort rate.
-  return min(a_kin, -_NAV_RED_COMFORT_DECEL)
+  if a_req <= _NAV_RED_COAST_REQ:
+    return _NAV_RED_COAST_A
+  if a_req <= _NAV_RED_MAIN_REQ:
+    # Continuous main brake: track −a_req (≈ −1.15 … −1.5 in this band).
+    return -a_req
+  a_kin = -a_req
+  return max(a_kin, _NAV_RED_HARD_A)
 
 
-def nav_red_force_stop(v_ego: float, light_dist: float, margin: float) -> bool:
+def nav_red_accel_cap(v_ego: float, light_dist: float, margin: float,
+                      accel_target: float = _RED_LIGHT_ACCEL,
+                      remaining_m: float | None = None,
+                      prev_a: float | None = None,
+                      dt: float = _NAV_RED_DT) -> float:
+  """Accel ceiling toward the stop: a_req tiers + optional jerk slew.
+
+  Hold while a_req is low (far / already slow enough). Coast ~−0.5 in the
+  mid band, then track −a_req, then hard floor. When prev_a is set, slew at
+  _NAV_RED_JERK so a_cap cannot jump 0→−1.5 in one frame.
+  """
+  remaining = float(remaining_m) if remaining_m is not None else (
+    float(light_dist or 0.0) - float(margin)
+  )
+  raw = nav_red_accel_raw(v_ego, remaining, accel_target)
+  if prev_a is None:
+    return raw
+  step = _NAV_RED_JERK * max(1e-3, float(dt))
+  lo = float(prev_a) - step
+  hi = float(prev_a) + step
+  return max(lo, min(hi, raw))
+
+
+def nav_red_force_stop(v_ego: float, light_dist: float, margin: float,
+                       remaining_m: float | None = None) -> bool:
   """True when already at/past the intended stop or in the final hold zone."""
   d = float(light_dist or 0.0)
-  remaining = d - float(margin)
+  remaining = float(remaining_m) if remaining_m is not None else (d - float(margin))
   if d <= 0.0 or remaining <= 0.0:
     return True
   if remaining <= _NAV_RED_NEAR_M:
     return True
-  return nav_red_speed_ms(d, 0.0, margin) <= 0.5 and float(v_ego) <= 1.5
+  return nav_red_speed_ms(d, 0.0, margin, remaining_m=remaining) <= 0.5 and float(v_ego) <= 1.5
 
 
 def traffic_stop_margin_m() -> float:

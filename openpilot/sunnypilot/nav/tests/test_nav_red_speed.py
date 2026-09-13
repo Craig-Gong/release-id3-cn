@@ -2,8 +2,10 @@ from openpilot.sunnypilot.nav.protocol import (
   NAV_STOP_MARGIN_M,
   NAV_STOP_MARGIN_MAX_M,
   nav_red_accel_cap,
+  nav_red_accel_raw,
   nav_red_comfort_speed_ms,
   nav_red_force_stop,
+  nav_red_remaining_m,
   nav_red_speed_ms,
   nav_stop_margin_m,
 )
@@ -31,31 +33,68 @@ def test_far_light_has_approach_speed():
   assert v > 10.0  # √(2*2*77) ≈ 17.5
 
 
-def test_far_urban_cruise_does_not_force_brake():
-  """60 km/h @ 150 m red: comfort curve still above ego → a_cap = 0 (no grind)."""
+def test_far_urban_cruise_coasts_or_holds():
+  """60 km/h @ 150 m: hold or light coast — no −1.5+ grind / cut-in bait."""
   v_ego = 60.0 / 3.6  # ≈ 16.67
   light_d = 150.0
   margin = 3.0
   remaining = light_d - margin
   v_comfort = nav_red_comfort_speed_ms(light_d, margin)
   assert v_comfort > v_ego
-  assert abs(v_comfort - (2.0 * 1.5 * remaining) ** 0.5) < 1e-6
-  assert nav_red_accel_cap(v_ego, light_d, margin) == 0.0
-  # Speed ceiling also still above cruise so min() would not pull MAX down.
+  a = nav_red_accel_cap(v_ego, light_d, margin)
+  assert a >= -0.55  # hold 0 or coast −0.5
+  assert a <= 0.0
+  # Speed ceiling still above cruise so min() would not pull MAX down.
   assert nav_red_speed_ms(light_d, v_ego, margin) >= v_ego - 1e-6
+  # ~120 m remaining at 60 km/h → coast (a_req ≈ 1.16).
+  assert nav_red_accel_raw(v_ego, 120.0) == -0.50
+  # ~100 m → main tracks −a_req (≈ −1.39).
+  a100 = nav_red_accel_raw(v_ego, 100.0)
+  assert -1.50 <= a100 <= -1.10
 
 
-def test_kinematic_brake_when_above_comfort_curve():
-  # remaining=50 → comfort √(2*1.5*50) ≈ 12.25; ego 14.1 must brake.
-  a_on = nav_red_accel_cap(14.1, 54.5, 4.5)
+def test_main_and_hard_tiers():
+  # remaining=50, v=14.1 → a_req ≈ 2.0 → hard / main floor.
+  a_on = nav_red_accel_raw(14.1, 50.0)
   assert a_on <= -1.5
   assert -3.6 <= a_on <= -1.4
-  # Clearly above: harder.
-  assert nav_red_accel_cap(18.0, 54.5, 4.5) < -2.5
-  # Far + already slow: still under comfort → no forced brake.
-  assert nav_red_accel_cap(5.0, 100.0, 4.5) == 0.0
+  # Clearly urgent.
+  assert nav_red_accel_raw(18.0, 50.0) < -2.5
+  # Far + already slow: hold.
+  assert nav_red_accel_raw(5.0, 95.5) == 0.0
   # Past the stop point: hold brake.
   assert nav_red_accel_cap(1.0, 3.0, 4.5) <= -1.5
+
+
+def test_jerk_slew_avoids_single_frame_kick():
+  """Crossing into main/hard must not jump 0 → −1.5 in one 50 ms frame."""
+  v = 16.67
+  # Far hold/coast.
+  a0 = nav_red_accel_cap(v, 160.0, 3.0, prev_a=None)
+  assert a0 >= -0.55
+  # Suddenly much closer raw would be hard, but slew caps the step.
+  raw_close = nav_red_accel_raw(v, 40.0)
+  assert raw_close < -1.5
+  a1 = nav_red_accel_cap(v, 43.0, 3.0, prev_a=a0, dt=0.05)
+  # Max step ≈ 0.85 * 0.05 ≈ 0.0425 — stay near previous.
+  assert abs(a1 - a0) <= 0.05 + 1e-6
+  # After enough frames, approach raw.
+  a = a1
+  for _ in range(80):
+    a = nav_red_accel_cap(v, 43.0, 3.0, prev_a=a, dt=0.05)
+  assert a <= -1.4
+  assert abs(a - raw_close) < 0.15
+
+
+def test_remaining_fuses_radar_bumper():
+  # Lead short of light → stop at bumper − gap.
+  rem = nav_red_remaining_m(100.0, 3.0, lead_d_rel=40.0, stop_gap=3.5)
+  assert abs(rem - (40.0 - 3.5)) < 1e-6
+  # Lead at/behind light → keep light remaining.
+  rem2 = nav_red_remaining_m(50.0, 3.0, lead_d_rel=49.5, stop_gap=3.5)
+  assert abs(rem2 - 47.0) < 1e-6
+  # No lead.
+  assert abs(nav_red_remaining_m(80.0, 4.0) - 76.0) < 1e-6
 
 
 def test_force_stop_in_final_meters():

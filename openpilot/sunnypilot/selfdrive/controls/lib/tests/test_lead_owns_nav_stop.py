@@ -36,6 +36,13 @@ def test_head_car_far_red_does_not_own():
   assert lead_owns_nav_stop(_sm(present=False), snap) is False
 
 
+def test_mid_range_lead_owns_far_red():
+  # Was capped at LEAD_QUEUE_M=20; 40 m bumper + 120 m light must own.
+  snap = NavSnapshot(stop_for_light=True, dist_m=120.0, traffic_light="red")
+  assert lead_owns_nav_stop(_sm(d_rel=40.0, v_lead=0.0), snap) is True
+  assert lead_owns_nav_stop(_sm(d_rel=90.0, v_lead=0.0), snap) is True
+
+
 def test_lead_past_light_does_not_own():
   # Track beyond the light point — do not treat as queue bumper.
   snap = NavSnapshot(stop_for_light=True, dist_m=15.0, traffic_light="red")

@@ -16,7 +16,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAle
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import junction_stop_active
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_soft_curve import nav_soft_curve_ms
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
-  apply_stopped_lead_gap, follow_lead_present, lead_owns_nav_stop,
+  apply_stopped_lead_gap, follow_lead_present, lead_owns_nav_stop, read_nav_red_lead,
 )
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import (
   apply_lead_stop_safety,
@@ -28,6 +28,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanT
 from openpilot.sunnypilot.nav.protocol import (
   nav_red_accel_cap,
   nav_red_force_stop,
+  nav_red_remaining_m,
   nav_red_speed_ms,
   traffic_stop_margin_m,
 )
@@ -57,9 +58,49 @@ class LongitudinalPlannerSP:
     self.turn_prep = UrbanTurnPrep()
     self.traffic_stop_offset = TrafficStopOffset()
     self.standstill_hold = StandstillHold()
+    # Nav-red a_cap slew state (jerk limit across planner frames).
+    self._nav_red_a_prev: float | None = None
+    self._nav_red_a_t = 0.0
 
     self.output_v_target = 0.
     self.output_a_target = 0.
+
+  def _nav_red_plan(self, sm: messaging.SubMaster, snap, v_ego: float,
+                    accel_target: float) -> tuple[float, float, float]:
+    """Return (remaining_m, margin, a_cap) for head-car red.
+
+    Fuses mmWave bumper gap when a track sits short of the light; slews a_cap.
+    Same-frame re-entry (update_targets + apply_stop_helpers) reuses the cap.
+    """
+    now = time.monotonic()
+    if (self._nav_red_a_prev is not None and self._nav_red_a_t > 0.0
+        and (now - self._nav_red_a_t) < 0.02
+        and getattr(self, "_nav_red_cache_rem", None) is not None):
+      return float(self._nav_red_cache_rem), float(self._nav_red_cache_margin), float(self._nav_red_a_prev)
+
+    margin = float(traffic_stop_margin_m())
+    light_d = float(snap.dist_m or 0.0)
+    lead = read_nav_red_lead(sm, light_d)
+    lead_d = float(lead.d_rel) if lead.present else None
+    remaining = nav_red_remaining_m(light_d, margin, lead_d_rel=lead_d)
+    dt = 0.05
+    if self._nav_red_a_t > 0.0:
+      dt = max(1e-3, min(0.2, now - self._nav_red_a_t))
+    a_cap = nav_red_accel_cap(
+      v_ego, light_d, margin, float(accel_target),
+      remaining_m=remaining, prev_a=self._nav_red_a_prev, dt=dt,
+    )
+    self._nav_red_a_prev = float(a_cap)
+    self._nav_red_a_t = now
+    self._nav_red_cache_rem = float(remaining)
+    self._nav_red_cache_margin = float(margin)
+    return remaining, margin, a_cap
+
+  def _clear_nav_red_a(self) -> None:
+    self._nav_red_a_prev = None
+    self._nav_red_a_t = 0.0
+    self._nav_red_cache_rem = None
+    self._nav_red_cache_margin = None
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
     # Never blend e2e into a present lead — ACC/MPC owns the gap.
@@ -138,16 +179,19 @@ class LongitudinalPlannerSP:
       # Head-car nav red only. Queue behind a stopped lead: do not clamp cruise
       # to far-light approach (fights lead MPC → stutter).
       if snap.stop_for_light and not lead_owns_nav_stop(sm, snap):
-        margin = traffic_stop_margin_m()
+        remaining, margin, a_cap = self._nav_red_plan(
+          sm, snap, v_ego, float(snap.accel_target or -2.0),
+        )
         road_ms = 0.0
         if float(snap.road_limit_kph or 0.0) >= 20.0:
           road_ms = float(snap.road_limit_kph) * CV.KPH_TO_MS
-        v_nav = nav_red_speed_ms(snap.dist_m, road_ms, margin)
+        v_nav = nav_red_speed_ms(snap.dist_m, road_ms, margin, remaining_m=remaining)
         self.output_v_target = min(float(self.output_v_target), v_nav)
-        a_cap = nav_red_accel_cap(
-          v_ego, float(snap.dist_m), margin, float(snap.accel_target or -2.0),
-        )
         self.output_a_target = min(float(self.output_a_target), a_cap)
+      else:
+        self._clear_nav_red_a()
+    else:
+      self._clear_nav_red_a()
     return self.output_v_target, self.output_a_target
 
   def _turn_prep_speed(self, sm: messaging.SubMaster, v_ego: float, enabled: bool) -> float | None:
@@ -230,17 +274,16 @@ class LongitudinalPlannerSP:
     )
     a_target, should_stop = apply_lead_stop_safety(sm, v_ego, a_target, should_stop)
     if (red_pin or (long_ok and snap.stop_for_light)) and not lead_owns:
-      # Live TrafficStopOffset (3–6 m). Kinematic brake toward light_dist - margin
-      # so ego cannot coast past the line when on/under the soft approach curve.
-      margin = float(traffic_stop_margin_m())
-      a_cap = nav_red_accel_cap(
-        v_ego, float(snap.dist_m), margin,
+      # Live TrafficStopOffset (3–6 m). Tiered a_req + jerk toward fused remaining.
+      remaining, margin, a_cap = self._nav_red_plan(
+        sm, snap, v_ego,
         float(snap.accel_target if snap.stop_for_light else -2.0),
       )
       a_target = min(float(a_target), a_cap)
-      if nav_red_force_stop(v_ego, float(snap.dist_m), margin) or (red_pin and v_ego <= 1.5):
+      if nav_red_force_stop(v_ego, float(snap.dist_m), margin, remaining_m=remaining) or (
+          red_pin and v_ego <= 1.5):
         should_stop = True
-        if v_ego <= 0.6 or red_pin or (float(snap.dist_m) - margin) <= 0.0:
+        if v_ego <= 0.6 or red_pin or remaining <= 0.0:
           a_target = min(float(a_target), -1.5)
     should_stop, a_target = self.standstill_hold.apply(
       should_stop, a_target, v_ego,

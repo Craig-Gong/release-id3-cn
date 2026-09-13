@@ -14,6 +14,9 @@ from typing import Any
 _DT_MDL = 0.05
 
 LEAD_QUEUE_M = 20.0
+# Nav-red ownership: mmWave tracks short of the light (not only ≤20 m queue).
+# Far red + bumper at 40–80 m must follow lead MPC, not nav hard-stop.
+LEAD_NAV_OWN_M = 100.0
 LEAD_CLOSE_M = 8.0
 LEAD_MIN_D_M = 0.5
 # Congestion: lead often creeps <0.4 before we used to release.
@@ -68,21 +71,21 @@ def radar_lead_present(lead: Any) -> bool:
     return False
 
 
-def _from_radar(sm: Any) -> LeadSnapshot | None:
+def _from_radar(sm: Any, max_d: float = LEAD_QUEUE_M) -> LeadSnapshot | None:
   try:
     lead = _sm_get(sm, "radarState").leadOne
     if not radar_lead_present(lead):
       return None
     d_rel = float(getattr(lead, "dRel", 0.0) or 0.0)
     v_lead = float(getattr(lead, "vLead", 0.0) or 0.0)
-    if not (LEAD_MIN_D_M < d_rel <= LEAD_QUEUE_M):
+    if not (LEAD_MIN_D_M < d_rel <= float(max_d)):
       return None
     return LeadSnapshot(True, d_rel, v_lead, d_rel <= LEAD_CLOSE_M)
   except Exception:
     return None
 
 
-def _from_vision(sm: Any) -> LeadSnapshot | None:
+def _from_vision(sm: Any, max_d: float = LEAD_QUEUE_M) -> LeadSnapshot | None:
   try:
     ml = _sm_get(sm, "modelV2").leadsV3[0]
     if float(ml.prob) <= VISION_LEAD_PROB:
@@ -90,7 +93,7 @@ def _from_vision(sm: Any) -> LeadSnapshot | None:
     # leadsV3.x is camera-frame; align with radarState / bumper gap.
     d_rel = float(ml.x[0]) - RADAR_TO_CAMERA_M
     v_lead = float(ml.v[0])
-    if not (LEAD_MIN_D_M < d_rel <= LEAD_QUEUE_M):
+    if not (LEAD_MIN_D_M < d_rel <= float(max_d)):
       return None
     return LeadSnapshot(True, d_rel, v_lead, d_rel <= LEAD_CLOSE_M)
   except Exception:
@@ -135,6 +138,25 @@ def read_nav_queue_lead(sm: Any) -> LeadSnapshot:
   return read_follow_lead(sm)
 
 
+def _nav_red_own_max_m(light_d: float) -> float:
+  """Max dRel for nav-red ownership: between ego and the light, capped."""
+  max_d = LEAD_NAV_OWN_M
+  ld = float(light_d or 0.0)
+  if ld > 1.0:
+    max_d = min(LEAD_NAV_OWN_M, ld - 1.0)
+  return max(LEAD_MIN_D_M, max_d)
+
+
+def read_nav_red_lead(sm: Any, light_d: float = 0.0) -> LeadSnapshot:
+  """mmWave (preferred) lead short of the light for nav-red ownership / fuse."""
+  max_d = _nav_red_own_max_m(light_d)
+  if radar_state_readable(sm):
+    radar = _from_radar(sm, max_d=max_d)
+    return radar if radar is not None else LeadSnapshot(False, 0.0, 0.0, False)
+  vision = _from_vision(sm, max_d=max_d)
+  return vision if vision is not None else LeadSnapshot(False, 0.0, 0.0, False)
+
+
 def is_nav_head_car(sm: Any) -> bool:
   return not read_nav_queue_lead(sm).present
 
@@ -150,20 +172,20 @@ def follow_lead_soft_launch(sm: Any, v_ego: float) -> bool:
 
 
 def lead_owns_nav_stop(sm: Any, snap: Any) -> bool:
-  """In-queue lead short of the light: follow the bumper, not nav hard-stop.
+  """Lead short of the light: follow the bumper, not nav hard-stop.
 
   Far red with a queue lead used to disable lead-gap and force red_pin →
   creep/slam. Must stay true when the lead *starts moving*, otherwise far
   red snaps back and launch feels stuck/lazy. Head car (no lead) still
-  nav-stops. Lead beyond LEAD_QUEUE_M falls out of read_follow_lead.
+  nav-stops. Ownership uses mmWave out to LEAD_NAV_OWN_M (not only 20 m).
   """
   if snap is None or not bool(getattr(snap, "stop_for_light", False)):
     return False
-  lead = read_nav_queue_lead(sm)
+  light_d = float(getattr(snap, "dist_m", 0.0) or 0.0)
+  lead = read_nav_red_lead(sm, light_d)
   if not lead.present:
     return False
-  light_d = float(getattr(snap, "dist_m", 0.0) or 0.0)
-  # No usable light range: any in-queue lead owns (congestion).
+  # No usable light range: any in-range lead owns (congestion).
   if light_d <= 0.0:
     return True
   # Lead is between ego and the light (1 m slack for bumper vs light point).
