@@ -6,6 +6,8 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset imp
   TrafficStopOffset,
   _sanitize_offset_m,
   soft_release_remaining,
+  vision_stop_accel_cap,
+  vision_stop_accel_raw,
 )
 
 
@@ -15,6 +17,7 @@ def _build(distance):
   c.distance = float(distance)
   c._filtered_stop = None
   c._engaged = False
+  c._a_prev = None
   return c
 
 
@@ -176,3 +179,28 @@ def test_large_near_replan_snaps():
   _adjust(c, a_target=0.0, v_ego=8.0, stop_distance=40.0)
   _adjust(c, a_target=0.0, v_ego=8.0, stop_distance=20.0)
   assert c._filtered_stop == 20.0
+
+
+def test_vision_accel_never_far_holds_at_zero():
+  # Very far / tiny a_req: light floor adds brake (never 0).
+  assert vision_stop_accel_raw(16.67, 500.0) == -0.35
+  # Far mid: coast soft ceiling (a_req ~0.93 @ 150 m).
+  assert vision_stop_accel_raw(16.67, 150.0) == -0.50
+  # Above coast req: full kinematic.
+  assert vision_stop_accel_raw(16.67, 100.0) < -1.20
+  # Near: full kinematic / hard floor.
+  assert vision_stop_accel_raw(8.0, 8.0) <= -3.4
+  # Past stop.
+  assert vision_stop_accel_raw(1.0, 0.0) <= -1.5
+
+
+def test_vision_jerk_limits_single_frame_kick():
+  a0 = vision_stop_accel_cap(14.0, 80.0, prev_a=None)
+  raw_near = vision_stop_accel_raw(14.0, 8.0)
+  assert raw_near < -1.5
+  a1 = vision_stop_accel_cap(14.0, 8.0, prev_a=a0, dt=0.05)
+  assert abs(a1 - a0) <= 0.10  # near jerk 1.6 * 0.05 = 0.08
+  a = a1
+  for _ in range(100):
+    a = vision_stop_accel_cap(14.0, 8.0, prev_a=a, dt=0.05)
+  assert a <= -1.4

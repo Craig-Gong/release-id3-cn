@@ -16,6 +16,13 @@ Carrot-inspired (without TrafficState / fake ACC obstacles):
   - |steer| above ~50° blocks *entry* into a new vision offset (turning)
   - end-velocity gate skips stop-sign cruise-through plans (sunnypilot #1864)
 
+Brake feel (asymmetric vs IQ-link nav_red_*):
+  - always at least kinematic −a_req (never nav-style far hold at 0)
+  - mid band may soften toward coast ≈−0.5 (not to 0)
+  - near zone / high a_req: full kinematic
+  - jerk slew so model replan does not kick one-frame slam
+  - do not stack a second far-hold on top of soft_release fade
+
 A radar track past the stop point (phantom / cross-traffic) must not cancel
 this — that used to disable the offset and let stopped-lead creep push past
 the line.
@@ -44,6 +51,16 @@ _STOP_CLOSE_SLACK_M = 0.5
 _RELEASE_DISTANCE_M = 50.0
 # Suppress *new* vision-offset entry while steering hard (carrot ~50°).
 _STEER_ENTRY_LIMIT_DEG = 50.0
+
+# Asymmetric comfort profile (vision remaining is noisy — never far-hold at 0).
+_VISION_NEAR_M = 10.0
+_VISION_HOLD_REQ = 0.55
+_VISION_COAST_REQ = 1.20
+_VISION_COAST_A = -0.50
+_VISION_LIGHT_FLOOR_A = -0.35  # far/low a_req: at least this (adds vs tiny −a_req)
+_VISION_HARD_A = -3.5
+_VISION_JERK = 0.95  # m/s³
+_VISION_NEAR_JERK = 1.6  # allow faster catch-up in the final meters
 
 
 def _sanitize_offset_m(raw) -> float:
@@ -90,6 +107,41 @@ def soft_release_remaining(hard_remaining: float, soft_remaining: float,
   return soft + t * (hard - soft)
 
 
+def vision_stop_accel_raw(v_ego: float, remaining: float) -> float:
+  """Unsmoothed vision-stop a_cap. Never returns 0 while a stop is engaged.
+
+  Unlike nav_red_accel_raw (far hold at 0), vision always keeps at least a
+  light floor or kinematic −a_req so soft tiers cannot erase braking authority.
+  """
+  rem = float(remaining)
+  v = max(0.0, float(v_ego))
+  if rem <= 0.0:
+    return min(_VISION_LIGHT_FLOOR_A, -1.5)
+  a_req = (v * v) / (2.0 * max(rem, 0.3))
+  a_kin = max(-a_req, _VISION_HARD_A)
+  if rem <= _VISION_NEAR_M or a_req >= _VISION_COAST_REQ:
+    return a_kin
+  if a_req <= _VISION_HOLD_REQ:
+    # Far: at least a light floor (may *add* vs tiny −a_req); never 0.
+    return min(a_kin, _VISION_LIGHT_FLOOR_A)
+  # Mid: may soften toward coast, but not above coast (not to 0).
+  return max(a_kin, _VISION_COAST_A)
+
+
+def vision_stop_accel_cap(v_ego: float, remaining: float,
+                          prev_a: float | None = None,
+                          dt: float = DT_MDL) -> float:
+  """vision_stop_accel_raw + jerk slew (faster near the line)."""
+  raw = vision_stop_accel_raw(v_ego, remaining)
+  if prev_a is None:
+    return raw
+  jerk = _VISION_NEAR_JERK if float(remaining) <= _VISION_NEAR_M else _VISION_JERK
+  step = jerk * max(1e-3, float(dt))
+  lo = float(prev_a) - step
+  hi = float(prev_a) + step
+  return max(lo, min(hi, raw))
+
+
 class TrafficStopOffset:
   def __init__(self, params: Params | None = None):
     self.params = params if params is not None else Params()
@@ -97,6 +149,7 @@ class TrafficStopOffset:
     self.distance = float(DEFAULT_OFFSET_M)
     self._filtered_stop: float | None = None
     self._engaged = False
+    self._a_prev: float | None = None
     self.read_params()
 
   def read_params(self) -> None:
@@ -117,6 +170,7 @@ class TrafficStopOffset:
   def _reset_session(self) -> None:
     self._filtered_stop = None
     self._engaged = False
+    self._a_prev = None
 
   def _filter_stop(self, raw_stop: float, v_ego: float) -> float:
     """Allow stop to jump farther instantly; limit noisy jump-near.
@@ -174,12 +228,12 @@ class TrafficStopOffset:
 
     if remaining <= E2E_STOP_HOLD_BUFFER:
       should_stop = True
-      brake_d = max(remaining, 0.3)
-      a_required = max(-(v_ego ** 2) / (2.0 * brake_d), ACCEL_MIN)
-      a_target = min(float(a_target), float(a_required))
-    else:
-      a_required = max(-(v_ego ** 2) / (2.0 * remaining), ACCEL_MIN)
-      if a_required < a_target:
-        a_target = float(a_required)
+
+    brake_rem = 0.0 if remaining <= 0.0 else max(remaining, 0.3)
+    a_cap = vision_stop_accel_cap(v_ego, brake_rem, prev_a=self._a_prev, dt=DT_MDL)
+    self._a_prev = float(a_cap)
+    a_cap = max(float(a_cap), float(ACCEL_MIN))
+    if a_cap < float(a_target):
+      a_target = a_cap
 
     return a_target, should_stop
