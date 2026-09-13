@@ -21,9 +21,11 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead impor
   STOPPED_LEAD_GAP_M,
   GreenFollowLeadGate,
   follow_lead_soft_launch,
+  is_nav_head_car,
   lead_owns_nav_stop,
   radar_nose_clear,
   read_follow_lead,
+  read_nav_queue_lead,
 )
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, read_snapshot, snapshot_executable
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import nav_long_blocked, snapshot_long_ok
@@ -145,13 +147,14 @@ class StandstillHold:
 
     nav_live = snapshot_long_ok(snap, gear, now=clock)
     follow_sm = sm if sm is not None else {}
-    lead = read_follow_lead(follow_sm)
+    # Radar-priority queue lead: vision phantoms must not block head-car green.
+    lead = read_nav_queue_lead(follow_sm)
     lead_rolling = bool(lead.present and lead.v_lead >= LEAD_GO_SPEED_MPS)
     closing_gap = bool(
       lead.present and lead.v_lead < LEAD_GO_SPEED_MPS and lead.d_rel > STOPPED_LEAD_CREEP_M
     )
     confirmed_green = bool(nav_live and snap.apk_green)
-    head_car = not lead.present
+    head_car = is_nav_head_car(follow_sm)
 
     # remainS==1 must be live; require ~3 frames to filter a single false packet.
     if nav_live and snap.remain_go:

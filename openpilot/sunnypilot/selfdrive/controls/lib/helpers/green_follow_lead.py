@@ -1,10 +1,10 @@
 """Green / remainS==1 must not launch into a close stopped lead.
 
-Head car (mmWave clear, no in-queue radar lead): only after confirmed
-traffic_light=green / APK green — remainS==1 while still red does not launch.
-StandstillHold owns the green dwell. Follow car: wait for radar/vision lead
-motion or an opening gap. Close stopped queue (≤8 m) has no timeout so a
-false go cannot dump into the bumper; 8–12 m still times out in 4 s.
+Head car (mmWave clear): only after confirmed traffic_light=green / APK green —
+remainS==1 while still red does not launch. Vision-only phantoms are ignored
+when radarState is alive. StandstillHold owns the green dwell. Follow car:
+wait for radar lead motion or an opening gap. Close stopped queue (≤8 m) has
+no timeout; 8–12 m still times out in 4 s.
 """
 from __future__ import annotations
 
@@ -123,6 +123,22 @@ def radar_nose_clear(sm: Any) -> bool:
   return _from_radar(sm) is None
 
 
+def read_nav_queue_lead(sm: Any) -> LeadSnapshot:
+  """Queue lead for IQ-link red/green gates.
+
+  When radarState is alive, ignore vision-only tracks (phantoms at lights used
+  to block head-car green forever). No radar → fall back to fused lead.
+  """
+  if radar_state_readable(sm):
+    radar = _from_radar(sm)
+    return radar if radar is not None else LeadSnapshot(False, 0.0, 0.0, False)
+  return read_follow_lead(sm)
+
+
+def is_nav_head_car(sm: Any) -> bool:
+  return not read_nav_queue_lead(sm).present
+
+
 def follow_lead_present(sm: Any) -> bool:
   return read_follow_lead(sm).present
 
@@ -143,7 +159,7 @@ def lead_owns_nav_stop(sm: Any, snap: Any) -> bool:
   """
   if snap is None or not bool(getattr(snap, "stop_for_light", False)):
     return False
-  lead = read_follow_lead(sm)
+  lead = read_nav_queue_lead(sm)
   if not lead.present:
     return False
   light_d = float(getattr(snap, "dist_m", 0.0) or 0.0)
@@ -229,7 +245,7 @@ class GreenFollowLeadGate:
       self.reset()
       return False
 
-    lead = read_follow_lead(sm)
+    lead = read_nav_queue_lead(sm)
     if not lead.present:
       # Head car: mmWave must say the nose is clear, and StandstillHold only
       # treats head nav_go as ready after confirmed green (not remainS on red).

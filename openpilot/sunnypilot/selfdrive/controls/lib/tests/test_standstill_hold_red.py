@@ -38,6 +38,48 @@ def test_sticky_red_survives_stale_executable():
   assert h.red_pin is True
 
 
+def _vision_phantom_sm(*, x=8.0, v=0.0, prob=0.9):
+  """Radar clear + vision lead — classic light phantom."""
+  sm = _radar_sm()
+  sm["modelV2"] = SimpleNamespace(
+    leadsV3=[SimpleNamespace(prob=prob, x=[float(x)], v=[float(v)])],
+  )
+  return sm
+
+
+def test_vision_phantom_does_not_block_head_green():
+  """mmWave clear + vision-only lead still counts as head car on green."""
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers import standstill_hold as mod
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
+    is_nav_head_car, read_follow_lead, read_nav_queue_lead,
+  )
+
+  sm = _vision_phantom_sm()
+  assert read_follow_lead(sm).present is True
+  assert read_nav_queue_lead(sm).present is False
+  assert is_nav_head_car(sm) is True
+
+  h = StandstillHold()
+  t0 = 50.0
+  green = _snap(
+    ts=t0, traffic_light="green", remain_s=0.0, remain_go=False,
+    stop_for_light=False, dist_m=20.0,
+  )
+  orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
+  mod.read_snapshot = lambda: green
+  mod.snapshot_executable = lambda snap, now=None: True
+  try:
+    h.observe_nav(_snap(ts=t0 - 1.0), now=t0 - 1.0, gas=False, v_ego=0.0)
+    for i in range(int(_STANDSTILL_HOLD_RELEASE_S / 0.05) + 2):
+      stop, a = h.apply(False, 0.2, 0.0, standstill=True, gas=False, model_stop=False,
+                        sm=sm, now=t0 + 0.05 * i)
+    assert stop is False
+    assert a >= _GO_LAUNCH_FLOOR_A
+  finally:
+    mod.read_snapshot = orig_read
+    mod.snapshot_executable = orig_exec
+
+
 def test_head_remain_go_on_red_does_not_launch():
   """Head car + remainS==1 while still red must keep the brake."""
   from openpilot.sunnypilot.selfdrive.controls.lib.helpers import standstill_hold as mod
