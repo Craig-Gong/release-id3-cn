@@ -1,4 +1,6 @@
-"""Standstill hold: sticky red, remainS debounce, launch floor."""
+"""Standstill hold: sticky red, remainS debounce, head-car green+radar."""
+from types import SimpleNamespace
+
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import (
   StandstillHold, _GO_LAUNCH_FLOOR_A, _REMAIN_GO_CONFIRM_S, _STANDSTILL_HOLD_RELEASE_S,
@@ -15,6 +17,15 @@ def _snap(**kwargs) -> NavSnapshot:
   return NavSnapshot(**base)
 
 
+def _radar_sm(*, d_rel=None, v_lead=0.0):
+  """Minimal sm: radarState present; optional in-queue lead."""
+  if d_rel is None:
+    lead = SimpleNamespace(present=False, status=False, dRel=0.0, vLead=0.0)
+  else:
+    lead = SimpleNamespace(present=True, status=True, dRel=float(d_rel), vLead=float(v_lead))
+  return {"radarState": SimpleNamespace(leadOne=lead)}
+
+
 def test_sticky_red_survives_stale_executable():
   h = StandstillHold()
   live = _snap(ts=10.0)
@@ -27,43 +38,51 @@ def test_sticky_red_survives_stale_executable():
   assert h.red_pin is True
 
 
-def test_remain_go_needs_confirm_then_floors_accel():
-  h = StandstillHold()
-  t0 = 20.0
-  h.observe_nav(_snap(ts=t0), now=t0, gas=False, v_ego=0.0)
-  # First remain_go frames still pin
-  stop, a = h.apply(True, -0.5, 0.0, standstill=True, gas=False, model_stop=False,
-                    sm={}, now=t0)
-  assert stop is True
-  go = _snap(ts=t0, traffic_light="red", remain_go=True, remain_s=1.0, stop_for_light=False)
-  # Write via apply's read_snapshot — inject by patching is hard; drive remain counter
-  # by calling apply with a monkeypatched read. Use observe + internal counter.
-  h._remain_go_s = 0.0
-  # Simulate confirmed remain by setting counter and clearing red via apply path:
-  # use direct state after enough confirm time with mocked snap through apply's read.
+def test_head_remain_go_on_red_does_not_launch():
+  """Head car + remainS==1 while still red must keep the brake."""
   from openpilot.sunnypilot.selfdrive.controls.lib.helpers import standstill_hold as mod
 
-  calls = {"n": 0}
-
-  def fake_read():
-    return go
-
-  def fake_exec(snap, now=None):
-    return True
-
+  h = StandstillHold()
+  t0 = 20.0
+  red_go = _snap(ts=t0, traffic_light="red", remain_go=True, remain_s=1.0, stop_for_light=True)
+  sm = _radar_sm()  # mmWave clear, no lead
   orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
-  mod.read_snapshot = fake_read
-  mod.snapshot_executable = fake_exec
+  mod.read_snapshot = lambda: red_go
+  mod.snapshot_executable = lambda snap, now=None: True
   try:
-    # Not enough confirm yet
-    stop, a = h.apply(False, 0.2, 0.0, standstill=True, gas=False, model_stop=False,
-                      sm={}, now=t0)
-    assert h._remain_go_s > 0.0
-    assert stop is True or h._remain_go_s < _REMAIN_GO_CONFIRM_S
-    # Advance past confirm
-    for i in range(4):
+    for i in range(6):
+      stop, a = h.apply(True, -0.5, 0.0, standstill=True, gas=False, model_stop=False,
+                        sm=sm, now=t0 + 0.05 * i)
+    assert stop is True
+    assert a <= 0.0
+  finally:
+    mod.read_snapshot = orig_read
+    mod.snapshot_executable = orig_exec
+
+
+def test_head_green_needs_radar_and_dwell():
+  """Head car launches only after green + mmWave clear + ~1 s dwell."""
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers import standstill_hold as mod
+
+  h = StandstillHold()
+  t0 = 30.0
+  green = _snap(
+    ts=t0, traffic_light="green", remain_s=0.0, remain_go=False,
+    stop_for_light=False, dist_m=20.0,
+  )
+  sm = _radar_sm()
+  orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
+  mod.read_snapshot = lambda: green
+  mod.snapshot_executable = lambda snap, now=None: True
+  try:
+    h.observe_nav(_snap(ts=t0 - 1.0), now=t0 - 1.0, gas=False, v_ego=0.0)
+    # Early frames still dwell
+    stop, a = h.apply(True, -0.5, 0.0, standstill=True, gas=False, model_stop=False,
+                      sm=sm, now=t0)
+    assert stop is True
+    for i in range(int(_STANDSTILL_HOLD_RELEASE_S / 0.05) + 2):
       stop, a = h.apply(False, 0.2, 0.0, standstill=True, gas=False, model_stop=False,
-                        sm={}, now=t0 + 0.05 * (i + 1))
+                        sm=sm, now=t0 + 0.05 * (i + 1))
     assert stop is False
     assert a >= _GO_LAUNCH_FLOOR_A
   finally:
@@ -71,8 +90,29 @@ def test_remain_go_needs_confirm_then_floors_accel():
     mod.snapshot_executable = orig_exec
 
 
+def test_head_green_blocked_without_radar_state():
+  """No radarState → head car must not treat nose as clear."""
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers import standstill_hold as mod
+
+  h = StandstillHold()
+  t0 = 40.0
+  green = _snap(ts=t0, traffic_light="green", stop_for_light=False, remain_go=False)
+  orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
+  mod.read_snapshot = lambda: green
+  mod.snapshot_executable = lambda snap, now=None: True
+  try:
+    for i in range(30):
+      stop, a = h.apply(True, -0.5, 0.0, standstill=True, gas=False, model_stop=False,
+                        sm={}, now=t0 + 0.05 * i)
+    assert stop is True
+  finally:
+    mod.read_snapshot = orig_read
+    mod.snapshot_executable = orig_exec
+
+
 def test_apk_green_dwell_is_one_second():
   assert _STANDSTILL_HOLD_RELEASE_S == 1.0
+  assert _REMAIN_GO_CONFIRM_S == 0.15
 
 
 def test_nav_go_latch_blocks_vision_hitch_while_creeping():
@@ -93,19 +133,19 @@ def test_nav_go_latch_blocks_vision_hitch_while_creeping():
     h.red_pin = False
     # Still stopped: floor launch, ignore vision should_stop / negative a.
     stop, a = h.apply(True, -1.5, 0.0, standstill=True, gas=False, model_stop=True,
-                      sm={}, now=30.0)
+                      sm=_radar_sm(), now=30.0)
     assert stop is False
     assert a >= _GO_LAUNCH_FLOOR_A
     assert h._nav_go_latched is True
     # Creeping past standstill threshold — old code cleared the latch here.
     stop, a = h.apply(True, -1.8, 0.6, standstill=False, gas=False, model_stop=True,
-                      sm={}, now=30.1)
+                      sm=_radar_sm(), now=30.1)
     assert stop is False
     assert a >= 0.0
     assert h._nav_go_latched is True
     # Rolling out clears via reset at _RELEASE_V_EGO.
     stop, a = h.apply(False, 0.4, 2.5, standstill=False, gas=False, model_stop=False,
-                      sm={}, now=30.2)
+                      sm=_radar_sm(), now=30.2)
     assert h._nav_go_latched is False
   finally:
     mod.read_snapshot = orig_read

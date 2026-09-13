@@ -1,10 +1,10 @@
 """Green / remainS==1 must not launch into a close stopped lead.
 
-Head car (no close lead): remainS==1 is immediate after a short flicker
-filter; APK green dwell is owned by StandstillHold (~1 s). Follow car: wait
-for radar/vision lead motion or an opening gap. Close stopped queue (≤8 m)
-has no timeout so a false go cannot dump into the bumper; 8–12 m still times
-out in 4 s (false lock).
+Head car (mmWave clear, no in-queue radar lead): only after confirmed
+traffic_light=green / APK green — remainS==1 while still red does not launch.
+StandstillHold owns the green dwell. Follow car: wait for radar/vision lead
+motion or an opening gap. Close stopped queue (≤8 m) has no timeout so a
+false go cannot dump into the bumper; 8–12 m still times out in 4 s.
 """
 from __future__ import annotations
 
@@ -107,6 +107,22 @@ def read_follow_lead(sm: Any) -> LeadSnapshot:
   return LeadSnapshot(False, 0.0, 0.0, False)
 
 
+def radar_state_readable(sm: Any) -> bool:
+  """True when radarState is present (even with no lead track)."""
+  try:
+    rs = _sm_get(sm, "radarState")
+    return rs is not None
+  except Exception:
+    return False
+
+
+def radar_nose_clear(sm: Any) -> bool:
+  """mmWave agrees no in-queue lead. Missing radar → not clear (head car)."""
+  if not radar_state_readable(sm):
+    return False
+  return _from_radar(sm) is None
+
+
 def follow_lead_present(sm: Any) -> bool:
   return read_follow_lead(sm).present
 
@@ -207,13 +223,20 @@ class GreenFollowLeadGate:
     self._lead_moving_s = 0.0
     self._drel_prev = None
 
-  def may_release(self, *, now: float, nav_go: bool, sm: Any) -> bool:
+  def may_release(self, *, now: float, nav_go: bool, sm: Any,
+                  confirmed_green: bool = False) -> bool:
     if not nav_go:
       self.reset()
       return False
 
     lead = read_follow_lead(sm)
     if not lead.present:
+      # Head car: mmWave must say the nose is clear, and StandstillHold only
+      # treats head nav_go as ready after confirmed green (not remainS on red).
+      if not radar_nose_clear(sm):
+        return False
+      if not confirmed_green:
+        return False
       self.reset()
       return True
 

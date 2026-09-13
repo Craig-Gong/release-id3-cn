@@ -87,3 +87,17 @@ def test_far_turn_hud_is_straight_ahead():
   near = _parse({"nRoadLimitSpeed": 60, "nTBTTurnType": 1, "nTBTDist": 80})
   assert near is not None and near.send_turn is True
   assert lane_hint(near) == TURN_LEFT
+
+
+def test_red_remain_go_keeps_stop_for_light():
+  """Countdown remainS==1 must not clear head-car red stop."""
+  snap = _parse({
+    "nRoadLimitSpeed": 50,
+    "trafficLight": "red",
+    "trafficLightDistM": 12,
+    "trafficLightRemainS": 1,
+  })
+  assert snap is not None
+  assert snap.remain_go is True
+  assert snap.stop_for_light is True
+  assert snap.traffic_light == "red"

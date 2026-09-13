@@ -209,7 +209,10 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
   accel_target = 0.0
   if not right_turn_pending:
     if light == "red":
-      stop_for_light = not remain_go
+      # Countdown remainS==1 is NOT a clear-to-go for the head car — keep
+      # stop_for_light so standstill stays pinned until traffic_light=green.
+      # Follow cars still use remain_go + radar lead motion in StandstillHold.
+      stop_for_light = True
     elif light == "yellow" and 0.0 < light_dist <= _YELLOW_STOP_DIST_M:
       stop_for_light = True
   if stop_for_light:

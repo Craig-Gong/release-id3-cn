@@ -1,9 +1,11 @@
 """Hold after a vision stop, or IQ-link red, until a stable go.
 
 Vision-only: ~1 s dwell after the model stops asking to stop.
-IQ-link: remainS==1 is immediate after a short flicker filter if
-GreenFollowLeadGate agrees; APK green dwells ~1 s, then the same lead
-gate. Sticky red keeps pinning briefly when BLE drops executable.
+IQ-link head car: require confirmed traffic_light=green (APK green) plus
+mmWave nose-clear — remainS==1 while still red does not launch.
+Follow car: remainS==1 / green after flicker filter if GreenFollowLeadGate
+agrees (radar lead moving / gap). APK green dwells ~1 s then the same gate.
+Sticky red keeps pinning briefly when BLE drops executable.
 After a nav go, keep `_nav_go_latched` until vEgo > ~2 m/s so vision
 short-trajectory / TrafficStopOffset cannot tap the brake on takeoff.
 """
@@ -20,6 +22,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead impor
   GreenFollowLeadGate,
   follow_lead_soft_launch,
   lead_owns_nav_stop,
+  radar_nose_clear,
   read_follow_lead,
 )
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, read_snapshot, snapshot_executable
@@ -147,6 +150,8 @@ class StandstillHold:
     closing_gap = bool(
       lead.present and lead.v_lead < LEAD_GO_SPEED_MPS and lead.d_rel > STOPPED_LEAD_CREEP_M
     )
+    confirmed_green = bool(nav_live and snap.apk_green)
+    head_car = not lead.present
 
     # remainS==1 must be live; require ~3 frames to filter a single false packet.
     if nav_live and snap.remain_go:
@@ -155,12 +160,15 @@ class StandstillHold:
       self._remain_go_s = 0.0
     remain_go = self._remain_go_s >= _REMAIN_GO_CONFIRM_S
 
-    apk_green = bool(nav_live and snap.apk_green)
-    nav_go = remain_go or apk_green
-    follow_ok = self._follow.may_release(now=clock, nav_go=nav_go, sm=follow_sm)
+    # Head car: remainS==1 on a still-red light is countdown, not go.
+    # Follow car: remain_go can release once radar lead moves / gap opens.
+    nav_go = bool(confirmed_green or (remain_go and not head_car))
+    follow_ok = self._follow.may_release(
+      now=clock, nav_go=nav_go, sm=follow_sm, confirmed_green=confirmed_green,
+    )
 
-    # Explicit go clears sticky so a fresh green is not re-pinned.
-    if remain_go and follow_ok:
+    # Queue: remainS==1 + lead moving / gap — do not wait for APK green token.
+    if remain_go and follow_ok and not head_car:
       self._clear_sticky()
       self.red_pin = False
       self.hold = False
@@ -169,13 +177,15 @@ class StandstillHold:
       self._nav_go_latched = True
       return False, max(float(a_target), _GO_LAUNCH_FLOOR_A)
 
-    # Nav / sticky red (no confirmed go): pin including while creeping.
-    if self.red_pin and not (remain_go and follow_ok):
-      self.hold = True
-      self.hold_s = 0.0
-      self.hold_released = False
-      self._nav_go_latched = False
-      return True, min(float(a_target), -1.0)
+    # Nav / sticky red: pin until confirmed green (head) or queue remain_go.
+    # While green is dwelling, skip this pin so the ~1 s APK green path can run.
+    if self.red_pin and not confirmed_green:
+      if not (remain_go and follow_ok and not head_car):
+        self.hold = True
+        self.hold_s = 0.0
+        self.hold_released = False
+        self._nav_go_latched = False
+        return True, min(float(a_target), -1.0)
 
     at_rest = standstill or v_ego <= _STANDSTILL_V
     if not at_rest:
@@ -219,8 +229,12 @@ class StandstillHold:
         a_out = max(a_out, _GO_LAUNCH_FLOOR_A)
       return should_stop, a_out
 
-    if apk_green:
-      if not follow_ok:
+    if confirmed_green:
+      # Head: mmWave must stay clear. Follow: gate owns lead motion / timeout.
+      if head_car and (not follow_ok or not radar_nose_clear(follow_sm)):
+        self.hold = True
+        return True, min(float(a_target), 0.0)
+      if (not head_car) and (not follow_ok):
         self.hold = True
         return True, min(float(a_target), 0.0)
       if not self.hold_released:
