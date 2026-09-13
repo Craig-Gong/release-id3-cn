@@ -152,6 +152,54 @@ def test_iqlink_brief_gap_keeps_gas_raised_max():
   assert h.v_cruise_kph == 58.0
 
 
+def test_iqlink_manual_override_blocks_auto_raise():
+  h = _helper()
+  snap = NavSnapshot(ts=10.0, link_ok=True, iqlink_enabled=True, road_limit_kph=50.0)
+  with patch("openpilot.sunnypilot.nav.snapshot.read_snapshot", return_value=snap):
+    with patch("openpilot.sunnypilot.nav.snapshot.snapshot_executable", return_value=True):
+      for _ in range(15):
+        h._iqlink_max_t = __import__("time").monotonic() - 1.0
+        h.update_speed_limit_assist_v_cruise_non_pcm()
+      h.v_cruise_kph = 35.0
+      h.mark_iqlink_cruise_override()
+      for _ in range(12):
+        h._iqlink_max_t = __import__("time").monotonic() - 1.0
+        h.update_speed_limit_assist_v_cruise_non_pcm()
+  assert h.v_cruise_kph == 35.0
+
+
+def test_iqlink_limit_drop_clears_override():
+  h = _helper()
+  snap50 = NavSnapshot(ts=10.0, link_ok=True, iqlink_enabled=True, road_limit_kph=50.0)
+  snap40 = NavSnapshot(ts=11.0, link_ok=True, iqlink_enabled=True, road_limit_kph=40.0)
+  with patch("openpilot.sunnypilot.nav.snapshot.snapshot_executable", return_value=True):
+    with patch("openpilot.sunnypilot.nav.snapshot.read_snapshot", return_value=snap50):
+      for _ in range(15):
+        h._iqlink_max_t = __import__("time").monotonic() - 1.0
+        h.update_speed_limit_assist_v_cruise_non_pcm()
+      h.v_cruise_kph = 35.0
+      h.mark_iqlink_cruise_override()
+    with patch("openpilot.sunnypilot.nav.snapshot.read_snapshot", return_value=snap40):
+      h.update_speed_limit_assist_v_cruise_non_pcm()
+  assert h.v_cruise_kph == 40.0
+  assert h._iqlink_max_override is False
+
+
+def test_iqlink_long_gap_releases_ownership():
+  h = _helper()
+  from openpilot.sunnypilot.selfdrive.car.cruise_ext import IQLINK_GAP_CLEAR_S
+  snap = NavSnapshot(ts=10.0, link_ok=True, iqlink_enabled=True, road_limit_kph=50.0)
+  with patch("openpilot.sunnypilot.nav.snapshot.read_snapshot", return_value=snap):
+    with patch("openpilot.sunnypilot.nav.snapshot.snapshot_executable", return_value=True):
+      h.update_speed_limit_assist_v_cruise_non_pcm()
+      h.v_cruise_kph = 58.0
+    with patch("openpilot.sunnypilot.nav.snapshot.snapshot_executable", return_value=False):
+      assert h._apply_iqlink_nav_to_max() is True
+      h._iqlink_none_since = __import__("time").monotonic() - (IQLINK_GAP_CLEAR_S + 1.0)
+      assert h._apply_iqlink_nav_to_max() is False
+  assert h.prev_iqlink_road_limit_kph < 0.0
+
+
 def test_stale_link_does_not_apply_nav_max():
   h = _helper()
   h.v_cruise_kph = 35.0

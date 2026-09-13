@@ -107,6 +107,7 @@ class VCruiseHelper(VCruiseHelperSP):
     v_ego_kph = int(round(v_ms * CV.MS_TO_KPH))
     if v_ego_kph > self.v_cruise_kph:
       self.v_cruise_kph = float(np.clip(v_ego_kph, self.v_cruise_min, V_CRUISE_MAX))
+      self.mark_iqlink_cruise_override()
 
   def _update_v_cruise_non_pcm(self, CS, enabled, is_metric):
     # handle button presses. TODO: this should be in state_control, but a decelCruise press
@@ -161,6 +162,8 @@ class VCruiseHelper(VCruiseHelperSP):
       self.v_cruise_kph = max(self.v_cruise_kph, CS.vEgo * CV.MS_TO_KPH)
 
     self.v_cruise_kph = np.clip(round(self.v_cruise_kph, 1), self.v_cruise_min, V_CRUISE_MAX)
+    # IQ-link: manual SET/+/- is a user override (do not auto re-raise to nav).
+    self.mark_iqlink_cruise_override()
 
   def update_button_timers(self, CS, enabled):
     # increment timer for buttons still pressed

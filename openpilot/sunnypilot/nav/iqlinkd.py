@@ -17,6 +17,7 @@ from openpilot.sunnypilot.nav.ble_gatt import BleGattServer
 from openpilot.sunnypilot.nav.envelope import FIXED_BLE_PSK, EnvelopeVerifier
 from openpilot.sunnypilot.nav.gatt_json import MAX_GATT_BUF, pop_complete_json
 from openpilot.sunnypilot.nav.protocol import parse_carrot
+from openpilot.sunnypilot.nav.road_limit_hold import IqlinkRoadLimitHold
 from openpilot.sunnypilot.nav.snapshot import (
   HMAC_FRESH_S,
   INJECT_SHM_PATH,
@@ -74,8 +75,23 @@ class IqlinkDaemon:
     self._last_hmac_ts = 0.0
     self._was_hmac_fresh = False
     self._buf = bytearray()
+    self._road_limit_hold = IqlinkRoadLimitHold()
     self.ble = BleGattServer(self._on_gatt_write)
     self.udp = UdpNavServer(self._on_udp_datagram)
+
+  def _apply_road_limit_hold(self, snap: NavSnapshot, now: float) -> NavSnapshot:
+    """Debounce Gaode nRoadLimitSpeed; keep red-light targets untouched."""
+    raw = float(snap.road_limit_kph or 0.0)
+    held = float(self._road_limit_hold.filter_kph(raw, now))
+    if held <= 0.0 or abs(held - raw) < 0.05:
+      if held > 0.0:
+        snap.road_limit_kph = held
+      return snap
+    snap.road_limit_kph = held
+    if not snap.stop_for_light and float(snap.speed_target or 0.0) > 0.0:
+      # Cruise target was derived from the raw posted limit — keep it aligned.
+      snap.speed_target = held / 3.6
+    return snap
 
   def _handle_envelope(self, blob: bytes) -> bool:
     """Returns True if the envelope was accepted (ok or replay heartbeat)."""
@@ -127,6 +143,7 @@ class IqlinkDaemon:
         self._last_snap.ts = now
         write_snapshot(self._last_snap)
       return
+    snap = self._apply_road_limit_hold(snap, now)
     self._last_snap = snap
     if hmac_ok:
       self._last_hmac_ts = now
@@ -170,6 +187,8 @@ class IqlinkDaemon:
       # Phone may restart seq after a drop; do not seq-replay the next session forever.
       self.verifier = EnvelopeVerifier(_psk(self.params))
     self._was_hmac_fresh = hmac_fresh
+    if not enabled and self._last_snap.iqlink_enabled:
+      self._road_limit_hold.reset()
     transport_up = bool(self.ble.running or self.udp.running)
     # Link truth is independent of IqlinkEnabled. Toggle only sets iqlink_enabled;
     # snapshot_executable still requires both enabled and link_ok.

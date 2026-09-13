@@ -10,7 +10,7 @@ import time
 from openpilot.cereal import messaging, custom
 from opendbc.car import structs
 from openpilot.common.constants import CV
-from openpilot.selfdrive.car.cruise import V_CRUISE_MAX
+from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.sunnypilot.selfdrive.controls.lib.dec.dec import DynamicExperimentalController
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import junction_stop_active
@@ -31,7 +31,7 @@ from openpilot.sunnypilot.nav.protocol import (
   nav_red_speed_ms,
   traffic_stop_margin_m,
 )
-from openpilot.sunnypilot.nav.snapshot import read_snapshot, write_cluster_hud
+from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable, write_cluster_hud
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import snapshot_long_ok
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
@@ -119,13 +119,18 @@ class LongitudinalPlannerSP:
       LongitudinalPlanSource.sccMap: (self.scc.map.output_v_target, self.scc.map.output_a_target),
       LongitudinalPlanSource.speedLimitAssist: (self.sla.output_v_target, self.sla.output_a_target),
     }
+    # IQ-link owns posted limit → MAX. SLA must not min() a gas/button-raised
+    # cruise target back down to the same nav limit.
+    snap_gate = read_snapshot()
+    if snapshot_executable(snap_gate):
+      targets[LongitudinalPlanSource.speedLimitAssist] = (float(V_CRUISE_UNSET), a_ego)
 
     self.source = min(targets, key=lambda k: targets[k][0])
     self.output_v_target, self.output_a_target = targets[self.source]
     prep_v = self._turn_prep_speed(sm, v_ego, long_enabled)
     if prep_v is not None:
       self.output_v_target = min(float(self.output_v_target), float(prep_v))
-    snap = read_snapshot()
+    snap = snap_gate
     if snapshot_long_ok(snap, CS.gearShifter):
       curve = nav_soft_curve_ms(snap, v_ego)
       if curve is not None:

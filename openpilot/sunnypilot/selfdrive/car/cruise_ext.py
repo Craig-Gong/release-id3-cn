@@ -29,6 +29,8 @@ V_CRUISE_MAX = 145
 V_CRUISE_UNSET = 255
 # Human-like raise toward nav road limit; lowers stay instant for safety.
 NAV_MAX_RAISE_KPH_S = 8.0
+# After this long without an executable snapshot, hand MAX back to SLA/map.
+IQLINK_GAP_CLEAR_S = 15.0
 
 
 def update_manual_button_timers(CS: car.CarState, button_timers: dict[car.CarState.ButtonEvent.Type, int]) -> None:
@@ -68,9 +70,11 @@ class VCruiseHelperSP:
     self.prev_speed_limit_final_last_kph = 0.
     self.req_plus = False
     self.req_minus = False
-    # IQ-link nav road limit → MAX (gas sync above limit sticks until limit drops)
+    # IQ-link nav road limit → MAX (gas/button override sticks until limit drops)
     self.prev_iqlink_road_limit_kph = -1.0
     self._iqlink_max_t = 0.0
+    self._iqlink_none_since = 0.0
+    self._iqlink_max_override = False
 
   def read_custom_set_speed_params(self) -> None:
     self.custom_acc_enabled = self.params.get_bool("CustomAccIncrementsEnabled")
@@ -137,6 +141,10 @@ class VCruiseHelperSP:
 
     return False
 
+  def mark_iqlink_cruise_override(self) -> None:
+    """Steering-wheel SET/+/- under IQ-link: do not auto-slew MAX back to nav."""
+    self._iqlink_max_override = True
+
   def _iqlink_nav_limit_kph(self) -> float | None:
     """Live IQ-link road limit (km/h), or None if link/nav not executable."""
     try:
@@ -159,13 +167,15 @@ class VCruiseHelperSP:
   def _apply_iqlink_nav_to_max(self) -> bool:
     """IQ-link ON: MAX tracks nav road limit.
 
-    - Limit drop → set MAX immediately (safety).
-    - Limit raise / MAX below limit → slew ~8 km/h/s (human-like catch-up).
-    - MAX above limit (gas sync) → leave; do not yank back on limit raise or
-      brief executable gaps (those used to snap MAX then car slowly re-settles).
+    - Limit drop → set MAX immediately (safety); clears user override.
+    - Limit raise / MAX below limit → slew ~8 km/h/s unless user overrode
+      (gas above, or SET/+/-).
+    - MAX above limit (gas sync) → leave; brief executable gaps keep ownership.
     - Unset (first engage) → snap to limit.
+    - Executable gap > IQLINK_GAP_CLEAR_S → release ownership to SLA/map.
     """
     limit_kph = self._iqlink_nav_limit_kph()
+    now = time.monotonic()
     if limit_kph is None:
       self._iqlink_max_t = 0.0
       try:
@@ -174,14 +184,21 @@ class VCruiseHelperSP:
         iqlink_on = False
       if not iqlink_on:
         self.prev_iqlink_road_limit_kph = -1.0
+        self._iqlink_none_since = 0.0
+        self._iqlink_max_override = False
         return False
-      # Link still enabled but snapshot not executable: keep owning MAX so SLA
-      # cannot pull a gas-raised set speed back to the posted limit.
       if self.prev_iqlink_road_limit_kph >= 20.0:
+        if self._iqlink_none_since <= 0.0:
+          self._iqlink_none_since = now
+        elif (now - self._iqlink_none_since) >= IQLINK_GAP_CLEAR_S:
+          self.prev_iqlink_road_limit_kph = -1.0
+          self._iqlink_none_since = 0.0
+          self._iqlink_max_override = False
+          return False
         return True
       return False
 
-    now = time.monotonic()
+    self._iqlink_none_since = 0.0
     dt = 0.05 if self._iqlink_max_t <= 0.0 else min(0.2, max(0.0, now - self._iqlink_max_t))
     self._iqlink_max_t = now
 
@@ -194,18 +211,20 @@ class VCruiseHelperSP:
     if unset:
       self.v_cruise_kph = float(np.clip(limit_kph, self.v_cruise_min, V_CRUISE_MAX))
       self.prev_iqlink_road_limit_kph = limit_kph
+      self._iqlink_max_override = False
       return True
 
     if limit_drop:
-      # Posted limit fell — always follow for safety (clears gas-raised MAX).
+      # Posted limit fell — always follow for safety (clears gas/button override).
       self.v_cruise_kph = float(np.clip(limit_kph, self.v_cruise_min, V_CRUISE_MAX))
       self.prev_iqlink_road_limit_kph = limit_kph
+      self._iqlink_max_override = False
       return True
 
     if limit_changed:
       self.prev_iqlink_road_limit_kph = limit_kph
 
-    if below_limit:
+    if below_limit and not self._iqlink_max_override:
       step = NAV_MAX_RAISE_KPH_S * dt
       self.v_cruise_kph = float(np.clip(
         min(limit_kph, self.v_cruise_kph + step),
