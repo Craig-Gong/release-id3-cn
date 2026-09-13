@@ -30,10 +30,12 @@ _YELLOW_STOP_DIST_M = 30.0
 LIGHT_TURN_WINDOW_M = 150.0
 # Toast / send_turn / nav-led longitudinal prep.
 TURN_DESIRE_WINDOW_M = 150.0
-# Lateral desire + turn-in: start before the corner so lead/desire is on
-# when "快到路口". Keep below toast 150 m so the first rising edge is not
-# spent at 150 m; desire_helper re-pulses harder in the last ~50 m.
-NAV_LATERAL_TURN_M = 120.0
+# Lateral desire + turn-in (no stalk widen): start near the corner. 120 m was
+# early for Lebowski — turnLeft/Right while still straight feels like a
+# wheel fight. Toast / send_turn / prep stay 150 m; commit-hold still ≤50 m.
+NAV_LATERAL_TURN_M = 80.0
+# Do not promote Gaode lc_* → send_turn at highway limits (fork stays LC).
+NAV_LC_PROMOTE_MAX_KPH = 70.0
 NEAR_DEST_REMAIN_M = 150.0
 _NAV_RED_HARD_A = -3.5
 _NAV_RED_HOLD_A = -1.5
@@ -192,7 +194,8 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
   send_turn = bool(is_turn and near_turn)
   # Urban: Gaode often labels intersections as lc_*. Promote toast / desire
   # when near; maneuver stays fork so HUD / soft-curve still know it is LC.
-  if is_lc and near_turn and lane_rec != "straight":
+  # Highway/fast roads: keep fork as LC — do not inject turn desire.
+  if is_lc and near_turn and lane_rec != "straight" and road_kph < NAV_LC_PROMOTE_MAX_KPH:
     send_turn = True
 
   light = _s(data, "trafficLight", "none").strip().lower() or "none"

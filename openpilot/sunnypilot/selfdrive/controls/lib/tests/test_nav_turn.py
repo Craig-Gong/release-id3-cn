@@ -30,9 +30,10 @@ def test_nav_turn_near_and_slow():
 
 
 def test_nav_turn_no_desire_in_toast_only_window():
-  # Toast / prep still ≤150 m, but unblinkered lateral desire only ≤120 m
+  # Toast / prep still ≤150 m, but unblinkered lateral desire only ≤80 m
   assert eval_nav_turn_desire(direction="right", turn_dist_m=140.0, **_cs(40.0)) == "none"
-  assert eval_nav_turn_desire(direction="right", turn_dist_m=120.0, **_cs(40.0)) == "right"
+  assert eval_nav_turn_desire(direction="right", turn_dist_m=120.0, **_cs(40.0)) == "none"
+  assert eval_nav_turn_desire(direction="right", turn_dist_m=100.0, **_cs(40.0)) == "none"
   assert eval_nav_turn_desire(direction="right", turn_dist_m=80.0, **_cs(40.0)) == "right"
 
 
@@ -63,8 +64,12 @@ def test_nav_blinker_matches_turn():
   assert nav_blinker_matches_turn(snap2, left_blinker=True, right_blinker=False) is False
 
 
-def test_nav_turn_blinker_confirms_when_fast():
-  assert eval_nav_turn_desire(direction="left", turn_dist_m=120.0, **_cs(55.0, left=True)) == "left"
+def test_nav_turn_blinker_does_not_widen_window():
+  # Early / fast stalk must not inject turn desire (stay LC or wait for ≤80/<45).
+  assert eval_nav_turn_desire(direction="left", turn_dist_m=120.0, **_cs(55.0, left=True)) == "none"
+  assert eval_nav_turn_desire(direction="left", turn_dist_m=120.0, **_cs(40.0, left=True)) == "none"
+  assert eval_nav_turn_desire(direction="left", turn_dist_m=80.0, **_cs(55.0, left=True)) == "none"
+  assert eval_nav_turn_desire(direction="left", turn_dist_m=80.0, **_cs(40.0, left=True)) == "left"
 
 
 def test_nav_turn_bsm_blocks():

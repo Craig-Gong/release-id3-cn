@@ -21,6 +21,20 @@ def test_near_lc_promotes_send_turn_but_stays_fork():
   assert snap.maneuver_dir == "left"
 
 
+def test_highway_lc_does_not_promote_send_turn():
+  snap = _parse({"nRoadLimitSpeed": 80, "nTBTTurnType": 3, "nTBTDist": 80})
+  assert snap is not None
+  assert snap.maneuver == "fork"
+  assert snap.send_turn is False
+
+
+def test_urban_lc_still_promotes_under_70():
+  snap = _parse({"nRoadLimitSpeed": 60, "nTBTTurnType": 3, "nTBTDist": 80})
+  assert snap is not None
+  assert snap.maneuver == "fork"
+  assert snap.send_turn is True
+
+
 def test_straight_lc_does_not_promote():
   snap = _parse({
     "nRoadLimitSpeed": 80, "nTBTTurnType": 3, "nTBTDist": 80,

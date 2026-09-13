@@ -1,8 +1,9 @@
 """IQ-link intersection turn gates (shm snapshot). No auto blinker / NavExit ALC.
 
 Toast / send_turn / nav-led prep: ≤150 m.
-Lateral turn desire (no stalk) + turn-in 20 cap: ≤120 m and vEgo < 45 km/h,
-or same-side blinker confirms farther/faster. Same-side BSM blocks.
+Lateral turn desire: ≤80 m and vEgo < 45 km/h only (stalk does not widen
+the window — early blinker / highway LC must not become turnLeft/Right).
+Same-side BSM blocks.
 
 modeld only takes desire on a rising edge. Approach may keep-pulse; near the
 corner (or after yaw commit) hold continuously — aligned with IQ.Pilot release
@@ -63,11 +64,9 @@ def eval_nav_turn_desire(
     return "none"
   near_exec = 0.0 < float(turn_dist_m) <= NAV_NEAR_TURN_M
   slow_enough = float(v_ego_mps) < TURN_TRIGGER_MPS
-  blinker_ok = (
-    (d == "left" and left_blinker and not right_blinker)
-    or (d == "right" and right_blinker and not left_blinker)
-  )
-  if blinker_ok or (near_exec and slow_enough):
+  # left_blinker / right_blinker intentionally unused: stalk must not widen
+  # nav desire (early blink / highway LC → turnLeft fights the wheel).
+  if near_exec and slow_enough:
     return d
   return "none"
 

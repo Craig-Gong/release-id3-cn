@@ -72,10 +72,15 @@ class DesireHelper:
     tbt_dist = 0.0
     try:
       snap = read_snapshot()
-      force_blinker_turn = nav_blinker_matches_turn(
-        snap, left_blinker=bool(carstate.leftBlinker), right_blinker=bool(carstate.rightBlinker),
-      )
       tbt_dist = float(snap.tbt_dist or 0.0)
+      # Only skip straight-path demotion near the corner. Early stalk + far
+      # TBT used to force turnLeft/Right while still going straight (Lebowski).
+      force_blinker_turn = (
+        nav_blinker_matches_turn(
+          snap, left_blinker=bool(carstate.leftBlinker), right_blinker=bool(carstate.rightBlinker),
+        )
+        and nav_turn_commit_hold(turn_dist_m=tbt_dist, committed=False)
+      )
     except Exception:
       snap = None
 
