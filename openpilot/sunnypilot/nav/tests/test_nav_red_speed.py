@@ -2,6 +2,7 @@ from openpilot.sunnypilot.nav.protocol import (
   NAV_STOP_MARGIN_M,
   NAV_STOP_MARGIN_MAX_M,
   nav_red_accel_cap,
+  nav_red_comfort_speed_ms,
   nav_red_force_stop,
   nav_red_speed_ms,
   nav_stop_margin_m,
@@ -30,14 +31,29 @@ def test_far_light_has_approach_speed():
   assert v > 10.0  # √(2*2*77) ≈ 17.5
 
 
-def test_kinematic_brake_scales_with_remaining():
-  # Far + slow: near-zero demand (no absurd early -2).
-  assert nav_red_accel_cap(5.0, 100.0, 4.5) > -0.3
-  # On a ~2 m/s² curve for remaining=50 → v≈14.1, a≈-2.
+def test_far_urban_cruise_does_not_force_brake():
+  """60 km/h @ 150 m red: comfort curve still above ego → a_cap = 0 (no grind)."""
+  v_ego = 60.0 / 3.6  # ≈ 16.67
+  light_d = 150.0
+  margin = 3.0
+  remaining = light_d - margin
+  v_comfort = nav_red_comfort_speed_ms(light_d, margin)
+  assert v_comfort > v_ego
+  assert abs(v_comfort - (2.0 * 1.5 * remaining) ** 0.5) < 1e-6
+  assert nav_red_accel_cap(v_ego, light_d, margin) == 0.0
+  # Speed ceiling also still above cruise so min() would not pull MAX down.
+  assert nav_red_speed_ms(light_d, v_ego, margin) >= v_ego - 1e-6
+
+
+def test_kinematic_brake_when_above_comfort_curve():
+  # remaining=50 → comfort √(2*1.5*50) ≈ 12.25; ego 14.1 must brake.
   a_on = nav_red_accel_cap(14.1, 54.5, 4.5)
-  assert -2.3 <= a_on <= -1.7
-  # Above the curve: harder than -2.
+  assert a_on <= -1.5
+  assert -3.6 <= a_on <= -1.4
+  # Clearly above: harder.
   assert nav_red_accel_cap(18.0, 54.5, 4.5) < -2.5
+  # Far + already slow: still under comfort → no forced brake.
+  assert nav_red_accel_cap(5.0, 100.0, 4.5) == 0.0
   # Past the stop point: hold brake.
   assert nav_red_accel_cap(1.0, 3.0, 4.5) <= -1.5
 

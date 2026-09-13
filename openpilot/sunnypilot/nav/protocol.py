@@ -19,6 +19,9 @@ _EXIT = {6, 11}
 
 _RED_LIGHT_ACCEL = -2.0
 _RED_LIGHT_DECEL = 2.0
+# Comfort gate for forced brake: while v_ego is still under √(2·a·d), do not
+# grind average speed with −v²/(2d). Literature comfort ~1.0–1.5 m/s².
+_NAV_RED_COMFORT_DECEL = 1.5
 # Floor when TrafficStopOffset is 0 / unset. Live slider applies to IQ-link red
 # (amap light distance ≠ stop line). Cap at 6 m so a vision-only 8–10 m CD210
 # setting does not make head-car nav stops absurdly early.
@@ -117,7 +120,11 @@ def nav_stop_margin_m(offset_m: float | None = None) -> float:
 
 
 def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float) -> float:
-  """Target speed for a nav red. Already at/past the intended stop → 0, not a 0.5 m crawl."""
+  """Target speed ceiling for a nav red (√(2·2·d) envelope, capped by road).
+
+  Far away this stays above urban cruise so min() does not grind speed; closer
+  it drops along a constant-decel curve. Forced brake uses nav_red_accel_cap.
+  """
   d = float(light_dist or 0.0)
   m = float(margin)
   if d <= 0.0 or d <= m:
@@ -126,22 +133,34 @@ def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float) -> float:
   return 0.0 if v <= 0.05 else v
 
 
+def nav_red_comfort_speed_ms(light_dist: float, margin: float) -> float:
+  """Max speed that can still stop with comfort decel at (light − margin)."""
+  remaining = float(light_dist or 0.0) - float(margin)
+  if remaining <= 0.0:
+    return 0.0
+  return math.sqrt(2.0 * _NAV_RED_COMFORT_DECEL * remaining)
+
+
 def nav_red_accel_cap(v_ego: float, light_dist: float, margin: float,
                       accel_target: float = _RED_LIGHT_ACCEL) -> float:
-  """Kinematic accel ceiling toward (light_dist - margin). Always on for nav red.
+  """Accel ceiling toward the stop. Comfort-curve gated.
 
-  Far + already slow → near 0 (no absurd early -2 from 100 m). On the 2 m/s²
-  approach curve → about -2. Above the curve / inside the margin → harder.
+  While v_ego is still under √(2·comfort·remaining), return 0 so cruise can
+  hold road speed (fixes far-light average-speed grind / cut-ins). Above the
+  curve, apply kinematic brake floored at _NAV_RED_HARD_A.
   """
   remaining = float(light_dist or 0.0) - float(margin)
   v = max(0.0, float(v_ego))
   if remaining <= 0.0:
     return min(float(accel_target), _NAV_RED_HOLD_A)
+  v_comfort = math.sqrt(2.0 * _NAV_RED_COMFORT_DECEL * remaining)
+  # Hysteresis: small slack so we do not chatter on the curve.
+  if v <= v_comfort + 0.35:
+    return 0.0
   a_kin = -(v * v) / (2.0 * max(remaining, 0.3))
   a_kin = max(a_kin, _NAV_RED_HARD_A)
-  if a_kin >= -0.05:
-    return 0.0
-  return a_kin
+  # Once committed above the comfort curve, brake at least at comfort rate.
+  return min(a_kin, -_NAV_RED_COMFORT_DECEL)
 
 
 def nav_red_force_stop(v_ego: float, light_dist: float, margin: float) -> bool:

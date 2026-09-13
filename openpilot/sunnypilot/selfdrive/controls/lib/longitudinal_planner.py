@@ -139,7 +139,10 @@ class LongitudinalPlannerSP:
       # to far-light approach (fights lead MPC → stutter).
       if snap.stop_for_light and not lead_owns_nav_stop(sm, snap):
         margin = traffic_stop_margin_m()
-        v_nav = nav_red_speed_ms(snap.dist_m, 0.0, margin)
+        road_ms = 0.0
+        if float(snap.road_limit_kph or 0.0) >= 20.0:
+          road_ms = float(snap.road_limit_kph) * CV.KPH_TO_MS
+        v_nav = nav_red_speed_ms(snap.dist_m, road_ms, margin)
         self.output_v_target = min(float(self.output_v_target), v_nav)
         a_cap = nav_red_accel_cap(
           v_ego, float(snap.dist_m), margin, float(snap.accel_target or -2.0),
