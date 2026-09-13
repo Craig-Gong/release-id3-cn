@@ -270,12 +270,13 @@ def main():
       msg = learner.get_msg(sm.all_checks(), debug=DEBUG)
 
       msg_dat = msg.to_bytes()
-      if sm.frame % 1200 == 0:  # once a minute
-        if consume_c3xl_calib_reset("paramsd"):
-          cloudlog.warning("C3XL calibration reset requested; resetting vehicle params learner")
-          learner.reset(None)
-          msg = learner.get_msg(sm.all_checks(), debug=DEBUG)
-          msg_dat = msg.to_bytes()
+      if consume_c3xl_calib_reset("paramsd"):
+        cloudlog.warning("C3XL calibration reset requested; resetting vehicle params learner")
+        learner.reset(None)
+        msg = learner.get_msg(sm.all_checks(), debug=DEBUG)
+        msg_dat = msg.to_bytes()
+        params.put("LiveParametersV2", msg_dat)
+      elif sm.frame % 1200 == 0:  # once a minute
         params.put("LiveParametersV2", msg_dat)
 
       pm.send('vehicleParameters', msg_dat)

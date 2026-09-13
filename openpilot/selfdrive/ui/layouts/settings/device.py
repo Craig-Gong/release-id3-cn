@@ -167,7 +167,7 @@ class DeviceLayout(Widget):
     desc += "<br><br>"
     if get_hardware_profile() == HardwareProfile.C3XL:
       desc += tr("sunnypilot is continuously calibrating, resetting is rarely required. " +
-                 "On C3XL, reset clears saved calibration. Cycle ignition (off then READY) to start a new calibration without restarting the driving model.")
+                 "On C3XL, reset clears calibration without restarting the driving model.")
     else:
       desc += tr("sunnypilot is continuously calibrating, resetting is rarely required. " +
                  "Resetting calibration will restart sunnypilot if the car is powered on.")

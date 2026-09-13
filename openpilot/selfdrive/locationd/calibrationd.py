@@ -20,6 +20,7 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process
 from openpilot.common.transformations.orientation import rot_from_euler, euler_from_rot
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.locationd.c3xl_calib_reset import consume_c3xl_calib_reset
 
 MIN_SPEED_FILTER = 15 * CV.MPH_TO_MS
 MAX_VEL_ANGLE_STD = np.radians(0.25)
@@ -274,8 +275,7 @@ def main() -> NoReturn:
 
   calibrator = Calibrator(param_put=True)
   calibrator.not_car = CP.notCar
-  print("CALD_V3_NO_HOT_RESET", flush=True)
-  cloudlog.warning(f"calibrationd start hot_reset=off has_params={params_reader.get('CalibrationParams') is not None}")
+  cloudlog.warning(f"calibrationd start has_params={params_reader.get('CalibrationParams') is not None}")
 
   while 1:
     timeout = 0 if sm.frame == -1 else 100
@@ -295,6 +295,12 @@ def main() -> NoReturn:
 
     # 4Hz driven by cameraOdometry
     if sm.frame % 5 == 0:
+      # One-shot shm flag from UI (not "param missing") — avoids the wipe loop
+      # that watching CalibrationParams==None caused on C3XL.
+      if consume_c3xl_calib_reset("calibrationd"):
+        cloudlog.warning("C3XL calibration reset requested; resetting calibrator")
+        calibrator.reset()
+        calibrator.update_status()
       calibrator.send_data(pm, sm.all_checks())
 
 

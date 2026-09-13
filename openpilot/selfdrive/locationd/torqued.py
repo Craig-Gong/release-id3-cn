@@ -276,13 +276,13 @@ def main(demo=False):
 
     # 4Hz driven by deviceMotion
     if sm.frame % 5 == 0:
+      if consume_c3xl_calib_reset("torqued"):
+        cloudlog.warning("C3XL calibration reset requested; resetting torque estimator")
+        estimator.reset()
       pm.send('lateralTorqueParameters', estimator.get_msg(valid=sm.all_checks(), with_points=DEBUG))
 
     # Cache points every 60 seconds while onroad
     if sm.frame % 240 == 0:
-      if consume_c3xl_calib_reset("torqued"):
-        cloudlog.warning("C3XL calibration reset requested; resetting torque estimator")
-        estimator.reset()
       msg = estimator.get_msg(valid=sm.all_checks(), with_points=True)
       params.put("LiveTorqueParameters", msg.to_bytes())
 
