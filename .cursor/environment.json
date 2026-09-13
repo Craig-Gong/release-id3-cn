@@ -1,0 +1,4 @@
+{
+  "name": "IQ.Pilot",
+  "install": "tools/install_ubuntu_dependencies.sh && tools/install_python_dependencies.sh"
+}
