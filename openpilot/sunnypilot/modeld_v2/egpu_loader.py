@@ -14,8 +14,8 @@ C3XL_TINYGRAD_CACHE_HOME = "/data/cache"
 # bulk IN 0x81 timeout; after 100 W + offroad/READY, Lebowski loaded in 15.3 s
 # with ChestnutActive=1 and no fallback. 100 W is the rail cap, not a USB-link
 # fix. Other devices stay unset (max clocks). Export wins.
-C3XL_AM_POWER_LIMIT_W = "100"
-# Official SP/OP Chestnut default (onemiless 9/6: tried 100 µs, reverted).
+C3XL_AM_POWER_LIMIT_W = 100
+# Official SP/OP Chestnut default (onemiless: tried 100 µs, reverted to 500).
 # tinygrad getenv default is already 500; set it explicitly so C3XL does not
 # inherit a tighter experimental poll.
 C3XL_AMD_USB_POLL_US = 500
@@ -57,7 +57,10 @@ def configure_default_device(comma_hardware: bool, environment: MutableMapping[s
     # /home is an ephemeral overlay on C3XL. Keep AMD firmware and compiler
     # caches across reboots so model startup never depends on a live download.
     environment.setdefault("XDG_CACHE_HOME", C3XL_TINYGRAD_CACHE_HOME)
-    environment.setdefault("AM_POWER_LIMIT", C3XL_AM_POWER_LIMIT_W)
+    # Limit the volatile SMU PPT before clocks are opened up. An explicit
+    # environment override remains available for controlled testing.
+    environment.setdefault("AM_POWER_LIMIT", str(C3XL_AM_POWER_LIMIT_W))
+    # Follow the SP/OP Chestnut default. Keep tinygrad's other devices unchanged.
     environment.setdefault("AMD_USB_POLL_US", str(C3XL_AMD_USB_POLL_US))
 
 

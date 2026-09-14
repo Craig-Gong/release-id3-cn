@@ -196,8 +196,10 @@ class JunctionHudRenderer(Widget):
       pass
     rail_v = None
     try:
-      telemetry_valid = bool(sm.alive["chestnutState"] and sm.valid["chestnutState"])
       tel = sm["chestnutState"]
+      telemetry_valid = bool(
+        sm.alive["chestnutState"] and sm.valid["chestnutState"] and tel.metricsValid
+      )
       fps = float(tel.modelFps)
       power = float(tel.powerDrawW)
       temp = float(tel.tempC)

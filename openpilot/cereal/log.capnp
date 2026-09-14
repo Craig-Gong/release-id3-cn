@@ -728,6 +728,9 @@ struct ChestnutState {
   memoryUsedMb @10 :UInt32;
   memoryTotalMb @11 :UInt32;
   modelFps @12 :Float32;
+  # SMU GPU metrics vs legacy EP0 supply are independent of PCIe LTSSM / msg.valid.
+  metricsValid @13 :Bool;
+  supplyValid @14 :Bool;
 }
 
 struct RadarState @0x9a185389d6fdd05f {

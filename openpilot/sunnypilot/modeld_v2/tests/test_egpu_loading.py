@@ -38,10 +38,10 @@ class TestEgpuLoading(unittest.TestCase):
 
     environment = {}
     configure_default_device(True, environment, c3xl=True)
-    self.assertEqual(environment["AM_POWER_LIMIT"], C3XL_AM_POWER_LIMIT_W)
+    self.assertEqual(C3XL_AM_POWER_LIMIT_W, 100)
+    self.assertEqual(environment["AM_POWER_LIMIT"], "100")
     # C3XL default after 2026-09-04 onroad: 100 W PPT, not a one-off trial flag.
     self.assertGreater(float(environment["AM_POWER_LIMIT"]), 0.0)
-    self.assertEqual(C3XL_AM_POWER_LIMIT_W, "100")
 
     environment = {"AM_POWER_LIMIT": "90"}
     configure_default_device(True, environment, c3xl=True)

@@ -120,6 +120,7 @@ class ChestnutState:
     if self.big:
       for k, v in self.metrics.items():
         setattr(state, k, v)
+      state.metricsValid = self.valid
       state.memoryUsedMb = max(0, int(GlobalCounters.mem_used_per_device.get("AMD", 0) >> 20))
       if "AMD" in Device._opened_devices:
         state.memoryTotalMb = max(0, int(Device["AMD"].iface.dev_impl.vram_size >> 20))
@@ -133,6 +134,7 @@ class ChestnutState:
         asm = Device["AMD"].iface.pci_dev.usb
         asm_telemetry = read_runtime_asm_telemetry(asm, read_supply=not self._supply_unreadable)
         state.pcieLtssm = asm_telemetry.pcie_ltssm
+        state.supplyValid = asm_telemetry.supply_valid
         if asm_telemetry.supply_valid:
           state.supplyVoltage = asm_telemetry.supply_voltage_mv
           state.supplyCurrent = asm_telemetry.supply_current_ma
@@ -142,7 +144,8 @@ class ChestnutState:
       except Exception:
         pass
 
-    msg.valid = asm_valid and (not self.big or self.valid)
+    # msg.valid tracks PCIe/USB link only — SMU metrics and supply have their own flags.
+    msg.valid = asm_valid
     self.pm.send('chestnutState', msg)
 
 

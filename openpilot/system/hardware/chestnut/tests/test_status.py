@@ -90,3 +90,15 @@ def test_skip_supply_read_only_returns_link():
   telemetry = read_runtime_asm_telemetry(asm, read_supply=False)
   assert telemetry.link_valid
   assert not telemetry.supply_valid
+
+
+def test_chestnut_message_exposes_independent_validity_domains():
+  import openpilot.cereal.messaging as messaging
+
+  msg = messaging.new_message("chestnutState", valid=True)
+  msg.chestnutState.metricsValid = True
+  msg.chestnutState.supplyValid = False
+
+  assert msg.valid
+  assert msg.chestnutState.metricsValid
+  assert not msg.chestnutState.supplyValid
