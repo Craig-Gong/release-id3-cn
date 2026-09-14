@@ -73,20 +73,24 @@ def c3xl_ife_profile_file_ready() -> bool:
 
 def apply_c3xl_ife_runtime(environment: MutableMapping[str, str] | None = None,
                            *, profile: HardwareProfile | None = None) -> bool:
-  """Opt-in IFE 1344×760 (onemiless): only when C3XL_IFE_ROAD_SIZE is already set.
+  """C3XL IFE 1344×760 for CTM/C4 parity (device configured on).
 
-  CTM needs C4/mici input size; other C3XL models keep native 1928×1208.
-  When requested: persist /data/hardware_profile for native camerad gates and
-  drop C3XL_CTMV2_INPUT_RESIZE so software resize cannot fight IFE.
+  Persist /data/hardware_profile for native camerad gates, setdefault the IFE
+  env so manager children inherit it, and drop C3XL_CTMV2_INPUT_RESIZE.
+  Explicit C3XL_IFE_ROAD_SIZE=off disables.
   """
   env = os.environ if environment is None else environment
-  selected = profile or get_hardware_profile()
-  if selected != HardwareProfile.C3XL or not c3xl_ife_road_requested(env):
+  selected = persist_hardware_profile(profile)
+  if selected != HardwareProfile.C3XL:
     return False
 
-  persist_hardware_profile(selected)
   env.pop("C3XL_CTMV2_INPUT_RESIZE", None)
-  return c3xl_ife_profile_file_ready()
+  val = env.get(C3XL_IFE_ENV)
+  if val is not None and val.strip().lower() in {"", "0", "off", "false", "no"}:
+    env.pop(C3XL_IFE_ENV, None)
+    return False
+  env.setdefault(C3XL_IFE_ENV, C3XL_IFE_ROAD_SIZE)
+  return c3xl_ife_road_requested(env) and c3xl_ife_profile_file_ready()
 
 
 def has_driver_camera(profile: HardwareProfile | None = None) -> bool:

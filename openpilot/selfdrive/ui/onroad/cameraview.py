@@ -202,7 +202,7 @@ class CameraView(Widget):
       return
 
     transform = self._calc_frame_matrix(rect)
-    src_rect = rl.Rectangle(0, 0, float(self.frame.width), float(self.frame.height))
+    src_rect = self._get_source_rect()
     # Flip cabin camera horizontally
     if self._stream_type == VisionStreamType.VISION_STREAM_CABIN:
       src_rect.width = -src_rect.width
@@ -225,6 +225,11 @@ class CameraView(Widget):
       self._render_egl(src_rect, dst_rect)
     else:
       self._render_textures(src_rect, dst_rect)
+
+  def _get_source_rect(self) -> rl.Rectangle:
+    """Override to blit a sub-rect of the VisionIPC frame (e.g. C3XL IFE dash crop)."""
+    assert self.frame is not None
+    return rl.Rectangle(0, 0, float(self.frame.width), float(self.frame.height))
 
   def _draw_placeholder(self, rect: rl.Rectangle):
     if self._placeholder_color:

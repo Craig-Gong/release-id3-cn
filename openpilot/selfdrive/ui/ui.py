@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 import os
 import time
+from pathlib import Path
+
+# Before layouts import DEVICE_CAMERAS: mirror continue.sh IFE opt-in for C3XL.
+try:
+  if Path("/data/hardware_profile").read_text().strip() == "c3xl":
+    _ife = os.environ.get("C3XL_IFE_ROAD_SIZE")
+    if _ife is None or _ife.strip().lower() not in {"0", "off", "false", "no"}:
+      if Path("/data/continue.sh").is_file() and "C3XL_IFE_ROAD_SIZE=1344x760" in Path("/data/continue.sh").read_text():
+        os.environ.setdefault("C3XL_IFE_ROAD_SIZE", "1344x760")
+except OSError:
+  pass
 
 from openpilot.cereal import messaging
 from openpilot.common.hardware import COMMA_HARDWARE

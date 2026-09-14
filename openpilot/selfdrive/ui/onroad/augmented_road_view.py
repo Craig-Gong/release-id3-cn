@@ -10,7 +10,15 @@ from openpilot.selfdrive.ui.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.onroad.cameraview import CameraView
 from openpilot.system.ui.lib.application import gui_app
-from openpilot.common.transformations.camera import DEVICE_CAMERAS, DeviceCameraConfig, view_frame_from_device_frame
+from openpilot.common.transformations.camera import (
+  DEVICE_CAMERAS,
+  DeviceCameraConfig,
+  NATIVE_OX03C10_DEVICE_CAMERA,
+  OX03C10_IFE_ROAD_WH,
+  OX03C10_ROAD_UI_ZOOM,
+  ife_ox03c10_road_camera,
+  view_frame_from_device_frame,
+)
 from openpilot.common.transformations.orientation import rot_from_euler
 
 if gui_app.sunnypilot_ui():
@@ -51,11 +59,19 @@ class AugmentedRoadView(CameraView, AugmentedRoadViewSP):
     self._matrix_cache_key = (0, 0.0, 0.0, stream_type)
     self._cached_matrix: np.ndarray | None = None
     self._content_rect = rl.Rectangle()
+    # (x, y, w, h) in VisionIPC pixels; None = full frame
+    self._ife_src_crop: tuple[float, float, float, float] | None = None
 
     self.model_renderer = ModelRenderer()
     self._hud_renderer = HudRenderer()
     self.alert_renderer = AlertRenderer()
     self.driver_state_renderer = DriverStateRenderer()
+
+  def _get_source_rect(self) -> rl.Rectangle:
+    if self._ife_src_crop is not None:
+      x, y, w, h = self._ife_src_crop
+      return rl.Rectangle(x, y, w, h)
+    return super()._get_source_rect()
 
   def _render(self, rect):
     # Only render when system is started to avoid invalid data access
@@ -159,30 +175,80 @@ class AugmentedRoadView(CameraView, AugmentedRoadViewSP):
       self.view_from_wide_calib = view_frame_from_device_frame @ wide_from_device @ device_from_calib
 
   def _calc_frame_matrix(self, rect: rl.Rectangle) -> np.ndarray:
-    # Check if we can use cached matrix
+    # IFE VisionIPC size gates UI framing (do not rely on import-time DEVICE_CAMERAS patch;
+    # the UI process often lacks C3XL_IFE_ROAD_SIZE even when camerad has it).
+    frame = self.frame
+    ife_buf = frame is not None and (frame.width, frame.height) == OX03C10_IFE_ROAD_WH
     cache_key = (
       ui_state.sm.recv_frame['extrinsicsCalibration'],
       self._content_rect.width,
       self._content_rect.height,
-      self.stream_type
+      self.stream_type,
+      ife_buf,
+      (frame.width, frame.height) if frame is not None else (0, 0),
     )
     if cache_key == self._matrix_cache_key and self._cached_matrix is not None:
       return self._cached_matrix
 
-    # Get camera configuration
     device_camera = self.device_camera or DEFAULT_DEVICE_CAMERA
     is_wide_camera = self.stream_type == WIDE_CAM
-    intrinsic = device_camera.wide_road.intrinsics if is_wide_camera else device_camera.narrow_road.intrinsics
     calibration = self.view_from_wide_calib if is_wide_camera else self.view_from_calib
-    zoom = 2.0 if is_wide_camera else 1.1
+    x, y = self._content_rect.x, self._content_rect.y
+    w, h = self._content_rect.width, self._content_rect.height
+
+    if ife_buf:
+      # IFE buffer is full optical FOV. Pick a window with the *same aspect* as the
+      # content rect (avoid vertical stretch that magnifies leftover dash), biased
+      # upward so the hood/dash stays out of frame.
+      fw, fh = float(frame.width), float(frame.height)
+      aspect = w / h if h > 1e-3 else (2100.0 / 1020.0)
+      # Side trim hides the fixed upper-right black blob (came back when window widened).
+      side = 0.18
+      # Thin dash strip remains; lower = more dash (was 0.38 fully hidden).
+      bot_margin = 0.30
+      top_margin = 0.10
+      usable_w = fw * (1.0 - 2.0 * side)
+      crop_h = usable_w / aspect
+      max_h = fh * (1.0 - top_margin - bot_margin)
+      if crop_h > max_h:
+        # Shrink height to fit; keep or tighten side trim (never widen).
+        crop_h = max_h
+        usable_w = min(usable_w, crop_h * aspect)
+      vx = (fw - usable_w) / 2.0
+      # Sit the window just above the reserved bottom band.
+      vy = fh * (1.0 - bot_margin) - crop_h
+      vy = max(fh * top_margin, min(vy, fh - crop_h))
+      self._ife_src_crop = (vx, vy, usable_w, crop_h)
+      # Blit crop 1:1 into the content rect (aspect already matched).
+      self._matrix_cache_key = cache_key
+      self._cached_matrix = np.eye(3)
+      intrinsic = ife_ox03c10_road_camera(NATIVE_OX03C10_DEVICE_CAMERA.narrow_road).intrinsics
+      if is_wide_camera:
+        intrinsic = ife_ox03c10_road_camera(NATIVE_OX03C10_DEVICE_CAMERA.wide_road).intrinsics
+      video_transform = np.array([
+        [w / usable_w, 0.0, x - vx * w / usable_w],
+        [0.0, h / crop_h, y - vy * h / crop_h],
+        [0.0, 0.0, 1.0],
+      ])
+      self.model_renderer.set_transform(video_transform @ (intrinsic @ calibration))
+      if not getattr(self, "_ife_ui_zoom_logged", False):
+        from openpilot.common.swaglog import cloudlog
+        cloudlog.warning(
+          f"C3XL IFE UI crop {frame.width}x{frame.height} -> "
+          f"src=({vx:.0f},{vy:.0f},{usable_w:.0f}x{crop_h:.0f}) "
+          f"bot_margin={bot_margin} top_margin={top_margin}"
+        )
+        self._ife_ui_zoom_logged = True
+      return self._cached_matrix
+
+    self._ife_src_crop = None
+    intrinsic = device_camera.wide_road.intrinsics if is_wide_camera else device_camera.narrow_road.intrinsics
+    zoom = 2.0 if is_wide_camera else OX03C10_ROAD_UI_ZOOM
 
     # Calculate transforms for vanishing point
     calib_transform = intrinsic @ calibration
     kep = calib_transform @ INF_POINT
 
-    # Calculate center points and dimensions
-    x, y = self._content_rect.x, self._content_rect.y
-    w, h = self._content_rect.width, self._content_rect.height
     cx, cy = intrinsic[0, 2], intrinsic[1, 2]
 
     # Ensure zoom views the whole area

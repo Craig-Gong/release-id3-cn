@@ -4,6 +4,8 @@ C3XL OX03C10 road cameras are **1928×1208**. Chestnut **CTM** artifacts target 
 
 IFE scales in the ISP before VisionIPC so CTM sees native 1344×760 (full FOV scale, not a crop). Model weights, frame cadence, control permissions and frame-drop checks are unchanged.
 
+**UI:** when VisionIPC road is **1344×760**, `augmented_road_view.py` **crops** the buffer (drop ~28% bottom hood/dash, slight side/top trim) and fills the big-screen content rect — zoom-only was not enough because IFE is full-FOV. Modeld still uses IFE-patched `DEVICE_CAMERAS` when its env is set.
+
 ## Activation (same as onemiless)
 
 Set in the startup environment **before** openpilot (verified device uses `/data/continue.sh`; not in the repo):

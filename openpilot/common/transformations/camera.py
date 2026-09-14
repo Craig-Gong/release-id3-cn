@@ -51,6 +51,8 @@ class DeviceCameraConfig:
 _ar_ox_fisheye = CameraConfig(1928, 1208, 567.0)  # focal length probably wrong? magnification is not consistent across frame
 _os_fisheye = CameraConfig(2688 // 2, 1520 // 2, 567.0 / 4 * 3)
 _ar_ox_config = DeviceCameraConfig(CameraConfig(1928, 1208, 2648.0), _ar_ox_fisheye, _ar_ox_fisheye)
+# Unpatched OX03C10 geometry for UI framing when IFE has rewritten DEVICE_CAMERAS to 1344×760.
+NATIVE_OX03C10_DEVICE_CAMERA = _ar_ox_config
 _os_config = DeviceCameraConfig(CameraConfig(2688 // 2, 1520 // 2, 1522.0 * 3 / 4), _os_fisheye, _os_fisheye)
 _neo_config = DeviceCameraConfig(CameraConfig(1164, 874, 910.0), CameraConfig(816, 612, 650.0), _NoneCameraConfig())
 
@@ -83,10 +85,23 @@ class _IfeRoadCameraConfig(CameraConfig):
     return matrix
 
 
-def _ife_road_camera(camera):
+def ife_ox03c10_road_camera(camera: CameraConfig) -> _IfeRoadCameraConfig:
   # MNDS phase-init is zero: retain source optical centre under independent X/Y scaling.
   return _IfeRoadCameraConfig(1344, 760, camera.focal_length * 1344 / camera.width,
                             camera.focal_length * 760 / camera.height)
+
+
+# Back-compat alias
+_ife_road_camera = ife_ox03c10_road_camera
+
+# Native OX03C10 road size vs IFE output (full-FOV scale, not a crop).
+OX03C10_NATIVE_ROAD_WH = (1928, 1208)
+OX03C10_IFE_ROAD_WH = (1344, 760)
+# On-road UI base zoom for narrow road (pre-IFE).
+OX03C10_ROAD_UI_ZOOM = 1.1
+# Extra tighten when blitting IFE 1344×760 onto the C3XL 2160×1080 window so the
+# visible crop matches the old "no dash" framing (IFE buffer is wider aspect).
+OX03C10_IFE_UI_ZOOM_TIGHTEN = 1.2
 
 
 if os.getenv('C3XL_IFE_ROAD_SIZE') == '1344x760':
@@ -96,6 +111,12 @@ if os.getenv('C3XL_IFE_ROAD_SIZE') == '1344x760':
       original = DEVICE_CAMERAS[(device, 'ox03c10')]
       DEVICE_CAMERAS[(device, 'ox03c10')] = DeviceCameraConfig(
         _ife_road_camera(original.narrow_road), original.cabin, _ife_road_camera(original.wide_road))
+
+
+def c3xl_ife_road_active() -> bool:
+  """True when import-time IFE patch rewrote tici ox03c10 road cams to 1344×760."""
+  cam = DEVICE_CAMERAS.get(('tici', 'ox03c10'))
+  return cam is not None and cam.narrow_road.width == 1344 and cam.narrow_road.height == 760
 
 
 # device/mesh : x->forward, y-> right, z->down
