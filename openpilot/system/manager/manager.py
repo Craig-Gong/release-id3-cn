@@ -37,10 +37,10 @@ def apply_local_recording_policy(params: Params) -> None:
 
 
 def apply_c3xl_camera_runtime() -> bool:
-  """Align C3XL road VisionIPC with C4/CTM 1344×760 via IFE before camerad starts."""
+  """If CTM IFE is opted in, persist profile before camerad (onemiless-compatible)."""
   profile = get_hardware_profile()
   enabled = apply_c3xl_ife_runtime(profile=profile)
-  if profile == HardwareProfile.C3XL:
+  if enabled or (profile == HardwareProfile.C3XL and os.environ.get("C3XL_IFE_ROAD_SIZE")):
     cloudlog.warning(f"C3XL IFE road resize enabled={enabled} "
                      f"C3XL_IFE_ROAD_SIZE={os.environ.get('C3XL_IFE_ROAD_SIZE')}")
   return enabled

@@ -11,12 +11,9 @@ HARDWARE_PROFILE_FILE = Path(os.getenv("SUNNYPILOT_HARDWARE_PROFILE_FILE", "/dat
 HARDWARE_MODEL_FILE = Path(os.getenv("SUNNYPILOT_HARDWARE_MODEL_FILE", "/sys/firmware/devicetree/base/model"))
 
 # C3XL OX03C10 road is 1928×1208; CTM/Chestnut catalogs target C4/mici 1344×760.
-# IFE hardware resize closes that gap (see docs/C3XL_IFE_HARDWARE_RESIZE.md).
+# IFE hardware resize closes that gap when opted in (docs/C3XL_IFE_HARDWARE_RESIZE.md).
 C3XL_IFE_ENV = "C3XL_IFE_ROAD_SIZE"
 C3XL_IFE_ROAD_SIZE = "1344x760"
-# Explicit disable for non-CTM artifacts compiled only for native 1928×1208.
-C3XL_IFE_DISABLE_VALUES = frozenset({"", "0", "off", "false", "no"})
-
 
 class HardwareProfile(StrEnum):
   STANDARD = "standard"
@@ -76,25 +73,20 @@ def c3xl_ife_profile_file_ready() -> bool:
 
 def apply_c3xl_ife_runtime(environment: MutableMapping[str, str] | None = None,
                            *, profile: HardwareProfile | None = None) -> bool:
-  """On C3XL: persist profile file and default IFE 1344×760 for CTM/C4 input parity.
+  """Opt-in IFE 1344×760 (onemiless): only when C3XL_IFE_ROAD_SIZE is already set.
 
-  Camerad children inherit manager env; setdefault keeps an explicit
-  C3XL_IFE_ROAD_SIZE=off (or empty) disable for native-resolution models.
+  CTM needs C4/mici input size; other C3XL models keep native 1928×1208.
+  When requested: persist /data/hardware_profile for native camerad gates and
+  drop C3XL_CTMV2_INPUT_RESIZE so software resize cannot fight IFE.
   """
   env = os.environ if environment is None else environment
-  selected = persist_hardware_profile(profile)
-  if selected != HardwareProfile.C3XL:
+  selected = profile or get_hardware_profile()
+  if selected != HardwareProfile.C3XL or not c3xl_ife_road_requested(env):
     return False
 
-  # Software-resize experiment conflicts with IFE; tip requires it unset.
+  persist_hardware_profile(selected)
   env.pop("C3XL_CTMV2_INPUT_RESIZE", None)
-
-  if C3XL_IFE_ENV not in env:
-    env[C3XL_IFE_ENV] = C3XL_IFE_ROAD_SIZE
-  elif env.get(C3XL_IFE_ENV, "").strip().lower() in C3XL_IFE_DISABLE_VALUES:
-    env.pop(C3XL_IFE_ENV, None)
-
-  return c3xl_ife_road_requested(env) and c3xl_ife_profile_file_ready()
+  return c3xl_ife_profile_file_ready()
 
 
 def has_driver_camera(profile: HardwareProfile | None = None) -> bool:
