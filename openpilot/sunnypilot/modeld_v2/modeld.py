@@ -10,10 +10,11 @@ from collections.abc import Callable
 import os
 os.environ['GMMU'] = '0'
 from openpilot.common.hardware import COMMA_HARDWARE
-from openpilot.selfdrive.modeld.helpers import chestnut_present, load_oob
+from openpilot.selfdrive.modeld.helpers import chestnut_present
 from openpilot.sunnypilot.modeld_v2.egpu_loader import (
-  C3XL_MODEL_LOAD_TIMEOUT, chestnut_skip_drive, configure_default_device, load_with_timeout,
+  C3XL_MODEL_LOAD_TIMEOUT, chestnut_skip_drive, configure_default_device, load_with_progress, load_with_timeout,
 )
+from openpilot.sunnypilot.modeld_v2.helpers import load_oob
 from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
 configure_default_device(COMMA_HARDWARE, c3xl=get_hardware_profile() == HardwareProfile.C3XL)
 import numpy as np
@@ -189,11 +190,12 @@ class ModelState(ModelStateBase):
         loading_progress_callback(5 + int(value * 70))
 
     total_size = get_chunked_file_size(pkl_path)
-    if self.chestnut:
-      with Context(DEV="USB+AMD:LLVM"):
-        jits = load_oob(open_file_chunked(pkl_path), total_size=total_size, progress_callback=report_read_progress)
-    else:
-      jits = load_oob(open_file_chunked(pkl_path), total_size=total_size, progress_callback=report_read_progress)
+    with open_file_chunked(pkl_path) as model_file:
+      if self.chestnut:
+        with Context(DEV="USB+AMD:LLVM"):
+          jits = load_with_progress(load_oob, model_file, total_size=total_size, progress_callback=report_read_progress)
+      else:
+        jits = load_with_progress(load_oob, model_file, total_size=total_size, progress_callback=report_read_progress)
     if loading_progress_callback is not None:
       loading_progress_callback(80)
 
@@ -458,6 +460,11 @@ def main(demo=False):
   cloudlog.warning(f"connected main cam with buffer size: {vipc_client_main.buffer_len} ({vipc_client_main.width} x {vipc_client_main.height})")
   if use_extra_client:
     cloudlog.warning(f"connected extra cam with buffer size: {vipc_client_extra.buffer_len} ({vipc_client_extra.width} x {vipc_client_extra.height})")
+
+  if os.getenv('C3XL_IFE_ROAD_SIZE') == '1344x760':
+    if ((vipc_client_main.width, vipc_client_main.height) != (1344, 760) or
+        (use_extra_client and (vipc_client_extra.width, vipc_client_extra.height) != (1344, 760))):
+      raise RuntimeError('IFE road resize requested but actual camera dimensions do not match')
 
   cloudlog.warning("loading model")
   st = time.monotonic()
