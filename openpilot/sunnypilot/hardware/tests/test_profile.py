@@ -49,6 +49,34 @@ def test_device_profile_file_enables_c3xl(tmp_path, monkeypatch) -> None:
   assert get_hardware_profile() == HardwareProfile.C3XL
 
 
+def test_persist_hardware_profile_writes_c3xl_file(tmp_path, monkeypatch) -> None:
+  from openpilot.sunnypilot.hardware import profile
+
+  profile_file = tmp_path / "hardware_profile"
+  monkeypatch.setattr(profile, "HARDWARE_PROFILE_FILE", profile_file)
+  monkeypatch.setattr(profile, "get_hardware_profile", lambda: HardwareProfile.C3XL)
+
+  assert profile.persist_hardware_profile() == HardwareProfile.C3XL
+  assert profile_file.read_text() == "c3xl"
+
+
+def test_apply_c3xl_ife_runtime_defaults_and_honors_off(tmp_path, monkeypatch) -> None:
+  from openpilot.sunnypilot.hardware import profile
+
+  profile_file = tmp_path / "hardware_profile"
+  monkeypatch.setattr(profile, "HARDWARE_PROFILE_FILE", profile_file)
+
+  env: dict[str, str] = {}
+  assert profile.apply_c3xl_ife_runtime(env, profile=HardwareProfile.C3XL)
+  assert env["C3XL_IFE_ROAD_SIZE"] == "1344x760"
+  assert profile_file.read_text() == "c3xl"
+
+  env_off = {"C3XL_IFE_ROAD_SIZE": "off", "C3XL_CTMV2_INPUT_RESIZE": "1"}
+  assert not profile.apply_c3xl_ife_runtime(env_off, profile=HardwareProfile.C3XL)
+  assert "C3XL_IFE_ROAD_SIZE" not in env_off
+  assert "C3XL_CTMV2_INPUT_RESIZE" not in env_off
+
+
 def test_device_profile_file_overrides_raw_tici_inference(tmp_path, monkeypatch) -> None:
   from openpilot.sunnypilot.hardware import profile
 

@@ -63,6 +63,20 @@ class TestManager(OpenpilotTestCase):
 
     assert not params.get_bool("RecordRoadVideo")
 
+  def test_c3xl_camera_runtime_defaults_ife_and_persists_profile(self, tmp_path, monkeypatch):
+    from openpilot.sunnypilot.hardware import profile as profile_mod
+
+    profile_file = tmp_path / "hardware_profile"
+    monkeypatch.setattr(profile_mod, "HARDWARE_PROFILE_FILE", profile_file)
+    monkeypatch.setattr(manager, "get_hardware_profile", lambda: HardwareProfile.C3XL)
+    monkeypatch.delenv("C3XL_IFE_ROAD_SIZE", raising=False)
+    monkeypatch.setenv("C3XL_CTMV2_INPUT_RESIZE", "1")
+
+    assert manager.apply_c3xl_camera_runtime()
+    assert profile_file.read_text() == "c3xl"
+    assert os.environ.get("C3XL_IFE_ROAD_SIZE") == "1344x760"
+    assert "C3XL_CTMV2_INPUT_RESIZE" not in os.environ
+
   def test_quick_boot_never_fabricates_prebuilt_marker(self):
     source = inspect.getsource(manager.manager_init)
     assert "QuickBootToggle" not in source

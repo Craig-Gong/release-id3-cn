@@ -22,7 +22,7 @@ from openpilot.common.version import get_build_metadata
 from openpilot.common.hardware.hw import Paths
 
 from openpilot.sunnypilot.system.params_migration import run_migration
-from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
+from openpilot.sunnypilot.hardware.profile import HardwareProfile, apply_c3xl_ife_runtime, get_hardware_profile
 
 
 def apply_local_recording_policy(params: Params) -> None:
@@ -36,6 +36,16 @@ def apply_local_recording_policy(params: Params) -> None:
     cloudlog.warning("RecordRoadVideo missing in prebuilt params; skip")
 
 
+def apply_c3xl_camera_runtime() -> bool:
+  """Align C3XL road VisionIPC with C4/CTM 1344×760 via IFE before camerad starts."""
+  profile = get_hardware_profile()
+  enabled = apply_c3xl_ife_runtime(profile=profile)
+  if profile == HardwareProfile.C3XL:
+    cloudlog.warning(f"C3XL IFE road resize enabled={enabled} "
+                     f"C3XL_IFE_ROAD_SIZE={os.environ.get('C3XL_IFE_ROAD_SIZE')}")
+  return enabled
+
+
 def manager_init() -> None:
   save_bootlog()
 
@@ -47,6 +57,7 @@ def manager_init() -> None:
   params.clear_all(ParamKeyFlag.CLEAR_ON_OFFROAD_TRANSITION)
   params.clear_all(ParamKeyFlag.CLEAR_ON_IGNITION_ON)
   apply_local_recording_policy(params)
+  apply_c3xl_camera_runtime()
   # if build_metadata.release_channel:
   #   params.clear_all(ParamKeyFlag.DEVELOPMENT_ONLY)
 

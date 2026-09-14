@@ -1,5 +1,6 @@
 from enum import StrEnum
 import os
+from collections.abc import MutableMapping
 from pathlib import Path
 
 
@@ -8,6 +9,13 @@ from pathlib import Path
 # file is the C3XL recovery/install case; other hardware keeps upstream defaults.
 HARDWARE_PROFILE_FILE = Path(os.getenv("SUNNYPILOT_HARDWARE_PROFILE_FILE", "/data/hardware_profile"))
 HARDWARE_MODEL_FILE = Path(os.getenv("SUNNYPILOT_HARDWARE_MODEL_FILE", "/sys/firmware/devicetree/base/model"))
+
+# C3XL OX03C10 road is 1928×1208; CTM/Chestnut catalogs target C4/mici 1344×760.
+# IFE hardware resize closes that gap (see docs/C3XL_IFE_HARDWARE_RESIZE.md).
+C3XL_IFE_ENV = "C3XL_IFE_ROAD_SIZE"
+C3XL_IFE_ROAD_SIZE = "1344x760"
+# Explicit disable for non-CTM artifacts compiled only for native 1928×1208.
+C3XL_IFE_DISABLE_VALUES = frozenset({"", "0", "off", "false", "no"})
 
 
 class HardwareProfile(StrEnum):
@@ -37,6 +45,56 @@ def get_hardware_profile(value: str | None = None) -> HardwareProfile:
   else:
     raw_value = infer_hardware_profile()
   return HardwareProfile(raw_value)
+
+
+def persist_hardware_profile(profile: HardwareProfile | None = None) -> HardwareProfile:
+  """Write /data/hardware_profile so native camerad IFE gates match Python inference."""
+  selected = profile or get_hardware_profile()
+  if selected != HardwareProfile.C3XL:
+    return selected
+  try:
+    current = HARDWARE_PROFILE_FILE.read_text().strip() if HARDWARE_PROFILE_FILE.is_file() else ""
+    if current != HardwareProfile.C3XL.value:
+      HARDWARE_PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
+      HARDWARE_PROFILE_FILE.write_text(HardwareProfile.C3XL.value)
+  except OSError:
+    pass
+  return selected
+
+
+def c3xl_ife_road_requested(environment: MutableMapping[str, str] | None = None) -> bool:
+  env = os.environ if environment is None else environment
+  return env.get(C3XL_IFE_ENV) == C3XL_IFE_ROAD_SIZE
+
+
+def c3xl_ife_profile_file_ready() -> bool:
+  try:
+    return HARDWARE_PROFILE_FILE.is_file() and HARDWARE_PROFILE_FILE.read_text().strip() == HardwareProfile.C3XL.value
+  except OSError:
+    return False
+
+
+def apply_c3xl_ife_runtime(environment: MutableMapping[str, str] | None = None,
+                           *, profile: HardwareProfile | None = None) -> bool:
+  """On C3XL: persist profile file and default IFE 1344×760 for CTM/C4 input parity.
+
+  Camerad children inherit manager env; setdefault keeps an explicit
+  C3XL_IFE_ROAD_SIZE=off (or empty) disable for native-resolution models.
+  """
+  env = os.environ if environment is None else environment
+  selected = persist_hardware_profile(profile)
+  if selected != HardwareProfile.C3XL:
+    return False
+
+  # Software-resize experiment conflicts with IFE; tip requires it unset.
+  env.pop("C3XL_CTMV2_INPUT_RESIZE", None)
+
+  if C3XL_IFE_ENV not in env:
+    env[C3XL_IFE_ENV] = C3XL_IFE_ROAD_SIZE
+  elif env.get(C3XL_IFE_ENV, "").strip().lower() in C3XL_IFE_DISABLE_VALUES:
+    env.pop(C3XL_IFE_ENV, None)
+
+  return c3xl_ife_road_requested(env) and c3xl_ife_profile_file_ready()
 
 
 def has_driver_camera(profile: HardwareProfile | None = None) -> bool:
