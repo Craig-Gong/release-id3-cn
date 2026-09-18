@@ -178,25 +178,36 @@ class AugmentedRoadView(CameraView, AugmentedRoadViewSP):
     # IFE VisionIPC size gates UI framing (do not rely on import-time DEVICE_CAMERAS patch;
     # the UI process often lacks C3XL_IFE_ROAD_SIZE even when camerad has it).
     frame = self.frame
-    ife_buf = frame is not None and (frame.width, frame.height) == OX03C10_IFE_ROAD_WH
+    is_wide_camera = self.stream_type == WIDE_CAM
+    # Dash/UR crop is wide-only. Narrow (tele) keeps stock 1.1 framing on IFE buffers.
+    ife_wide = (
+      frame is not None
+      and is_wide_camera
+      and (frame.width, frame.height) == OX03C10_IFE_ROAD_WH
+    )
+    ife_narrow = (
+      frame is not None
+      and (not is_wide_camera)
+      and (frame.width, frame.height) == OX03C10_IFE_ROAD_WH
+    )
     cache_key = (
       ui_state.sm.recv_frame['extrinsicsCalibration'],
       self._content_rect.width,
       self._content_rect.height,
       self.stream_type,
-      ife_buf,
+      ife_wide,
+      ife_narrow,
       (frame.width, frame.height) if frame is not None else (0, 0),
     )
     if cache_key == self._matrix_cache_key and self._cached_matrix is not None:
       return self._cached_matrix
 
     device_camera = self.device_camera or DEFAULT_DEVICE_CAMERA
-    is_wide_camera = self.stream_type == WIDE_CAM
     calibration = self.view_from_wide_calib if is_wide_camera else self.view_from_calib
     x, y = self._content_rect.x, self._content_rect.y
     w, h = self._content_rect.width, self._content_rect.height
 
-    if ife_buf:
+    if ife_wide:
       # IFE buffer is full optical FOV. Pick a window with the *same aspect* as the
       # content rect (avoid vertical stretch that magnifies leftover dash), biased
       # upward so the hood/dash stays out of frame.
@@ -234,7 +245,7 @@ class AugmentedRoadView(CameraView, AugmentedRoadViewSP):
       if not getattr(self, "_ife_ui_zoom_logged", False):
         from openpilot.common.swaglog import cloudlog
         cloudlog.warning(
-          f"C3XL IFE UI crop {frame.width}x{frame.height} -> "
+          f"C3XL IFE UI wide crop {frame.width}x{frame.height} -> "
           f"src=({vx:.0f},{vy:.0f},{usable_w:.0f}x{crop_h:.0f}) "
           f"bot_margin={bot_margin} top_margin={top_margin}"
         )
@@ -242,8 +253,13 @@ class AugmentedRoadView(CameraView, AugmentedRoadViewSP):
       return self._cached_matrix
 
     self._ife_src_crop = None
-    intrinsic = device_camera.wide_road.intrinsics if is_wide_camera else device_camera.narrow_road.intrinsics
-    zoom = 2.0 if is_wide_camera else OX03C10_ROAD_UI_ZOOM
+    if ife_narrow:
+      # Tele / narrow road: stock zoom on IFE-sized K (full buffer, no dash crop).
+      intrinsic = ife_ox03c10_road_camera(NATIVE_OX03C10_DEVICE_CAMERA.narrow_road).intrinsics
+      zoom = OX03C10_ROAD_UI_ZOOM
+    else:
+      intrinsic = device_camera.wide_road.intrinsics if is_wide_camera else device_camera.narrow_road.intrinsics
+      zoom = 2.0 if is_wide_camera else OX03C10_ROAD_UI_ZOOM
 
     # Calculate transforms for vanishing point
     calib_transform = intrinsic @ calibration
