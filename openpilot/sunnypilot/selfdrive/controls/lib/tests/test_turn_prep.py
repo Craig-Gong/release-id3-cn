@@ -119,8 +119,8 @@ def test_iqlink_nav_approach_without_blinker():
 
 def test_iqlink_nav_turn_in_without_blinker():
   helper = _prep()
-  _update(helper, 55.0, left_blinker=False, right_blinker=False, snap=_nav_turn_snap(dist=70.0))
-  v = _update(helper, 35.0, left_blinker=False, right_blinker=False, snap=_nav_turn_snap(dist=50.0))
+  _update(helper, 55.0, left_blinker=False, right_blinker=False, snap=_nav_turn_snap(dist=80.0))
+  v = _update(helper, 35.0, left_blinker=False, right_blinker=False, snap=_nav_turn_snap(dist=25.0))
   assert helper.stage == STAGE_TURN_IN
   assert abs(v - TURN_IN_MS) < 1e-6
 

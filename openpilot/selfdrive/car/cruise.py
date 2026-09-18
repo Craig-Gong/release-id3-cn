@@ -104,9 +104,10 @@ class VCruiseHelper(VCruiseHelperSP):
       return
 
     v_ms = CS.vEgoCluster if CS.vEgoCluster > 0 else CS.vEgo
-    v_ego_kph = int(round(v_ms * CV.MS_TO_KPH))
-    if v_ego_kph > self.v_cruise_kph:
-      self.v_cruise_kph = float(np.clip(v_ego_kph, self.v_cruise_min, V_CRUISE_MAX))
+    v_ego_kph = float(v_ms * CV.MS_TO_KPH)
+    # Whole km/h raise; require a clear overshoot so taps near MAX don't chatter.
+    if v_ego_kph > self.v_cruise_kph + 0.5:
+      self.v_cruise_kph = float(np.clip(round(v_ego_kph), self.v_cruise_min, V_CRUISE_MAX))
       self.mark_iqlink_cruise_override()
 
   def _update_v_cruise_non_pcm(self, CS, enabled, is_metric):

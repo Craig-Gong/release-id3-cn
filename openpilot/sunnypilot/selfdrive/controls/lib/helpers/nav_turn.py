@@ -1,13 +1,12 @@
 """IQ-link intersection turn gates (shm snapshot). No auto blinker / NavExit ALC.
 
 Toast / send_turn / nav-led prep: ≤150 m.
-Lateral turn desire: ≤80 m and vEgo < 45 km/h only (stalk does not widen
-the window — early blinker / highway LC must not become turnLeft/Right).
+Lateral turn desire: ≤50 m and vEgo < 45 km/h only (CTM v2; stalk does not
+widen — early blinker / highway LC must not become turnLeft/Right).
 Same-side BSM blocks.
 
-modeld only takes desire on a rising edge. Approach may keep-pulse; near the
-corner (or after yaw commit) hold continuously — aligned with IQ.Pilot release
-commit-hold, without ungating the full 150 m toast window.
+modeld only takes desire on a rising edge. Inside ≤50 m (or after yaw commit)
+hold continuously — no far approach pulse that fights a straight path.
 """
 from __future__ import annotations
 

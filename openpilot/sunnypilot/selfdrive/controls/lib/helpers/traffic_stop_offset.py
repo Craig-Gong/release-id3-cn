@@ -6,18 +6,17 @@ point this far short of a *filtered* model.position.x[-1] and hold there.
 Larger = stop sooner (before the line). 0 disables.
 
 IQ-link nav red uses the same slider via traffic_stop_margin_m() in
-nav/protocol.py (floored at 3 m, capped at 6 m so vision-only 8–10 m does
-not make head-car nav absurdly early). Lead follow gap is LeadStopDistance /
-stopped-lead helpers.
+nav/protocol.py (floored at 3 m, capped at 10 m) plus a fixed 2 m lamp→line
+bias. Lead follow gap is LeadStopDistance / stopped-lead helpers.
 
 Carrot-inspired (without TrafficState / fake ACC obstacles):
   - rate-limit xStop so the stop point cannot jump nearer faster than ego closes
-  - far stops (>~50 m): fade in the offset so first contact is not a hard slam
+  - far stops (>~45 m): fade in the offset so first contact is not a hard slam
   - |steer| above ~50° blocks *entry* into a new vision offset (turning)
   - end-velocity gate skips stop-sign cruise-through plans (sunnypilot #1864)
 
 Brake feel (asymmetric vs IQ-link nav_red_*):
-  - always at least kinematic −a_req (never nav-style far hold at 0)
+  - always at least kinematic −a_req (never far hold at 0)
   - mid band may soften toward coast ≈−0.5 (not to 0)
   - near zone / high a_req: full kinematic
   - jerk slew so model replan does not kick one-frame slam
@@ -48,16 +47,17 @@ E2E_STOP_MIN_SAMPLES = 4
 # Carrot-style: do not let filtered stop jump nearer faster than closing rate.
 _STOP_CLOSE_SLACK_M = 0.5
 # Fade vision offset in between this and the raw (un-offset) stop distance.
-_RELEASE_DISTANCE_M = 50.0
+# 45 m: less far fade-out so TrafficStopOffset bites earlier (was 80).
+_RELEASE_DISTANCE_M = 45.0
 # Suppress *new* vision-offset entry while steering hard (carrot ~50°).
 _STEER_ENTRY_LIMIT_DEG = 50.0
 
 # Asymmetric comfort profile (vision remaining is noisy — never far-hold at 0).
 _VISION_NEAR_M = 10.0
-_VISION_HOLD_REQ = 0.55
-_VISION_COAST_REQ = 1.20
-_VISION_COAST_A = -0.50
-_VISION_LIGHT_FLOOR_A = -0.35  # far/low a_req: at least this (adds vs tiny −a_req)
+_VISION_HOLD_REQ = 0.40
+_VISION_COAST_REQ = 1.05
+_VISION_COAST_A = -0.55
+_VISION_LIGHT_FLOOR_A = -0.45  # far/low a_req: at least this (adds vs tiny −a_req)
 _VISION_HARD_A = -3.5
 _VISION_JERK = 0.95  # m/s³
 _VISION_NEAR_JERK = 1.6  # allow faster catch-up in the final meters

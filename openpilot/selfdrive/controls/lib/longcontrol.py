@@ -75,6 +75,9 @@ class LongControl:
           CS, a_target, self.last_output_accel,
         )
         output_accel -= decel_rate * DT_CTRL  # m/s^2/s while trying to stop
+      # Planner hard brake (nav red / vision stop) must not be discarded by the
+      # soft stopping ramp — otherwise red-pin approaches crawl at ~1 m/s³.
+      output_accel = min(float(output_accel), float(a_target))
       self.reset()
 
     else:  # LongCtrlState.pid

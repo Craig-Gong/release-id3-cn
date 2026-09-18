@@ -10,13 +10,15 @@ import time
 from openpilot.cereal import messaging, custom
 from opendbc.car import structs
 from openpilot.common.constants import CV
+from openpilot.common.params import Params, UnknownKeyName
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.sunnypilot.selfdrive.controls.lib.dec.dec import DynamicExperimentalController
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import junction_stop_active
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_soft_curve import nav_soft_curve_ms
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
-  apply_stopped_lead_gap, follow_lead_present, lead_owns_nav_stop, read_nav_red_lead,
+  apply_stopped_lead_gap, follow_lead_present, lead_owns_nav_stop, read_nav_queue_lead,
+  read_nav_red_lead, radar_state_readable,
 )
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import (
   apply_lead_stop_safety,
@@ -103,21 +105,23 @@ class LongitudinalPlannerSP:
     self._nav_red_cache_margin = None
 
   def is_e2e(self, sm: messaging.SubMaster) -> bool:
-    # Never blend e2e into a present lead — ACC/MPC owns the gap.
+    # Real bumper → ACC/MPC. Vision phantoms at empty lights must NOT kill e2e
+    # (same radar-first rule as nav green / queue gates).
     try:
-      if sm['radarState'].leadOne.present:
+      if radar_state_readable(sm):
+        if read_nav_queue_lead(sm).present:
+          return False
+      elif sm['radarState'].leadOne.present:
         return False
     except Exception:
       pass
-    # Nav red / sticky red / crawling vision stop: e2e positive accel causes creep→slam.
-    if getattr(self.standstill_hold, "red_pin", False):
-      return False
+    # CTM / experimental parity: do NOT disable e2e on nav/sticky red.
+    # Model owns the no-lead approach brake; standstill_hold pins a≤−1 at rest
+    # until confirmed green (MEB must not ANFAHREN on e2e creep).
     try:
       CS = sm['carState']
       snap = read_snapshot()
       gear = CS.gearShifter
-      if snapshot_long_ok(snap, gear) and snap.stop_for_light:
-        return False
       # After IQ-link green / while latched, do not let vision shouldStop
       # force cruise-only — that fought the green launch with a hitch.
       nav_go_guard = bool(
@@ -160,10 +164,24 @@ class LongitudinalPlannerSP:
       LongitudinalPlanSource.sccMap: (self.scc.map.output_v_target, self.scc.map.output_a_target),
       LongitudinalPlanSource.speedLimitAssist: (self.sla.output_v_target, self.sla.output_a_target),
     }
-    # IQ-link owns posted limit → MAX. SLA must not min() a gas/button-raised
-    # cruise target back down to the same nav limit.
+    # Posted limit → MAX (cruise_ext). SLA must not min() a gas/button-raised
+    # cruise target back to the same limit (feels like "snap back to limit"
+    # the instant the accelerator is released — including BLE blips that
+    # briefly clear snapshot_executable while Assist is still active).
     snap_gate = read_snapshot()
-    if snapshot_executable(snap_gate):
+    sla_v = float(self.sla.output_v_target)
+    neutralize_sla = bool(snapshot_executable(snap_gate))
+    if not neutralize_sla:
+      try:
+        neutralize_sla = bool(Params().get_bool("IqlinkEnabled"))
+      except UnknownKeyName:
+        neutralize_sla = False
+      except Exception:
+        neutralize_sla = False
+    # Gas Sync / SET raised MAX above SLA's posted target.
+    if (not neutralize_sla) and sla_v < float(V_CRUISE_UNSET) and v_cruise > sla_v + 0.5:
+      neutralize_sla = True
+    if neutralize_sla:
       targets[LongitudinalPlanSource.speedLimitAssist] = (float(V_CRUISE_UNSET), a_ego)
 
     self.source = min(targets, key=lambda k: targets[k][0])
@@ -176,8 +194,8 @@ class LongitudinalPlannerSP:
       curve = nav_soft_curve_ms(snap, v_ego)
       if curve is not None:
         self.output_v_target = min(float(self.output_v_target), float(curve))
-      # Head-car nav red only. Queue behind a stopped lead: do not clamp cruise
-      # to far-light approach (fights lead MPC → stutter).
+      # Nav red = safety floor only (min with cruise/e2e). CTM owns far-field
+      # feel when experimental e2e is active; soft FAR/COAST must not replace it.
       if snap.stop_for_light and not lead_owns_nav_stop(sm, snap):
         remaining, margin, a_cap = self._nav_red_plan(
           sm, snap, v_ego, float(snap.accel_target or -2.0),
@@ -248,21 +266,23 @@ class LongitudinalPlannerSP:
     red_pin = bool(self.standstill_hold.red_pin)
     lead_owns = lead_owns_nav_stop(sm, snap)
 
-    has_lead = follow_lead_present(sm) or bool(getattr(lead, "present", False))
-    try:
-      lead_d_rel = float(getattr(lead, "dRel", 0.0) or 0.0) if has_lead else None
-    except (TypeError, ValueError):
-      lead_d_rel = None
+    # Offset / HUD "has lead": radar-first so vision phantoms at empty lights
+    # do not cancel TrafficStopOffset (same as is_e2e / green queue).
+    queue = read_nav_queue_lead(sm)
+    if radar_state_readable(sm):
+      has_lead = bool(queue.present)
+      lead_d_rel = float(queue.d_rel) if queue.present else None
+    else:
+      has_lead = follow_lead_present(sm) or bool(getattr(lead, "present", False))
+      try:
+        lead_d_rel = float(getattr(lead, "dRel", 0.0) or 0.0) if has_lead else None
+      except (TypeError, ValueError):
+        lead_d_rel = None
     model_stop = bool(getattr(model.action, "shouldStop", False))
     self.traffic_stop_offset.update()
-    nav_red = bool((red_pin or (long_ok and snap.stop_for_light)) and not lead_owns)
-    # IQ-link owns the junction when a light color is live (incl. green).
-    # Otherwise TrafficStopOffset still brakes on model shouldStop after green
-    # release → one hitch as ego starts with no lead.
-    nav_owns_light = bool(long_ok and snap.light_token in ("red", "yellow", "green"))
-    skip_vision_stop = bool(
-      nav_red or nav_owns_light or getattr(self.standstill_hold, "_nav_go_latched", False)
-    )
+    # CTM parity: live IQ-link light color must NOT skip TrafficStopOffset.
+    # Skip only after nav green latch (avoid hitch) — lead/RTOR handled inside adjust.
+    skip_vision_stop = bool(getattr(self.standstill_hold, "_nav_go_latched", False))
     a_target, should_stop = self.traffic_stop_offset.adjust(
       a_target, should_stop, v_ego, model,
       stop_light=model_stop, has_lead=has_lead, right_blinker=bool(CS.rightBlinker),
@@ -274,16 +294,17 @@ class LongitudinalPlannerSP:
     )
     a_target, should_stop = apply_lead_stop_safety(sm, v_ego, a_target, should_stop)
     if (red_pin or (long_ok and snap.stop_for_light)) and not lead_owns:
-      # Live TrafficStopOffset (3–6 m). Tiered a_req + jerk toward fused remaining.
+      # Safety net only: min() with model/e2e — near lamp if CTM has not shouldStop yet.
       remaining, margin, a_cap = self._nav_red_plan(
         sm, snap, v_ego,
         float(snap.accel_target if snap.stop_for_light else -2.0),
       )
       a_target = min(float(a_target), a_cap)
-      if nav_red_force_stop(v_ego, float(snap.dist_m), margin, remaining_m=remaining) or (
-          red_pin and v_ego <= 1.5):
+      # Only force LongControl.stopping near/past the line — rolling red_pin
+      # must keep PID + hard a_target (standstill_hold pins at rest).
+      if nav_red_force_stop(v_ego, float(snap.dist_m), margin, remaining_m=remaining):
         should_stop = True
-        if v_ego <= 0.6 or red_pin or remaining <= 0.0:
+        if v_ego <= 0.6 or remaining <= 0.0:
           a_target = min(float(a_target), -1.5)
     should_stop, a_target = self.standstill_hold.apply(
       should_stop, a_target, v_ego,

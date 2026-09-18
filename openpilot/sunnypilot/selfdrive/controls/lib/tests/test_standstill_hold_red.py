@@ -192,3 +192,75 @@ def test_nav_go_latch_blocks_vision_hitch_while_creeping():
   finally:
     mod.read_snapshot = orig_read
     mod.snapshot_executable = orig_exec
+
+
+def test_rolling_red_pin_keeps_hard_a_without_should_stop():
+  """Approach with red_pin: a≤−1 but should_stop=False so LongControl stays in PID."""
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers import standstill_hold as mod
+
+  h = StandstillHold()
+  t0 = 60.0
+  red = _snap(ts=t0, traffic_light="red", stop_for_light=True, dist_m=25.0)
+  orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
+  mod.read_snapshot = lambda: red
+  mod.snapshot_executable = lambda snap, now=None: True
+  try:
+    stop, a = h.apply(False, -0.4, 1.2, standstill=False, gas=False, model_stop=False,
+                      sm=_radar_sm(), now=t0)
+    assert h.red_pin is True
+    assert stop is False
+    assert a <= -1.0
+  finally:
+    mod.read_snapshot = orig_read
+    mod.snapshot_executable = orig_exec
+
+
+def test_at_rest_red_pin_nails_should_stop():
+  """Stopped on red: should_stop + a≤−1 until confirmed green."""
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers import standstill_hold as mod
+
+  h = StandstillHold()
+  t0 = 70.0
+  red = _snap(ts=t0, traffic_light="red", stop_for_light=True, dist_m=5.0)
+  orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
+  mod.read_snapshot = lambda: red
+  mod.snapshot_executable = lambda snap, now=None: True
+  try:
+    stop, a = h.apply(True, -0.5, 0.0, standstill=True, gas=False, model_stop=False,
+                      sm=_radar_sm(), now=t0)
+    assert h.red_pin is True
+    assert stop is True
+    assert a <= -1.0
+  finally:
+    mod.read_snapshot = orig_read
+    mod.snapshot_executable = orig_exec
+
+
+def test_vision_pin_holds_at_rest_without_iqlink():
+  """IQ-link off: model_stop rising edge pins standstill with a≤−1 (no creep)."""
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers import standstill_hold as mod
+
+  h = StandstillHold()
+  t0 = 80.0
+  off = _snap(
+    ts=t0, iqlink_enabled=False, link_ok=False, traffic_light="",
+    stop_for_light=False, dist_m=0.0,
+  )
+  orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
+  mod.read_snapshot = lambda: off
+  mod.snapshot_executable = lambda snap, now=None: False
+  try:
+    stop, a = h.apply(True, 0.2, 0.0, standstill=True, gas=False, model_stop=True,
+                      sm=_radar_sm(), now=t0)
+    assert h.vision_pin is True
+    assert stop is True
+    assert a <= -1.0
+    # model_stop clears but pin TTL keeps the nail.
+    stop, a = h.apply(False, 0.4, 0.0, standstill=True, gas=False, model_stop=False,
+                      sm=_radar_sm(), now=t0 + 0.5)
+    assert h.vision_pin is True
+    assert stop is True
+    assert a <= -1.0
+  finally:
+    mod.read_snapshot = orig_read
+    mod.snapshot_executable = orig_exec

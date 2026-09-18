@@ -19,30 +19,34 @@ _EXIT = {6, 11}
 
 _RED_LIGHT_ACCEL = -2.0
 _RED_LIGHT_DECEL = 2.0
-# Required-decel tiers (a_req = v²/(2·remaining)). Avoid far grind AND late slam:
-# hold → light coast → track −a_req → hard floor. Comfort √ used by helpers/tests.
+# Required-decel tiers (a_req = v²/(2·remaining)). Safety net under CTM e2e:
+# never far-hold at 0 while stop_for_light. Soft FAR/COAST must not replace
+# experimental model braking — planner min()s these with e2e/cruise.
 _NAV_RED_COMFORT_DECEL = 1.5
-_NAV_RED_HOLD_REQ = 0.55    # a_req below → no forced brake (keep traffic pace)
-_NAV_RED_COAST_REQ = 1.20   # a_req below → chauffeur step-1 coast (~60 km/h @ 120 m)
-_NAV_RED_COAST_A = -0.50
-_NAV_RED_MAIN_REQ = 1.60    # a_req below → main brake tracks −a_req
-_NAV_RED_JERK = 0.85        # m/s³ slew on a_cap (no single-frame 0→−1.5)
+_NAV_RED_HOLD_REQ = 0.30    # a_req below → light floor (earlier bite)
+_NAV_RED_COAST_REQ = 0.90   # a_req below → chauffeur coast
+_NAV_RED_COAST_A = -0.85
+_NAV_RED_FAR_A = -0.75      # far/low a_req: keep authority (never 0)
+_NAV_RED_MAIN_REQ = 1.40    # a_req below → main brake tracks −a_req
+_NAV_RED_JERK = 1.25        # m/s³ slew — catch planner hard brake sooner
 _NAV_RED_DT = 0.05
 # Floor when TrafficStopOffset is 0 / unset. Live slider applies to IQ-link red
-# (amap light distance ≠ stop line). Cap at 6 m so a vision-only 8–10 m CD210
-# setting does not make head-car nav stops absurdly early.
+# (amap light distance ≠ stop line). Cap matches vision slider so 8–10 m works.
 NAV_STOP_MARGIN_M = 3.0
-NAV_STOP_MARGIN_MAX_M = 6.0
+NAV_STOP_MARGIN_MAX_M = 10.0
+# Amap trafficLightDistM is to the lamp, not the painted line (IQ used +2 m).
+_STOP_LINE_EARLY_COMP_M = 2.0
 _offset_cache = NAV_STOP_MARGIN_M
 _offset_n = 0
 _YELLOW_STOP_DIST_M = 30.0
 LIGHT_TURN_WINDOW_M = 150.0
 # Toast / send_turn / nav-led longitudinal prep.
 TURN_DESIRE_WINDOW_M = 150.0
-# Lateral desire + turn-in (no stalk widen): start near the corner. 120 m was
-# early for Lebowski — turnLeft/Right while still straight feels like a
-# wheel fight. Toast / send_turn / prep stay 150 m; commit-hold still ≤50 m.
-NAV_LATERAL_TURN_M = 80.0
+# Lateral desire + turn-in (no stalk widen). Lebowski needed ~30 m; CTM v2 /
+# similar big models understeer if armed that late — 50 m ≈ 4–5 s @ 36–45
+# km/h after turn_prep. Toast / send_turn / prep stay 150 m. Commit-hold
+# matches this so once desire arms it stays continuous.
+NAV_LATERAL_TURN_M = 50.0
 # Do not promote Gaode lc_* → send_turn at highway limits (fork stays LC).
 NAV_LC_PROMOTE_MAX_KPH = 70.0
 NEAR_DEST_REMAIN_M = 150.0
@@ -113,8 +117,8 @@ def approach_speed_ms(dist_m: float, decel: float, cap_ms: float = 0.0) -> float
 def nav_stop_margin_m(offset_m: float | None = None) -> float:
   """Meters short of amap trafficLightDistM for IQ-link red.
 
-  Uses TrafficStopOffset when > 0, floored at 3 m and capped at 6 m.
-  Offset 0 / unset keeps the 3 m default.
+  Uses TrafficStopOffset when > 0, floored at 3 m and capped at the vision
+  slider max (10 m). Offset 0 / unset keeps the 3 m default.
   """
   if offset_m is None:
     return NAV_STOP_MARGIN_M
@@ -130,12 +134,12 @@ def nav_stop_margin_m(offset_m: float | None = None) -> float:
 def nav_red_remaining_m(light_dist: float, margin: float,
                         lead_d_rel: float | None = None,
                         stop_gap: float = _NAV_RED_LEAD_STOP_GAP_M) -> float:
-  """Meters left to the intended stop (light − margin, optionally fused with radar).
+  """Meters left to the intended stop (light − margin − line bias, ± radar).
 
   When a mmWave track sits between ego and the light, use min(light, bumper−gap)
   so we do not plan past a stopped queue as if the light were the only stop.
   """
-  light_rem = float(light_dist or 0.0) - float(margin)
+  light_rem = float(light_dist or 0.0) - float(margin) - _STOP_LINE_EARLY_COMP_M
   if lead_d_rel is None:
     return light_rem
   d = float(lead_d_rel)
@@ -159,7 +163,7 @@ def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float,
   it drops along a constant-decel curve. Forced brake uses nav_red_accel_cap.
   """
   rem = float(remaining_m) if remaining_m is not None else (
-    float(light_dist or 0.0) - float(margin)
+    float(light_dist or 0.0) - float(margin) - _STOP_LINE_EARLY_COMP_M
   )
   if rem <= 0.0:
     return 0.0
@@ -171,7 +175,7 @@ def nav_red_comfort_speed_ms(light_dist: float, margin: float,
                              remaining_m: float | None = None) -> float:
   """Max speed that can still stop with comfort decel at remaining."""
   remaining = float(remaining_m) if remaining_m is not None else (
-    float(light_dist or 0.0) - float(margin)
+    float(light_dist or 0.0) - float(margin) - _STOP_LINE_EARLY_COMP_M
   )
   if remaining <= 0.0:
     return 0.0
@@ -180,18 +184,19 @@ def nav_red_comfort_speed_ms(light_dist: float, margin: float,
 
 def nav_red_accel_raw(v_ego: float, remaining: float,
                       accel_target: float = _RED_LIGHT_ACCEL) -> float:
-  """Unsmoothed a_cap from a_req tiers (hold / coast / main / hard)."""
+  """Unsmoothed a_cap from a_req tiers (far floor / coast / main / hard)."""
   rem = float(remaining)
   v = max(0.0, float(v_ego))
   if rem <= 0.0:
     return min(float(accel_target), _NAV_RED_HOLD_A)
   a_req = (v * v) / (2.0 * max(rem, 0.3))
   if a_req <= _NAV_RED_HOLD_REQ:
-    return 0.0
+    # Far: keep light authority (never 0 — that caused late first brake).
+    return _NAV_RED_FAR_A
   if a_req <= _NAV_RED_COAST_REQ:
     return _NAV_RED_COAST_A
   if a_req <= _NAV_RED_MAIN_REQ:
-    # Continuous main brake: track −a_req (≈ −1.15 … −1.5 in this band).
+    # Continuous main brake: track −a_req (≈ −1.05 … −1.5 in this band).
     return -a_req
   a_kin = -a_req
   return max(a_kin, _NAV_RED_HARD_A)
@@ -204,12 +209,11 @@ def nav_red_accel_cap(v_ego: float, light_dist: float, margin: float,
                       dt: float = _NAV_RED_DT) -> float:
   """Accel ceiling toward the stop: a_req tiers + optional jerk slew.
 
-  Hold while a_req is low (far / already slow enough). Coast ~−0.5 in the
-  mid band, then track −a_req, then hard floor. When prev_a is set, slew at
-  _NAV_RED_JERK so a_cap cannot jump 0→−1.5 in one frame.
+  Far band uses a light floor (not a=0). Coast then track −a_req, then hard
+  floor. When prev_a is set, slew at _NAV_RED_JERK.
   """
   remaining = float(remaining_m) if remaining_m is not None else (
-    float(light_dist or 0.0) - float(margin)
+    float(light_dist or 0.0) - float(margin) - _STOP_LINE_EARLY_COMP_M
   )
   raw = nav_red_accel_raw(v_ego, remaining, accel_target)
   if prev_a is None:
@@ -224,7 +228,9 @@ def nav_red_force_stop(v_ego: float, light_dist: float, margin: float,
                        remaining_m: float | None = None) -> bool:
   """True when already at/past the intended stop or in the final hold zone."""
   d = float(light_dist or 0.0)
-  remaining = float(remaining_m) if remaining_m is not None else (d - float(margin))
+  remaining = float(remaining_m) if remaining_m is not None else (
+    d - float(margin) - _STOP_LINE_EARLY_COMP_M
+  )
   if d <= 0.0 or remaining <= 0.0:
     return True
   if remaining <= _NAV_RED_NEAR_M:

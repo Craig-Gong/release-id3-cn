@@ -183,9 +183,9 @@ def test_large_near_replan_snaps():
 
 def test_vision_accel_never_far_holds_at_zero():
   # Very far / tiny a_req: light floor adds brake (never 0).
-  assert vision_stop_accel_raw(16.67, 500.0) == -0.35
-  # Far mid: coast soft ceiling (a_req ~0.93 @ 150 m).
-  assert vision_stop_accel_raw(16.67, 150.0) == -0.50
+  assert vision_stop_accel_raw(16.67, 500.0) == -0.45
+  # Far mid: coast soft ceiling (a_req ~0.96 @ 145 m band → use 150).
+  assert vision_stop_accel_raw(16.67, 150.0) == -0.55
   # Above coast req: full kinematic.
   assert vision_stop_accel_raw(16.67, 100.0) < -1.20
   # Near: full kinematic / hard floor.

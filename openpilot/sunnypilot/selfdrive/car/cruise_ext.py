@@ -4,6 +4,8 @@ Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
+from __future__ import annotations
+
 import time
 
 import numpy as np
@@ -31,6 +33,8 @@ V_CRUISE_UNSET = 255
 NAV_MAX_RAISE_KPH_S = 8.0
 # After this long without an executable snapshot, hand MAX back to SLA/map.
 IQLINK_GAP_CLEAR_S = 15.0
+# Ignore sub-kph Gaode flutter when deciding a "real" posted-limit drop.
+IQLINK_LIMIT_DROP_MIN_KPH = 1.0
 
 
 def update_manual_button_timers(CS: car.CarState, button_timers: dict[car.CarState.ButtonEvent.Type, int]) -> None:
@@ -73,7 +77,7 @@ class VCruiseHelperSP:
     # IQ-link nav road limit → MAX (gas/button override sticks until limit drops)
     self.prev_iqlink_road_limit_kph = -1.0
     self._iqlink_max_t = 0.0
-    self._iqlink_none_since = 0.0
+    self._iqlink_none_since: float | None = None
     self._iqlink_max_override = False
 
   def read_custom_set_speed_params(self) -> None:
@@ -184,27 +188,31 @@ class VCruiseHelperSP:
         iqlink_on = False
       if not iqlink_on:
         self.prev_iqlink_road_limit_kph = -1.0
-        self._iqlink_none_since = 0.0
-        self._iqlink_max_override = False
+        self._iqlink_none_since = None
+        # Do not clear _iqlink_max_override: Gas Sync uses the same latch under
+        # SLA (IQ-link off). Clearing here made Assist yank MAX every frame.
         return False
       if self.prev_iqlink_road_limit_kph >= 20.0:
-        if self._iqlink_none_since <= 0.0:
+        if self._iqlink_none_since is None:
           self._iqlink_none_since = now
         elif (now - self._iqlink_none_since) >= IQLINK_GAP_CLEAR_S:
           self.prev_iqlink_road_limit_kph = -1.0
-          self._iqlink_none_since = 0.0
-          self._iqlink_max_override = False
+          self._iqlink_none_since = None
+          # Keep gas/button override across long BLE gaps — handing MAX to
+          # SLA/map must not yank a user-raised set speed back to the limit.
           return False
         return True
       return False
 
-    self._iqlink_none_since = 0.0
+    self._iqlink_none_since = None
     dt = 0.05 if self._iqlink_max_t <= 0.0 else min(0.2, max(0.0, now - self._iqlink_max_t))
     self._iqlink_max_t = now
 
     prev = self.prev_iqlink_road_limit_kph
     limit_changed = limit_kph != prev
-    limit_drop = bool(limit_changed and prev >= 20.0 and limit_kph < prev)
+    limit_drop = bool(
+      limit_changed and prev >= 20.0 and (prev - limit_kph) >= IQLINK_LIMIT_DROP_MIN_KPH
+    )
     unset = self.v_cruise_kph >= V_CRUISE_UNSET or self.v_cruise_kph <= 0
     below_limit = (not unset) and self.v_cruise_kph < limit_kph
 
@@ -240,7 +248,16 @@ class VCruiseHelperSP:
       return
     if self.sla_state in SLA_ACTIVE_STATES and (self.prev_sla_state not in SLA_ACTIVE_STATES or
                                                 self.update_speed_limit_final_last_changed):
-      self.v_cruise_kph = np.clip(round(self.speed_limit_final_last_kph, 1), self.v_cruise_min, V_CRUISE_MAX)
+      new_kph = float(np.clip(round(self.speed_limit_final_last_kph, 1), self.v_cruise_min, V_CRUISE_MAX))
+      # Gas/button-raised MAX must stick above posted limit. Real Assist limit
+      # drops still apply (and clear the override latch).
+      if self._iqlink_max_override and self.v_cruise_kph > new_kph + 0.5:
+        prev_lim = float(self.prev_speed_limit_final_last_kph)
+        if prev_lim >= 20.0 and (prev_lim - new_kph) >= IQLINK_LIMIT_DROP_MIN_KPH:
+          self.v_cruise_kph = new_kph
+          self._iqlink_max_override = False
+      else:
+        self.v_cruise_kph = new_kph
 
     self.prev_sla_state = self.sla_state
     self.prev_speed_limit_final_last_kph = self.speed_limit_final_last_kph

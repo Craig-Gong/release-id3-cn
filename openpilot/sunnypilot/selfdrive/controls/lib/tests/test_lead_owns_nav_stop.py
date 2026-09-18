@@ -67,8 +67,21 @@ def test_gap_helper_runs_when_lead_owns_far_red(monkeypatch=None):
                                      should_stop=False, red_pin=True)
     assert stop is True
     assert a < 0.0
+    # Soft zone under nav red: never +a creep (was +0.25 → MEB ANFAHREN).
+    a2, stop2 = apply_stopped_lead_gap(_sm(d_rel=6.5, v_lead=0.0), v_ego=0.2, a_target=0.5,
+                                       should_stop=False, red_pin=True)
+    assert stop2 is True
+    assert a2 <= 0.0
   finally:
     snap_mod.read_snapshot = old
+
+
+def test_gap_helper_bans_creep_on_vision_model_stop():
+  # IQ-link OFF: model_stop soft zone must not nudge past the line.
+  a, stop = apply_stopped_lead_gap(_sm(d_rel=6.5, v_lead=0.0), v_ego=0.2, a_target=0.5,
+                                   should_stop=False, model_stop=True)
+  assert stop is True
+  assert a <= 0.0
 
 
 def test_standstill_clears_red_pin_when_lead_owns():

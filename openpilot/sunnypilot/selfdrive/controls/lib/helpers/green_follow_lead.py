@@ -194,13 +194,19 @@ def lead_owns_nav_stop(sm: Any, snap: Any) -> bool:
 
 def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: bool,
                            *, red_pin: bool = False, model_stop: bool = False) -> tuple[float, bool]:
-  """Keep ~3.5 m behind a stopped lead; only creep when clearly too far (>5.0 m)."""
+  """Keep ~3.5 m behind a stopped lead; only creep when clearly too far (>5.0 m).
+
+  Under nav red / vision model_stop / red_pin: never soft-zone +a creep
+  (MEB ANFAHREN on tiny positive a → stop-creep-stop at the line).
+  """
   # Never creep into a head-car nav red — that fights standstill hold.
-  # Queue behind a stopped bumper: lead owns; keep gap logic.
+  # Queue behind a stopped bumper: lead owns; keep gap logic but ban +a.
+  stop_intent = bool(red_pin or model_stop)
   try:
     from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable
     snap = read_snapshot()
     nav_red = bool(red_pin or (snapshot_executable(snap) and snap.stop_for_light))
+    stop_intent = bool(stop_intent or nav_red)
     if nav_red and not lead_owns_nav_stop(sm, snap):
       return float(a_target), bool(should_stop)
   except Exception:
@@ -239,9 +245,11 @@ def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: 
     return float(a_target), bool(should_stop)
 
   if d_rel < STOPPED_LEAD_SOFT_M:
-    # Clearly too far behind a stopped bumper: very gentle close only.
-    if v_ego > STOPPED_LEAD_CLOSE_V_MAX:
-      a_target = min(float(a_target), STOPPED_LEAD_SOFT_A)
+    # Soft zone: congestion creep only when NOT stopping for a light/line.
+    if stop_intent or v_ego > STOPPED_LEAD_CLOSE_V_MAX:
+      should_stop = True if stop_intent else should_stop
+      brake = STOPPED_LEAD_SOFT_A if v_ego > 0.15 else STOPPED_LEAD_HOLD_A
+      a_target = min(float(a_target), brake)
     else:
       should_stop = False
       a_target = min(max(float(a_target), STOPPED_LEAD_CLOSE_A * 0.5), STOPPED_LEAD_CLOSE_A)

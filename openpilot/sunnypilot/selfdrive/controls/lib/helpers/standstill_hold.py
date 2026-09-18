@@ -34,6 +34,8 @@ _STANDSTILL_HOLD_RELEASE_S = 1.0
 _STANDSTILL_HOLD_LEAD_RELEASE_S = 0.15
 _REMAIN_GO_CONFIRM_S = 0.15  # 3 frames @ 50 ms — filter single-packet false go
 _STICKY_RED_TTL_S = 8.0
+# IQ-link off: model shouldStop rising edge pins standstill briefly (no creep).
+_VISION_PIN_TTL_S = 5.0
 # MEB needs clearly positive accel for ANFAHREN; 0.4 felt like release-without-go.
 _GO_LAUNCH_FLOOR_A = 0.9
 _DT_MDL = 0.05
@@ -71,6 +73,9 @@ class StandstillHold:
     self._sticky_until = 0.0
     self._remain_go_s = 0.0
     self.red_pin = False
+    self.vision_pin = False
+    self._vision_pin_until = 0.0
+    self._model_stop_prev = False
 
   def reset(self) -> None:
     self.hold = False
@@ -82,10 +87,17 @@ class StandstillHold:
     self._sticky_until = 0.0
     self._remain_go_s = 0.0
     self.red_pin = False
+    self.vision_pin = False
+    self._vision_pin_until = 0.0
+    self._model_stop_prev = False
 
   def _clear_sticky(self) -> None:
     self.sticky_red = False
     self._sticky_until = 0.0
+
+  def _clear_vision_pin(self) -> None:
+    self.vision_pin = False
+    self._vision_pin_until = 0.0
 
   def _launch_a(self, a_target: float, sm, v_ego: float) -> float:
     """Positive takeoff after nav green; do not pass through a vision hitch.
@@ -107,6 +119,9 @@ class StandstillHold:
       self._clear_sticky()
       self.red_pin = False
       self._remain_go_s = 0.0
+      # Keep vision_pin when IQ-link is merely off — only gas / speed / gear clear it via reset.
+      if gas or v_ego > _RELEASE_V_EGO or nav_long_blocked(gear):
+        self._clear_vision_pin()
       return
 
     # Queue behind a stopped lead short of the light: follow lead, not nav pin.
@@ -174,23 +189,30 @@ class StandstillHold:
     if remain_go and follow_ok and not head_car:
       self._clear_sticky()
       self.red_pin = False
+      self._clear_vision_pin()
       self.hold = False
       self.hold_s = 0.0
       self.hold_released = True
       self._nav_go_latched = True
       return False, max(float(a_target), _GO_LAUNCH_FLOOR_A)
 
+    at_rest = standstill or v_ego <= _STANDSTILL_V
+
     # Nav / sticky red: pin until confirmed green (head) or queue remain_go.
     # While green is dwelling, skip this pin so the ~1 s APK green path can run.
+    # Rolling: keep hard a_target floor — do NOT force should_stop (LongControl
+    # stopping would discard planner −2…−3.5 and crawl at ~1 m/s³).
     if self.red_pin and not confirmed_green:
       if not (remain_go and follow_ok and not head_car):
-        self.hold = True
-        self.hold_s = 0.0
-        self.hold_released = False
         self._nav_go_latched = False
-        return True, min(float(a_target), -1.0)
+        self._clear_vision_pin()
+        if at_rest:
+          self.hold = True
+          self.hold_s = 0.0
+          self.hold_released = False
+          return True, min(float(a_target), -1.0)
+        return False, min(float(a_target), -1.0)
 
-    at_rest = standstill or v_ego <= _STANDSTILL_V
     if not at_rest:
       if self.hold:
         self.hold = False
@@ -208,6 +230,7 @@ class StandstillHold:
       self.hold_s = 0.0
       self.hold_released = True
       self._nav_go_latched = True
+      self._clear_vision_pin()
       return False, self._launch_a(a_target, follow_sm, v_ego)
 
     # Congestion: lead already rolling, or closing a too-large gap.
@@ -252,23 +275,39 @@ class StandstillHold:
         self._nav_go_latched = True
         self._clear_sticky()
         self.red_pin = False
+        self._clear_vision_pin()
         return False, max(float(a_target), _GO_LAUNCH_FLOOR_A)
 
     # Latched after nav/APK green: ignore vision shouldStop until rolling.
     if self._nav_go_latched:
       return False, self._launch_a(a_target, follow_sm, v_ego)
 
-    arm = should_stop if self.hold_released else (should_stop or model_stop)
+    # IQ-link off (or no live red): model shouldStop rising edge → short vision pin.
+    if model_stop and not self._model_stop_prev and not self.red_pin:
+      self.vision_pin = True
+      self._vision_pin_until = clock + _VISION_PIN_TTL_S
+    self._model_stop_prev = bool(model_stop)
+    if self.vision_pin and clock > self._vision_pin_until:
+      self._clear_vision_pin()
+    if self.red_pin:
+      self._clear_vision_pin()
+
+    arm = should_stop if self.hold_released else (should_stop or model_stop or self.vision_pin)
     if arm:
       self.hold = True
       self.hold_s = 0.0
     elif self.hold:
-      self.hold_s += _DT_MDL
-      if self.hold_s >= _STANDSTILL_HOLD_RELEASE_S:
-        self.hold = False
-        self.hold_released = True
+      # Vision pin: do not time-release while pin is live (no creep at red/stop).
+      if self.vision_pin:
+        self.hold_s = 0.0
+      else:
+        self.hold_s += _DT_MDL
+        if self.hold_s >= _STANDSTILL_HOLD_RELEASE_S:
+          self.hold = False
+          self.hold_released = True
     if self.hold:
-      return True, min(float(a_target), 0.0)
+      # Match nav red pin: a≤−1 so MEB never ANFAHREN on a≈0 / tiny +e2e.
+      return True, min(float(a_target), -1.0)
     return should_stop, a_target
 
 
