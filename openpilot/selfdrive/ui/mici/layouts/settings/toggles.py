@@ -8,6 +8,7 @@ from openpilot.selfdrive.ui.mici.widgets.dialog import BigConfirmationCircleButt
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.layouts.settings.common import restart_needed_callback
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.sunnypilot.hardware.profile import has_microphone
 
 PERSONALITY_TO_INT = log.LongitudinalPersonality.schema.enumerants
 
@@ -51,31 +52,36 @@ class TogglesLayoutMici(NavScroller):
     record_mic = BigParamControl("record & upload mic audio", "RecordAudio", toggle_callback=restart_needed_callback)
     enable_openpilot = BigParamControl("enable sunnypilot", "OpenpilotEnabledToggle", toggle_callback=restart_needed_callback)
 
-    self._scroller.add_widgets([
+    items = [
       self._personality_toggle,
       self._experimental_btn,
       is_metric_toggle,
       ldw_toggle,
       always_on_dm_toggle,
       record_front,
-      record_mic,
       enable_openpilot,
-    ])
+    ]
+    if has_microphone():
+      items.insert(-1, record_mic)
+    self._scroller.add_widgets(items)
 
     # Toggle lists
-    self._refresh_toggles = (
+    refresh_toggles = [
       ("ExperimentalMode", self._experimental_btn),
       ("IsMetric", is_metric_toggle),
       ("IsLdwEnabled", ldw_toggle),
       ("AlwaysOnDM", always_on_dm_toggle),
       ("RecordFront", record_front),
-      ("RecordAudio", record_mic),
       ("OpenpilotEnabledToggle", enable_openpilot),
-    )
+    ]
+    if has_microphone():
+      refresh_toggles.insert(-1, ("RecordAudio", record_mic))
+    self._refresh_toggles = tuple(refresh_toggles)
 
     enable_openpilot.set_enabled(lambda: not ui_state.engaged)
     record_front.set_enabled(False if ui_state.params.get_bool("RecordFrontLock") else (lambda: not ui_state.engaged))
-    record_mic.set_enabled(lambda: not ui_state.engaged)
+    if has_microphone():
+      record_mic.set_enabled(lambda: not ui_state.engaged)
 
     if ui_state.params.get_bool("ShowDebugInfo"):
       gui_app.set_show_touches(True)

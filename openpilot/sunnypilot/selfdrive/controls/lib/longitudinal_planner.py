@@ -85,12 +85,14 @@ class LongitudinalPlannerSP:
     lead = read_nav_red_lead(sm, light_d)
     lead_d = float(lead.d_rel) if lead.present else None
     remaining = nav_red_remaining_m(light_d, margin, lead_d_rel=lead_d)
+    # Stop Line Extra (live slider), not folded into the 10 m offset cap.
+    brake_rem = float(remaining) - float(self.traffic_stop_offset.lead_m)
     dt = 0.05
     if self._nav_red_a_t > 0.0:
       dt = max(1e-3, min(0.2, now - self._nav_red_a_t))
     a_cap = nav_red_accel_cap(
       v_ego, light_d, margin, float(accel_target),
-      remaining_m=remaining, prev_a=self._nav_red_a_prev, dt=dt,
+      remaining_m=brake_rem, prev_a=self._nav_red_a_prev, dt=dt,
     )
     self._nav_red_a_prev = float(a_cap)
     self._nav_red_a_t = now

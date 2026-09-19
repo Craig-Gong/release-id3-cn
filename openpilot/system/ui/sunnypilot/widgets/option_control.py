@@ -22,7 +22,8 @@ class OptionControlSP(ItemAction):
                on_value_changed: Callable[[int], None] | None = None,
                value_map: dict[int, int] | None = None,
                label_width: int = LABEL_WIDTH,
-               use_float_scaling: bool = False, label_callback: Callable[[int], str] | None = None):
+               use_float_scaling: bool = False, label_callback: Callable[[int], str] | None = None,
+               fallback: float | None = None):
 
     super().__init__(enabled=enabled)
     self.params = Params()
@@ -38,13 +39,18 @@ class OptionControlSP(ItemAction):
     self.use_float_scaling = use_float_scaling
     self.current_value = min_value
     self.label_callback = label_callback
+    self._file_backed = False
+    self._fallback = fallback
     if self.value_map:
+      stored = self._read_param()
       for key in self.value_map:
-        if self.value_map[key] == self.params.get(self.param_key, return_default=True):
+        if self.value_map[key] == stored:
           self.current_value = int(key)
           break
     else:
-      value = self.params.get(self.param_key, return_default=True)
+      value = self._read_param()
+      if value is None:
+        value = fallback if fallback is not None else (min_value / 100.0 if use_float_scaling else min_value)
       self.current_value = int(float(value) * 100.0) if self.use_float_scaling else int(value)
 
     # Initialize font and button styles
@@ -53,6 +59,15 @@ class OptionControlSP(ItemAction):
     # Layout rectangles for components
     self.minus_btn_rect = rl.Rectangle(0, 0, 0, 0)
     self.plus_btn_rect = rl.Rectangle(0, 0, 0, 0)
+
+  def _read_param(self):
+    """libparams miss (prebuilt, manager still holding old Params) must not crash the page."""
+    value = self.params.get(self.param_key, return_default=True)
+    if value is not None:
+      return value
+    self._file_backed = True
+    from openpilot.common.file_params import read_file_param
+    return read_file_param(self.param_key, self._fallback)
 
   def get_value(self) -> int:
     """Get the current value of the control"""
@@ -66,11 +81,15 @@ class OptionControlSP(ItemAction):
       return
     self.current_value = value
     if self.value_map:
-      self.params.put(self.param_key, self.value_map[value])
+      stored = self.value_map[value]
     elif self.use_float_scaling:
-      self.params.put(self.param_key, value / 100.0)
+      stored = value / 100.0
     else:
-      self.params.put(self.param_key, value)
+      stored = value
+    self.params.put(self.param_key, stored)
+    if self._file_backed:
+      from openpilot.common.file_params import write_file_param
+      write_file_param(self.param_key, stored)
     if self.on_value_changed:
       self.on_value_changed(value)
 

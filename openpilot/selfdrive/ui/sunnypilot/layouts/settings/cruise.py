@@ -94,12 +94,22 @@ class CruiseLayout(Widget):
 
     self.traffic_stop_offset = option_item_sp(
       title=tr("Traffic Stop Offset"),
-      description=tr("Vision only (IQ-link OFF): brake this far short of the model's stop point. Larger = earlier stop. Does not change follow gap or IQ-link red distance (nav uses a fixed ~3 m). 0 disables. Default 3 m; try 2–4 — avoid 8+."),
+      description=tr("Meters short of the model / nav light stop. Larger = earlier. Does not change follow distance. 0 disables. Default 3 m. Cap 10 m."),
       param="TrafficStopOffset",
       min_value=0, max_value=1000, value_change_step=50,
       use_float_scaling=True,
       label_callback=lambda x: f"{x / 100:.1f} m",
       inline=True)
+
+    self.traffic_stop_lead = option_item_sp(
+      title=tr("Stop Line Extra"),
+      description=tr("Extra meters before the painted line, on top of Traffic Stop Offset. Live: about every 3 seconds, no reboot. You crossed by 1–2 m at offset 10 — start at 1.5, then 2.0 if still over. 0 disables. Does not change follow gap."),
+      param="TrafficStopLead",
+      min_value=0, max_value=400, value_change_step=50,
+      use_float_scaling=True,
+      label_callback=lambda x: f"{x / 100:.1f} m",
+      inline=True,
+      fallback=1.5)
 
     self.iqlink_toggle = toggle_item_sp(
       title=tr("IQ-link"),
@@ -128,6 +138,7 @@ class CruiseLayout(Widget):
       self.custom_acc_long_increment,
       self.gas_sync_toggle,
       self.traffic_stop_offset,
+      self.traffic_stop_lead,
       self.iqlink_toggle,
       self.ecoflow_toggle,
       self.ecoflow_recover_btn,
@@ -185,6 +196,7 @@ class CruiseLayout(Widget):
         self.scc_m_toggle.action_item.set_enabled(True)
         self.gas_sync_toggle.action_item.set_enabled(has_long and not ui_state.CP.pcmCruise)
         self.traffic_stop_offset.action_item.set_enabled(has_long)
+        self.traffic_stop_lead.action_item.set_enabled(has_long)
       else:
         ui_state.params.remove("CustomAccIncrementsEnabled")
         ui_state.params.remove("DynamicExperimentalControl")
@@ -196,6 +208,7 @@ class CruiseLayout(Widget):
         self.scc_m_toggle.action_item.set_enabled(False)
         self.gas_sync_toggle.action_item.set_enabled(False)
         self.traffic_stop_offset.action_item.set_enabled(False)
+        self.traffic_stop_lead.action_item.set_enabled(False)
 
     else:
       has_icbm = has_long = False

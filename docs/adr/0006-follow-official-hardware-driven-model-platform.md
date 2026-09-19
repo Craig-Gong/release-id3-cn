@@ -25,3 +25,25 @@ is not authoritative.
   hash can be verified and reused without downloading again.
 - Default Big requires its official compiled artifact. Downloaded LM/TT/IDM
   bundles remain independent of the optional big ONNX source.
+
+## Model artifact and execution compatibility
+
+The supported pickle format and compiler input-shape rules follow the selected
+sunnypilot source baseline. When upstream retires an old format, retire its
+local loader and execution branches too. Previously downloaded artifacts do
+not justify retaining a parallel model runtime or legacy shape rules.
+
+Use matching official artifacts for the selected runtime. Keep downloaded
+files until explicitly removed, but do not silently convert their metadata,
+claim compatibility, or select an older execution path to keep them running.
+The stock and modeld_v2 runners remain upstream-owned; hardware adapters must
+not introduce an independent QCOM-warp or fused-runner implementation.
+
+The 2026-09-06 C3XL validation follows sunnypilot PR #1993 at
+`d71635410d8bf4312ea358becd7f9e5e27fcf0d6` and its v25 Chestnut catalog.
+Supercombo bundles use upstream's packed NPY-to-AMD `run_model`; split bundles
+retain the upstream separate warp/policy path. The C3XL seam is limited to
+hardware detection, persistent firmware/cache configuration, the measured
+load timeout, loading progress, telemetry, power policy, and reliable fallback.
+It does not choose a model execution format or preserve a retired artifact ABI.
+

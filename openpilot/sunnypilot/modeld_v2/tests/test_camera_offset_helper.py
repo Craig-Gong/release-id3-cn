@@ -97,5 +97,7 @@ class TestCameraOffset(OpenpilotTestCase):
     # undo main_transform dot product to get sheer matrix
     shear = main_out @ np.linalg.inv(main_transform)
     expected_v_horizon = intrinsics_main[1, 2] - intrinsics_main[1, 1] * np.tan(pitch)
-    np.testing.assert_almost_equal(shear[0, 1], self.camera_offset.actual_camera_offset / height, decimal=4)
-    np.testing.assert_almost_equal(shear[0, 2], -self.camera_offset.actual_camera_offset / height * expected_v_horizon, decimal=4)
+    # C3XL scales CameraOffset by fx/fy so the shear stays metre-correct across FOV.
+    scaled_offset = self.camera_offset.actual_camera_offset * intrinsics_main[0, 0] / intrinsics_main[1, 1]
+    np.testing.assert_almost_equal(shear[0, 1], scaled_offset / height, decimal=4)
+    np.testing.assert_almost_equal(shear[0, 2], -scaled_offset / height * expected_v_horizon, decimal=4)

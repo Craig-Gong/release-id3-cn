@@ -42,9 +42,18 @@ class CameraOffsetHelper:
 
     intrinsics_main = dc.wide_road.intrinsics if main_wide_camera else dc.narrow_road.intrinsics
     v_horizon_main = self.get_v_horizon(intrinsics_main, rpy_calib)
-    model_transform_main = self.apply_camera_offset(model_transform_main, height, self.actual_camera_offset * intrinsics_main[0, 0] / intrinsics_main[1, 1], v_horizon_main)
+    # C3XL: scale lateral offset by fx/fy so CameraOffset stays in metres across FOV.
+    model_transform_main = self.apply_camera_offset(
+      model_transform_main, height,
+      self.actual_camera_offset * intrinsics_main[0, 0] / intrinsics_main[1, 1],
+      v_horizon_main,
+    )
 
     intrinsics_extra = dc.wide_road.intrinsics
     v_horizon_extra = self.get_v_horizon(intrinsics_extra, rpy_calib)
-    model_transform_extra = self.apply_camera_offset(model_transform_extra, height, self.actual_camera_offset * intrinsics_extra[0, 0] / intrinsics_extra[1, 1], v_horizon_extra)
+    model_transform_extra = self.apply_camera_offset(
+      model_transform_extra, height,
+      self.actual_camera_offset * intrinsics_extra[0, 0] / intrinsics_extra[1, 1],
+      v_horizon_extra,
+    )
     return model_transform_main, model_transform_extra

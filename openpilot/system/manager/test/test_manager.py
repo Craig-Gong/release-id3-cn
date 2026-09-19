@@ -6,6 +6,7 @@ from pathlib import Path
 import unittest
 import signal
 import time
+from unittest.mock import MagicMock
 
 from opendbc.car.structs import car
 from openpilot.common.test import OpenpilotTestCase
@@ -13,6 +14,7 @@ from openpilot.common.params import Params
 import openpilot.system.manager.manager as manager
 import openpilot.system.manager.process_config as process_config
 from openpilot.system.manager.process import ensure_running
+from openpilot.system.manager.process import PythonProcess
 from openpilot.system.manager.process_config import managed_processes, procs
 from openpilot.common.hardware import HARDWARE
 from openpilot.sunnypilot.hardware.profile import HardwareProfile
@@ -56,12 +58,15 @@ class TestManager(OpenpilotTestCase):
 
   def test_c3xl_startup_disables_existing_road_video_setting(self, monkeypatch):
     monkeypatch.setattr(manager, "get_hardware_profile", lambda: HardwareProfile.C3XL)
+    monkeypatch.setattr(manager, "has_microphone", lambda *_: False)
     params = Params()
     params.put_bool("RecordRoadVideo", True, block=True)
+    params.put_bool("RecordAudio", True, block=True)
 
     manager.apply_local_recording_policy(params)
 
     assert not params.get_bool("RecordRoadVideo")
+    assert not params.get_bool("RecordAudio")
 
   def test_c3xl_camera_runtime_opt_in_persists_profile(self, tmp_path, monkeypatch):
     from openpilot.sunnypilot.hardware import profile as profile_mod
@@ -103,6 +108,38 @@ class TestManager(OpenpilotTestCase):
     assert not (Path(process_config.__file__).parent / "github_runner.sh").exists()
     assert not (repo_root / "release/ci/install_github_runner.sh").exists()
     assert not (repo_root / "release/ci/uninstall_github_runner.sh").exists()
+
+  def test_restart_enabled_process_is_reaped_after_crash(self, monkeypatch):
+    proc = PythonProcess("test", "unused", lambda *_: True, restart_if_crash=True)
+    dead_proc = MagicMock()
+    dead_proc.is_alive.return_value = False
+    dead_proc.exitcode = -signal.SIGABRT
+    proc.proc = dead_proc
+    proc.restart = MagicMock()
+
+    ensure_running([proc], True, Params(), car.CarParams.new_message())
+
+    proc.restart.assert_called_once_with()
+
+  def test_only_ui_restarts_after_crash(self):
+    assert managed_processes["ui"].restart_if_crash
+    assert all(not proc.restart_if_crash for name, proc in managed_processes.items() if name != "ui")
+
+  def test_crash_restart_is_rate_limited(self, monkeypatch):
+    proc = PythonProcess("test", "unused", lambda *_: True, restart_if_crash=True)
+    proc.start = MagicMock()
+    monkeypatch.setattr(time, "monotonic", lambda: 100.0)
+
+    first_dead_proc = MagicMock(exitcode=-signal.SIGABRT)
+    proc.proc = first_dead_proc
+    proc.restart()
+    proc.start.assert_called_once_with()
+
+    proc.start.reset_mock()
+    proc.proc = MagicMock(exitcode=-signal.SIGABRT)
+    monkeypatch.setattr(time, "monotonic", lambda: 102.0)
+    proc.restart()
+    proc.start.assert_not_called()
 
   @unittest.skip("this test is flaky the way it's currently written, should be moved to test_onroad")
   def test_clean_exit(self, subtests):

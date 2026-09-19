@@ -54,6 +54,9 @@ def launcher(proc: str, name: str) -> None:
     # Forked children inherit sys.modules from manager. After rsync, force a
     # disk re-import so locationd daemons are not stuck on stale calibrationd.
     sys.modules.pop(proc, None)
+    # Fork inherits manager's imports. params.py rsync is invisible until this
+    # process reloads; pop it so children see the file on disk.
+    sys.modules.pop("openpilot.common.params", None)
     importlib.invalidate_caches()
     mod = importlib.import_module(proc)
 
@@ -96,6 +99,7 @@ def join_process(process: Process, timeout: float) -> None:
 
 
 class ManagerProcess(ABC):
+  CRASH_RESTART_BACKOFF = 5.0
   daemon = False
   sigkill = False
   should_run: Callable[[bool, Params, car.CarParams], bool]
@@ -103,10 +107,23 @@ class ManagerProcess(ABC):
   enabled = True
   name = ""
   shutting_down = False
+  restart_if_crash = False
+  last_crash_restart = float("-inf")
 
   @abstractmethod
   def start(self) -> None:
     pass
+
+  def restart(self) -> None:
+    now = time.monotonic()
+    if now - self.last_crash_restart < self.CRASH_RESTART_BACKOFF:
+      return
+
+    exitcode = self.proc.exitcode if self.proc is not None else None
+    cloudlog.error(f"restarting {self.name} after crash (exitcode {exitcode})")
+    self.stop()
+    self.start()
+    self.last_crash_restart = now
 
   def _discard_dead_proc(self) -> None:
     # External kill / crash leaves self.proc set while is_alive() is False.
@@ -201,13 +218,15 @@ class NativeProcess(ManagerProcess):
 
 
 class PythonProcess(ManagerProcess):
-  def __init__(self, name, module, should_run, enabled=True, sigkill=False):
+  def __init__(self, name, module, should_run, enabled=True, sigkill=False, restart_if_crash=False):
     self.name = name
     self.module = module
     self.should_run = should_run
     self.enabled = enabled
     self.sigkill = sigkill
     self.launcher = launcher
+    self.restart_if_crash = restart_if_crash
+    self.last_crash_restart = float("-inf")
 
   def start(self) -> None:
     # In case we only tried a non blocking stop we need to stop it before restarting
@@ -275,6 +294,8 @@ def ensure_running(procs: ValuesView[ManagerProcess], started: bool, params: Par
   running = []
   for p in procs:
     if p.enabled and p.name not in not_run and p.should_run(started, params, CP):
+      if p.restart_if_crash and p.proc is not None and not p.proc.is_alive():
+        p.restart()
       running.append(p)
     else:
       p.stop(block=False)

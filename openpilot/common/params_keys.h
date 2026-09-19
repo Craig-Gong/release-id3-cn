@@ -307,6 +307,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LaneTurnValue", {PERSISTENT | BACKUP, FLOAT, "28.0"}},
     {"AutoGasSyncSpeed", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"TrafficStopOffset", {PERSISTENT | BACKUP, FLOAT, "3.0"}},
+    {"TrafficStopLead", {PERSISTENT | BACKUP, FLOAT, "1.5"}},
     {"IqlinkEnabled", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"IqlinkBleEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"IqlinkBlePsk", {PERSISTENT | BACKUP | DONT_LOG, STRING, "999999"}},

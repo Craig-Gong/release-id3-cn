@@ -1,3 +1,4 @@
+import os
 import platform
 import numpy as np
 import pyray as rl
@@ -108,16 +109,20 @@ class CameraView(Widget):
     ui_state.add_offroad_transition_callback(self._offroad_transition)
 
   def _offroad_transition(self):
-    # Reconnect if not first time going onroad
-    if ui_state.is_onroad() and self.frame is not None:
-      # Prevent old frames from showing when going onroad. Qt has a separate thread
-      # which drains the VisionIpcClient SubSocket for us. Re-connecting is not enough
-      # and only clears internal buffers, not the message queue.
+    if ui_state.is_onroad():
+      self._reconnect()
+    else:
       self.frame = None
-      self.available_streams.clear()
-      if self.client:
-        del self.client
-      self.client = VisionIpcClient(self._name, self._stream_type, conflate=True)
+
+  def _reconnect(self) -> None:
+    # VisionBuf wraps storage owned by VisionIpcClient. Recreate the client across
+    # camerad lifecycles so a stale buffer cannot retain an already-closed fd.
+    self._clear_textures()
+    self.frame = None
+    self.available_streams.clear()
+    if self.client:
+      del self.client
+    self.client = VisionIpcClient(self._name, self._stream_type, conflate=True)
 
   def _set_placeholder_color(self, color: rl.Color):
     """Set a placeholder color to be drawn when no frame is available."""
@@ -238,6 +243,13 @@ class CameraView(Widget):
   def _render_egl(self, src_rect: rl.Rectangle, dst_rect: rl.Rectangle) -> None:
     """Render using EGL for direct buffer access"""
     if self.frame is None or self.egl_texture is None:
+      return
+
+    try:
+      os.fstat(self.frame.fd)
+    except OSError:
+      cloudlog.error("Invalid VisionIPC frame fd; reconnecting camera client")
+      self._reconnect()
       return
 
     idx = self.frame.idx

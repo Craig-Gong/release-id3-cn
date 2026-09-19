@@ -38,11 +38,7 @@ from tinygrad.engine.jit import TinyJit
 
 NV12Frame = namedtuple("NV12Frame", ['width', 'height', 'stride', 'y_height', 'uv_height', 'size'])
 MODELD_INPUTS = ['img_q', 'big_img_q', 'feat_q', 'desire_q', 'packed_npy_inputs']
-# Stock modeld.py still imports these names when constructing ChestnutState
-# via modeld_v2. Packed run_model uses MODELD_INPUTS; warp+policy aliases
-# keep the old import graph working until stock modeld is fully packed.
-WARP_INPUTS = ['tfm', 'big_tfm']
-POLICY_INPUTS = MODELD_INPUTS
+
 
 
 def nv12_copy_size(stride: int, y_height: int, uv_height: int) -> int:

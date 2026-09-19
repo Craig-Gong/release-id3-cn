@@ -5,6 +5,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import (
   TrafficStopOffset,
   _sanitize_offset_m,
+  _sanitize_lead_m,
   soft_release_remaining,
   vision_stop_accel_cap,
   vision_stop_accel_raw,
@@ -15,6 +16,7 @@ def _build(distance):
   c = TrafficStopOffset.__new__(TrafficStopOffset)
   c.frame = 0
   c.distance = float(distance)
+  c.lead_m = 0.0
   c._filtered_stop = None
   c._engaged = False
   c._a_prev = None
@@ -199,8 +201,16 @@ def test_vision_jerk_limits_single_frame_kick():
   raw_near = vision_stop_accel_raw(14.0, 8.0)
   assert raw_near < -1.5
   a1 = vision_stop_accel_cap(14.0, 8.0, prev_a=a0, dt=0.05)
-  assert abs(a1 - a0) <= 0.10  # near jerk 1.6 * 0.05 = 0.08
+  assert abs(a1 - a0) <= 0.17  # near jerk 3.2 * 0.05 = 0.16
   a = a1
   for _ in range(100):
     a = vision_stop_accel_cap(14.0, 8.0, prev_a=a, dt=0.05)
   assert a <= -1.4
+
+
+def test_stop_line_extra_slider_range():
+  assert _sanitize_lead_m(None) == 1.5
+  assert _sanitize_lead_m(1.5) == 1.5
+  assert _sanitize_lead_m(2.0) == 2.0
+  assert _sanitize_lead_m(0) == 0.0
+  assert _sanitize_lead_m(9) == 4.0

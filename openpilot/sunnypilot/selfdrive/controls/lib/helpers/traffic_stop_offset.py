@@ -29,6 +29,7 @@ the line.
 from __future__ import annotations
 
 from opendbc.car.interfaces import ACCEL_MIN
+from openpilot.common.file_params import read_file_param, write_file_param
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import DT_MDL
 
@@ -37,6 +38,14 @@ MIN_OFFSET_M = 0.0
 MAX_OFFSET_M = 10.0
 DEFAULT_OFFSET_M = 3.0
 OFFSET_STEP_M = 0.5
+
+# Extra meters before the painted line, on top of TrafficStopOffset.
+# Live slider (Cruise). Not a calculated bumper/lag — road cross was 1–2 m.
+TRAFFIC_STOP_LEAD_PARAM = "TrafficStopLead"
+MIN_LEAD_M = 0.0
+MAX_LEAD_M = 4.0
+DEFAULT_LEAD_M = 1.5
+LEAD_STEP_M = 0.5
 
 # Model "shouldStop" plans often end ~1–2 m/s while still stopping; only skip
 # clearly non-stopping trajectories (stop-sign cruise-through).
@@ -60,7 +69,16 @@ _VISION_COAST_A = -0.55
 _VISION_LIGHT_FLOOR_A = -0.45  # far/low a_req: at least this (adds vs tiny −a_req)
 _VISION_HARD_A = -3.5
 _VISION_JERK = 0.95  # m/s³
-_VISION_NEAR_JERK = 1.6  # allow faster catch-up in the final meters
+_VISION_NEAR_JERK = 3.2  # final meters: 1.6 was too slow and the nose crossed the line
+
+
+def _sanitize_lead_m(raw) -> float:
+  try:
+    value = float(raw)
+  except (TypeError, ValueError):
+    return DEFAULT_LEAD_M
+  bounded = min(max(value, MIN_LEAD_M), MAX_LEAD_M)
+  return round(bounded / LEAD_STEP_M) * LEAD_STEP_M
 
 
 def _sanitize_offset_m(raw) -> float:
@@ -147,6 +165,7 @@ class TrafficStopOffset:
     self.params = params if params is not None else Params()
     self.frame = 0
     self.distance = float(DEFAULT_OFFSET_M)
+    self.lead_m = float(DEFAULT_LEAD_M)
     self._filtered_stop: float | None = None
     self._engaged = False
     self._a_prev: float | None = None
@@ -159,8 +178,20 @@ class TrafficStopOffset:
       if stored is not None and snapped != float(stored):
         self.params.put(TRAFFIC_STOP_OFFSET_PARAM, snapped)
       self.distance = snapped
+      lead_raw = self.params.get(TRAFFIC_STOP_LEAD_PARAM, return_default=True)
+      # Manager keeps the Params class from its own start. Unknown keys stay
+      # None there; the Cruise slider writes the same file the UI reads.
+      file_raw = read_file_param(TRAFFIC_STOP_LEAD_PARAM)
+      if lead_raw is None:
+        lead_raw = file_raw if file_raw is not None else DEFAULT_LEAD_M
+      lead = _sanitize_lead_m(lead_raw)
+      if file_raw is None or abs(float(file_raw) - lead) > 1e-3:
+        write_file_param(TRAFFIC_STOP_LEAD_PARAM, lead)
+      self.params.put(TRAFFIC_STOP_LEAD_PARAM, lead)
+      self.lead_m = lead
     except (TypeError, ValueError, UnknownKeyName):
       self.distance = float(DEFAULT_OFFSET_M)
+      self.lead_m = float(DEFAULT_LEAD_M)
 
   def update(self) -> None:
     if self.frame % int(3 / DT_MDL) == 0:
@@ -229,7 +260,8 @@ class TrafficStopOffset:
     if remaining <= E2E_STOP_HOLD_BUFFER:
       should_stop = True
 
-    brake_rem = 0.0 if remaining <= 0.0 else max(remaining, 0.3)
+    lead = float(self.lead_m)
+    brake_rem = 0.0 if remaining <= lead else max(remaining - lead, 0.3)
     a_cap = vision_stop_accel_cap(v_ego, brake_rem, prev_a=self._a_prev, dt=DT_MDL)
     self._a_prev = float(a_cap)
     a_cap = max(float(a_cap), float(ACCEL_MIN))

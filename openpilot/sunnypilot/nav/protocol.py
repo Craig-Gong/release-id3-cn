@@ -29,6 +29,8 @@ _NAV_RED_COAST_A = -0.85
 _NAV_RED_FAR_A = -0.75      # far/low a_req: keep authority (never 0)
 _NAV_RED_MAIN_REQ = 1.40    # a_req below → main brake tracks −a_req
 _NAV_RED_JERK = 1.25        # m/s³ slew — catch planner hard brake sooner
+_NAV_RED_CATCHUP_M = 18.0   # inside this, slew fast enough that lag does not cross the line
+_NAV_RED_NEAR_JERK = 3.2
 _NAV_RED_DT = 0.05
 # Floor when TrafficStopOffset is 0 / unset. Live slider applies to IQ-link red
 # (amap light distance ≠ stop line). Cap matches vision slider so 8–10 m works.
@@ -218,7 +220,8 @@ def nav_red_accel_cap(v_ego: float, light_dist: float, margin: float,
   raw = nav_red_accel_raw(v_ego, remaining, accel_target)
   if prev_a is None:
     return raw
-  step = _NAV_RED_JERK * max(1e-3, float(dt))
+  jerk = _NAV_RED_NEAR_JERK if float(remaining) <= _NAV_RED_CATCHUP_M else _NAV_RED_JERK
+  step = jerk * max(1e-3, float(dt))
   lo = float(prev_a) - step
   hi = float(prev_a) + step
   return max(lo, min(hi, raw))
