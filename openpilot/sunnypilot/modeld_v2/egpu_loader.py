@@ -29,6 +29,8 @@ C3XL_DOCK_WAIT_TIMEOUT = 30.0
 # With EcoFlow status (2026-10-07 logs): 12 V confirmed 0–7 s after KL15 (slow
 # MQTT login on a cold morning), dock enumerated ~5 s after that.
 C3XL_DOCK_POWER_PENDING_TIMEOUT = 45.0  # 12 V requested, not yet confirmed
+# MQTT logged in ~6 s after the network came up; without it 12 V cannot be switched on.
+C3XL_DOCK_OFFLINE_TIMEOUT = 20.0
 C3XL_DOCK_POWERED_TIMEOUT = 20.0  # counted from 12 V confirmation
 C3XL_DOCK_MAX_TIMEOUT = 60.0
 # Present at 5 Gbps but LTSSM unreadable this long: load anyway, as before.
@@ -44,6 +46,7 @@ DOCK_UNKNOWN = "unknown"  # present at 5 Gbps, LTSSM unreadable
 
 POWER_ON = "on"  # EcoFlow telemetry confirms the 12 V rail
 POWER_PENDING = "pending"  # EcoFlow enabled and live, rail not confirmed yet
+POWER_OFFLINE = "offline"  # EcoFlow enabled and live, but no MQTT session to switch the rail
 POWER_UNKNOWN = "unknown"  # no EcoFlow, disabled, or ecoflowd not publishing
 
 # Survives modeld restart during the same onroad; /dev/shm clears on reboot.
@@ -140,14 +143,16 @@ def ecoflow_dock_power(read_status: Callable[[], object] | None = None,
     status = read_status()
     if not status.enabled or not status.fresh(monotonic()):
       return POWER_UNKNOWN
-    return POWER_ON if status.dc12v is True else POWER_PENDING
+    if status.dc12v is True:
+      return POWER_ON
+    return POWER_PENDING if status.mqtt else POWER_OFFLINE
   except Exception:
     return POWER_UNKNOWN
 
 
 def keep_dock_seen_after_wait(state: str, power: str) -> bool:
-  """An absent dock with 12 V still pending is a power problem, not an unplugged dock."""
-  return state != DOCK_ABSENT or power == POWER_PENDING
+  """An absent dock with 12 V not yet up is a power problem, not an unplugged dock."""
+  return state != DOCK_ABSENT or power in (POWER_PENDING, POWER_OFFLINE)
 
 
 class EgpuModelLoadError(RuntimeError):
@@ -178,33 +183,45 @@ def wait_for_chestnut_dock(probe: Callable[[], str] = chestnut_dock_link_state, 
                            power: Callable[[], str] | None = None,
                            timeout: float = C3XL_DOCK_WAIT_TIMEOUT,
                            power_pending_timeout: float = C3XL_DOCK_POWER_PENDING_TIMEOUT,
+                           offline_timeout: float = C3XL_DOCK_OFFLINE_TIMEOUT,
                            powered_timeout: float = C3XL_DOCK_POWERED_TIMEOUT,
                            max_timeout: float = C3XL_DOCK_MAX_TIMEOUT,
                            unknown_grace: float = C3XL_DOCK_UNKNOWN_GRACE,
                            settle: float = C3XL_DOCK_SETTLE, poll: float = DOCK_WAIT_POLL,
+                           on_change: Callable[[float, str, str], None] | None = None,
                            sleep: Callable[[float], None] = time.sleep,
                            monotonic: Callable[[], float] = time.monotonic) -> str:
   """Poll probe until the GPU link is usable or timeout; return the last state.
 
   Without a power signal the wait is a flat timeout. With one, wait up to
-  power_pending_timeout for 12 V, then powered_timeout from its confirmation,
-  never beyond max_timeout. UNKNOWN (link unreadable) is accepted only after
-  unknown_grace, so a readable L0 still gets its chance.
+  power_pending_timeout for 12 V (offline_timeout while EcoFlow has no MQTT
+  session yet), then powered_timeout from its confirmation, never beyond
+  max_timeout. UNKNOWN (link unreadable) is accepted only after unknown_grace,
+  so a readable L0 still gets its chance. on_change(elapsed, dock, rail) fires
+  whenever either state changes.
   """
   start = monotonic()
   powered_since = None
+  link_seen = False
   unknown_since = None
   waited = False
+  last = None
   state = probe()
   while state != DOCK_READY:
     now = monotonic()
     rail = power() if power is not None else POWER_UNKNOWN
+    if on_change is not None and (state, rail) != last:
+      on_change(now - start, state, rail)
+    last = (state, rail)
     if rail == POWER_ON and powered_since is None:
       powered_since = now
+    link_seen = link_seen or rail == POWER_PENDING
     if powered_since is not None:
       deadline = min(powered_since + powered_timeout, start + max_timeout)
-    elif rail == POWER_PENDING:
+    elif rail == POWER_PENDING or (rail == POWER_OFFLINE and link_seen):
       deadline = start + power_pending_timeout
+    elif rail == POWER_OFFLINE:
+      deadline = start + offline_timeout
     else:
       deadline = start + timeout
     if state == DOCK_UNKNOWN:

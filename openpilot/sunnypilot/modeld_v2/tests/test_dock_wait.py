@@ -3,9 +3,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from openpilot.sunnypilot.modeld_v2.egpu_loader import (
-  C3XL_DOCK_MAX_TIMEOUT, C3XL_DOCK_POWER_PENDING_TIMEOUT, C3XL_DOCK_POWERED_TIMEOUT,
+  C3XL_DOCK_MAX_TIMEOUT, C3XL_DOCK_OFFLINE_TIMEOUT, C3XL_DOCK_POWER_PENDING_TIMEOUT, C3XL_DOCK_POWERED_TIMEOUT,
   C3XL_DOCK_SETTLE, C3XL_DOCK_UNKNOWN_GRACE, C3XL_DOCK_WAIT_TIMEOUT,
-  DOCK_ABSENT, DOCK_NOT_READY, DOCK_READY, DOCK_UNKNOWN, POWER_ON, POWER_PENDING, POWER_UNKNOWN,
+  DOCK_ABSENT, DOCK_NOT_READY, DOCK_READY, DOCK_UNKNOWN, POWER_OFFLINE, POWER_ON, POWER_PENDING, POWER_UNKNOWN,
   clear_chestnut_dock_decided, clear_chestnut_dock_seen, dock_usable, ecoflow_dock_power,
   keep_dock_seen_after_wait, mark_chestnut_dock_absent, mark_chestnut_dock_decided,
   mark_chestnut_dock_seen, should_wait_for_dock, wait_for_chestnut_dock,
@@ -133,6 +133,43 @@ class TestDockWaitWithRail(unittest.TestCase):
     self.assertGreaterEqual(clock.t, C3XL_DOCK_WAIT_TIMEOUT)
     self.assertLess(clock.t, C3XL_DOCK_WAIT_TIMEOUT + 1.0)
 
+  def test_no_mqtt_all_day_gives_up_at_offline_cap(self):
+    clock = FakeClock()
+    state = _wait_powered(lambda: DOCK_ABSENT, lambda: POWER_OFFLINE, clock)
+    self.assertEqual(state, DOCK_ABSENT)
+    self.assertGreaterEqual(clock.t, C3XL_DOCK_OFFLINE_TIMEOUT)
+    self.assertLess(clock.t, C3XL_DOCK_OFFLINE_TIMEOUT + 1.0)
+
+  def test_mqtt_logging_in_extends_to_pending_cap(self):
+    # 2026-10-07 09:24: MQTT up ~6 s after READY, 12 V a second later.
+    clock = FakeClock()
+    power = _timeline(clock, (0, POWER_OFFLINE), (6.0, POWER_PENDING), (7.0, POWER_ON))
+    probe = _timeline(clock, (0, DOCK_ABSENT), (12.0, DOCK_READY))
+    self.assertEqual(_wait_powered(probe, power, clock), DOCK_READY)
+
+  def test_mqtt_flapping_after_login_keeps_pending_cap(self):
+    clock = FakeClock()
+    power = _timeline(clock, (0, POWER_PENDING), (25.0, POWER_OFFLINE))
+    _wait_powered(lambda: DOCK_ABSENT, power, clock)
+    self.assertGreaterEqual(clock.t, C3XL_DOCK_POWER_PENDING_TIMEOUT)
+    self.assertLess(clock.t, C3XL_DOCK_POWER_PENDING_TIMEOUT + 1.0)
+
+  def test_on_change_logs_each_transition_once(self):
+    clock = FakeClock()
+    power = _timeline(clock, (0, POWER_PENDING), (3.0, POWER_ON))
+    probe = _timeline(clock, (0, DOCK_ABSENT), (5.0, DOCK_NOT_READY), (6.0, DOCK_READY))
+    seen = []
+    wait_for_chestnut_dock(probe, power=power, on_change=lambda dt, d, r: seen.append((dt, d, r)),
+                           sleep=clock.sleep, monotonic=clock.monotonic)
+    self.assertEqual([(d, r) for _, d, r in seen],
+                     [(DOCK_ABSENT, POWER_PENDING), (DOCK_ABSENT, POWER_ON), (DOCK_NOT_READY, POWER_ON)])
+    self.assertEqual([dt for dt, _, _ in seen], [0.0, 3.0, 5.0])
+
+  def test_ready_at_start_logs_nothing(self):
+    seen = []
+    wait_for_chestnut_dock(lambda: DOCK_READY, power=lambda: POWER_ON, on_change=lambda *a: seen.append(a))
+    self.assertEqual(seen, [])
+
   def test_ecoflowd_dropping_out_after_confirming_keeps_powered_window(self):
     clock = FakeClock()
     power = _timeline(clock, (0, POWER_ON), (3.0, POWER_UNKNOWN))
@@ -148,7 +185,11 @@ class TestEcoflowDockPower(unittest.TestCase):
   def test_states(self):
     self.assertEqual(self._power(EcoflowStatus(ts=99.0, enabled=True, mqtt=True, dc12v=True)), POWER_ON)
     self.assertEqual(self._power(EcoflowStatus(ts=99.0, enabled=True, mqtt=True, dc12v=None)), POWER_PENDING)
-    self.assertEqual(self._power(EcoflowStatus(ts=99.0, enabled=True, mqtt=False, dc12v=False)), POWER_PENDING)
+    self.assertEqual(self._power(EcoflowStatus(ts=99.0, enabled=True, mqtt=True, dc12v=False)), POWER_PENDING)
+    self.assertEqual(self._power(EcoflowStatus(ts=99.0, enabled=True, mqtt=False, dc12v=False)), POWER_OFFLINE)
+    self.assertEqual(self._power(EcoflowStatus(ts=99.0, enabled=True, mqtt=False, dc12v=None)), POWER_OFFLINE)
+    # Last telemetry said on before the session dropped: the rail is still up.
+    self.assertEqual(self._power(EcoflowStatus(ts=99.0, enabled=True, mqtt=False, dc12v=True)), POWER_ON)
 
   def test_disabled_stale_or_missing_is_unknown(self):
     self.assertEqual(self._power(EcoflowStatus(ts=99.0, enabled=False, dc12v=True)), POWER_UNKNOWN)
@@ -162,6 +203,7 @@ class TestEcoflowDockPower(unittest.TestCase):
 
   def test_unplugged_only_when_rail_not_pending(self):
     self.assertTrue(keep_dock_seen_after_wait(DOCK_ABSENT, POWER_PENDING))
+    self.assertTrue(keep_dock_seen_after_wait(DOCK_ABSENT, POWER_OFFLINE))
     self.assertFalse(keep_dock_seen_after_wait(DOCK_ABSENT, POWER_ON))
     self.assertFalse(keep_dock_seen_after_wait(DOCK_ABSENT, POWER_UNKNOWN))
     self.assertTrue(keep_dock_seen_after_wait(DOCK_NOT_READY, POWER_ON))

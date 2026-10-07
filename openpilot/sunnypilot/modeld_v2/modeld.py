@@ -433,7 +433,6 @@ def main(demo=False):
   params = Params()
   skip_drive = chestnut_skip_drive()
   CHESTNUT = chestnut_present() and not skip_drive
-  dock_wait_timed_out = False
   if skip_drive:
     cloudlog.warning("chestnut skip-drive leftover; loading QCOM only")
   elif (IS_C3XL and should_wait_for_dock(CHESTNUT, power_expected=ecoflow_dock_power() != POWER_UNKNOWN)
@@ -443,10 +442,12 @@ def main(demo=False):
     params.put_bool("ChestnutLoading", True)
     params.put("ChestnutLoadingProgress", 0, block=True)
     wait_st = time.monotonic()
-    state = wait_for_chestnut_dock(power=ecoflow_dock_power)
+    state = wait_for_chestnut_dock(
+      power=ecoflow_dock_power,
+      on_change=lambda dt, dock, rail: cloudlog.info(f"chestnut dock wait t={dt:.1f}s dock={dock} rail={rail}"),
+    )
     rail = ecoflow_dock_power()
     CHESTNUT = dock_usable(state)
-    dock_wait_timed_out = not CHESTNUT
     if not keep_dock_seen_after_wait(state, rail):
       clear_chestnut_dock_seen()
       mark_chestnut_dock_absent()
@@ -459,11 +460,9 @@ def main(demo=False):
     os.environ['HCQDEV_WAIT_TIMEOUT_MS'] = '3000'
   cloudlog.warning(f"egpu env DEV={os.environ.get('DEV')} AM_POWER_LIMIT={os.environ.get('AM_POWER_LIMIT')} XDG_CACHE_HOME={os.environ.get('XDG_CACHE_HOME')} chestnut={CHESTNUT} skip={skip_drive}")
 
-  if dock_wait_timed_out:
-    # Expected an eGPU that never became usable: report a fallback, not an endless wait.
-    params.put_bool("ChestnutActive", False, block=True)
-  else:
-    params.remove("ChestnutActive")
+  # A dock that never came up is not a model failure (that sets ChestnutModelError):
+  # leave ChestnutActive unset so the HUD can say 未连接 or ask for an ignition cycle.
+  params.remove("ChestnutActive")
   params.put_bool("ChestnutLoading", CHESTNUT or skip_drive)
   params.put("ChestnutLoadingProgress", 1 if CHESTNUT else 0, block=True)
 
