@@ -185,6 +185,10 @@ class VCruiseHelper(VCruiseHelperSP):
 
     initial_experimental_mode = experimental_mode and not dynamic_experimental_control
     initial = V_CRUISE_INITIAL_EXPERIMENTAL_MODE if initial_experimental_mode else V_CRUISE_INITIAL
+    if self.volkswagen_standby_set_speed:
+      # Stock VW SET takes the current speed; a 105 km/h experimental floor
+      # shows a MAX the driver never set and sticks above IQ-link limits.
+      initial = self.v_cruise_min
 
     if any(b.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for b in CS.buttonEvents) and self.v_cruise_initialized:
       self.v_cruise_kph = self.v_cruise_kph_last
