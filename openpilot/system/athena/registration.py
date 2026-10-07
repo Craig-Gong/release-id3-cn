@@ -16,6 +16,8 @@ from openpilot.common.swaglog import cloudlog
 
 
 UNREGISTERED_DONGLE_ID = "UnregisteredDevice"
+REGISTRATION_TIMEOUT = 30.0
+IMEI_TIMEOUT = 5.0
 
 def is_registered_device() -> bool:
   dongle = Params().get("DongleId")
@@ -34,11 +36,14 @@ def register(show_spinner=False) -> str | None:
   """
   params = Params()
 
-  dongle_id: str | None = params.get("DongleId")
+  dongle_id: str | None = params.get("DongleId") or None
+  # Offline first boots must be able to retry once connectivity returns.
+  if dongle_id == UNREGISTERED_DONGLE_ID:
+    dongle_id = None
   if dongle_id is None and Path(Paths.persist_root()+"/comma/dongle_id").is_file():
     # not all devices will have this; added early in comma 3X production (2/28/24)
     with open(Paths.persist_root()+"/comma/dongle_id") as f:
-      dongle_id = f.read().strip()
+      dongle_id = f.read().strip() or None
 
   # Create registration token, in the future, this key will make JWTs directly
   jwt_algo, private_key, public_key = get_key_pair()
@@ -47,61 +52,57 @@ def register(show_spinner=False) -> str | None:
     dongle_id = UNREGISTERED_DONGLE_ID
     cloudlog.warning("missing public key")
   elif dongle_id is None:
-    if show_spinner:
-      spinner = Spinner()
+    spinner = Spinner() if show_spinner else None
+    if spinner is not None:
       spinner.update("registering device")
-
-    # Block until we get the imei
-    serial = HARDWARE.get_serial()
-    start_time = time.monotonic()
-    imei: str | None = None
-    while imei is None:
-      try:
-        imei = HARDWARE.get_imei()
-      except Exception:
-        cloudlog.exception("Error getting imei, trying again...")
-        time.sleep(1)
-
-      if time.monotonic() - start_time > 60 and show_spinner:
-        spinner.update(f"registering device - serial: {serial}, IMEI: {imei}")
-
-    backoff = 0
-    start_time = time.monotonic()
-    while True:
-      try:
-        register_token = jwt.encode({'register': True, 'exp': datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)},
-                                    cast(str, private_key), algorithm=jwt_algo)
-        cloudlog.info("getting pilotauth")
-        cloudlog.info("getting pilotauth")
-        resp = api_get("v2/pilotauth/", method='POST', timeout=15,
-                       imei=imei, imei2="", serial=serial, public_key=public_key, register_token=register_token)
-
-        if resp.status_code in (402, 403):
-          cloudlog.info(f"Unable to register device, got {resp.status_code}")
-          dongle_id = UNREGISTERED_DONGLE_ID
-        else:
-          dongleauth = json.loads(resp.text)
-          dongle_id = dongleauth["dongle_id"]
-        break
-      except NotImplementedError:
-        # dependency issues with PyJWT will hang the registration test in backoff loop otherwise
-        raise
-      except Exception:
-        cloudlog.exception("failed to authenticate")
-        backoff = min(backoff + 1, 15)
-        time.sleep(backoff)
-
-      if time.monotonic() - start_time > 60 and show_spinner:
-        spinner.update(f"registering device - serial: {serial}, IMEI: {imei}")
-        return UNREGISTERED_DONGLE_ID  # hotfix to prevent an infinite wait for registration
-
-    if show_spinner:
-      spinner.close()
+    try:
+      dongle_id = _register_online(jwt_algo, private_key, public_key)
+    finally:
+      if spinner is not None:
+        spinner.close()
 
   if dongle_id:
     params.put("DongleId", dongle_id, block=True)
     set_offroad_alert("Offroad_UnregisteredHardware", (dongle_id == UNREGISTERED_DONGLE_ID) and not PC)
   return dongle_id
+
+
+def _register_online(jwt_algo, private_key, public_key):
+  serial = HARDWARE.get_serial()
+  started = time.monotonic()
+  deadline = started + REGISTRATION_TIMEOUT
+  imei = None
+  while imei is None:
+    try:
+      imei = HARDWARE.get_imei()
+    except Exception:
+      cloudlog.exception("Error getting imei")
+    if imei is not None or time.monotonic() >= started + IMEI_TIMEOUT:
+      break
+    time.sleep(1)
+
+  # Wi-Fi-only hardware may have no modem. Do not invent an IMEI.
+  backoff = 0
+  while (remaining := deadline - time.monotonic()) > 0:
+    try:
+      register_token = jwt.encode({'register': True, 'exp': datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=1)},
+                                  cast(str, private_key), algorithm=jwt_algo)
+      resp = api_get("v2/pilotauth/", method='POST', timeout=min(10, remaining),
+                     imei=imei or "", imei2="", serial=serial, public_key=public_key, register_token=register_token)
+      if resp.status_code in (402, 403):
+        return UNREGISTERED_DONGLE_ID
+      dongle_id = json.loads(resp.text)["dongle_id"]
+      if not isinstance(dongle_id, str) or not dongle_id.strip():
+        raise ValueError("Empty device registration response")
+      return dongle_id
+    except NotImplementedError:
+      raise
+    except Exception:
+      cloudlog.exception("failed to authenticate")
+      backoff = min(backoff + 1, 5)
+      time.sleep(min(backoff, max(0, deadline - time.monotonic())))
+  cloudlog.warning("Device registration timed out; continuing offline, retrying on next startup")
+  return UNREGISTERED_DONGLE_ID
 
 
 if __name__ == "__main__":

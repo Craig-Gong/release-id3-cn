@@ -18,7 +18,7 @@ from openpilot.common.hardware.hw import Paths
 from openpilot.cereal import messaging, custom
 from openpilot.sunnypilot.models.fetcher import ModelFetcher
 from openpilot.sunnypilot.models.helpers import (ACTIVE_BUNDLE_KEYS, get_active_bundle, get_selected_bundle,
-                                                  resolve_bundle_by_ref, validate_active_bundles, verify_file)
+                                                  resolve_bundle_by_ref, validate_active_bundles, verify_file, bundled_qcom_fallback)
 from openpilot.sunnypilot.models.model_name import DEFAULT_MODEL_REF
 
 # (connect, read) seconds. read is per-request inactivity, not a total cap
@@ -31,7 +31,7 @@ class DownloadCancelled(Exception):
 
 def ensure_default_qcom_fallback(params) -> None:
   if (get_selected_bundle(params, "chestnut") is not None and get_selected_bundle(params, "qcom") is None and
-      params.get("ModelManager_DownloadRef") is None and DEFAULT_MODEL_REF):
+      params.get("ModelManager_DownloadRef") is None and DEFAULT_MODEL_REF and bundled_qcom_fallback() is None):
     params.put("ModelManager_DownloadRef", DEFAULT_MODEL_REF)
 
 

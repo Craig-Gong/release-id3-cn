@@ -53,8 +53,8 @@ def test_c3xl_manifest_uses_official_19_7_system_with_validated_boot_chain() -> 
 
 
 @pytest.mark.parametrize("profile,version,manifest", [
-  ("standard", "19.7", "openpilot/system/hardware/comma/agnos.json"),
-  ("c3xl", "19.7", "openpilot/system/hardware/comma/agnos-c3xl.json"),
+  ("standard", "19.6", "openpilot/system/hardware/comma/agnos.json"),
+  ("c3xl", "19.6", "openpilot/system/hardware/comma/agnos-c3xl.json"),
 ])
 def test_launch_environment_selects_profile_specific_agnos(profile: str, version: str, manifest: str) -> None:
   env = os.environ.copy()
@@ -64,3 +64,15 @@ def test_launch_environment_selects_profile_specific_agnos(profile: str, version
     cwd=REPO_ROOT, env=env, text=True,
   ).splitlines()
   assert output == [version, manifest]
+  selected = REPO_ROOT / output[1]
+  assert selected.is_file(), f"Selected boot manifest is missing: {selected}"
+
+
+def test_updater_reads_real_shell_configuration_and_skips_installed_os(monkeypatch):
+  from openpilot.system.updated import updated
+  from openpilot.common.hardware.comma import agnos
+  monkeypatch.setenv('SUNNYPILOT_HARDWARE_PROFILE', 'c3xl')
+  monkeypatch.setattr(updated, 'OVERLAY_MERGED', str(REPO_ROOT))
+  monkeypatch.setattr(updated.HARDWARE, 'get_os_version', lambda: '19.6')
+  monkeypatch.setattr(agnos, 'flash_agnos_update', lambda *a: pytest.fail('Must not flash an already installed OS'))
+  updated.handle_agnos_update()

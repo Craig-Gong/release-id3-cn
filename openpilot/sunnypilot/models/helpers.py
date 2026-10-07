@@ -13,7 +13,7 @@ from openpilot.cereal import custom
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.hardware.hw import Paths
-from openpilot.selfdrive.modeld.helpers import chestnut_present
+from openpilot.selfdrive.modeld.helpers import chestnut_present, modeld_pkl_path
 
 # SET ME TO THE EXACT JSON VERSION WE SET IN SUNNYPILOT_MODELS REPO
 REQUIRED_JSON_VERSION = 19
@@ -156,7 +156,39 @@ def get_active_bundle(params: Params | None = None, *, chestnut: bool | None = N
   # no cross-slot fallback: an empty active slot means the hardware default, which
   # only stock modeld can run - modeld_v2 requires a real bundle
   params = params or Params()
-  return get_selected_bundle(params, get_active_source(chestnut=chestnut))
+  source = get_active_source(chestnut=chestnut)
+  selected = get_selected_bundle(params, source)
+  if selected is None and source == 'qcom' and get_selected_bundle(params, 'chestnut') is not None:
+    return bundled_qcom_fallback()
+  return selected
+
+
+def bundled_qcom_fallback():
+  """Use the compiled channel default when a custom big model needs fallback.
+
+  Keep the ordinary stock runner for empty model selections. Build-generated
+  chunk sets may contain empty padding chunks, but every declared file must
+  exist and the combined artifact must contain data.
+  """
+  from openpilot.common.file_chunker import get_existing_chunks, get_chunked_file_size
+  from openpilot.sunnypilot.models.model_name import DEFAULT_MODEL
+  if DEFAULT_MODEL != 'CD210':
+    return None  # Revalidate the metadata contract before changing defaults.
+  pkl_path = str(modeld_pkl_path(False))
+  try:
+    if not all(os.path.isfile(path) for path in get_existing_chunks(pkl_path)) or get_chunked_file_size(pkl_path) <= 0:
+      return None
+  except (OSError, ValueError):
+    return None
+  bundle = custom.ModelManagerSP.ModelBundle(internalName=DEFAULT_MODEL, displayName='CD210 (Bundled)',
+    ref='bundled-cd210', environment='bundled', generation=12, is20hz=True,
+    runner='tinygrad', minimumSelectorVersion=REQUIRED_JSON_VERSION, status='downloaded',
+    overrides=[{'key': 'lat', 'value': '.0'}, {'key': 'long', 'value': '.3'}])
+  model = custom.ModelManagerSP.Model()
+  model.type = 'chunked'
+  model.artifact.fileName = pkl_path
+  bundle.models = [model]
+  return bundle
 
 
 def resolve_bundle_by_ref(

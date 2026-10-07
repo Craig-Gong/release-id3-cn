@@ -198,8 +198,8 @@ def handle_agnos_update() -> None:
   from openpilot.common.hardware.comma.agnos import flash_agnos_update, get_target_slot_number
 
   cur_version = HARDWARE.get_os_version()
-  agnos_config = run(["bash", "-c", r"unset AGNOS_VERSION AGNOS_MANIFEST_FILE && source launch_env.sh && \
-                       printf '%s\n%s\n' \"$AGNOS_VERSION\" \"$AGNOS_MANIFEST_FILE\""], OVERLAY_MERGED).splitlines()
+  agnos_config = run(["bash", "-c", 'unset AGNOS_VERSION AGNOS_MANIFEST_FILE && source launch_env.sh && ' +
+                       'printf "%s\\n%s\\n" "$AGNOS_VERSION" "$AGNOS_MANIFEST_FILE"'], OVERLAY_MERGED).splitlines()
   if len(agnos_config) != 2:
     raise RuntimeError(f"Invalid AGNOS configuration: {agnos_config!r}")
   updated_version, manifest_file = agnos_config

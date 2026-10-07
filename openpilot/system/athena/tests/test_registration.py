@@ -75,3 +75,35 @@ class TestRegistration(OpenpilotTestCase):
     assert m.call_count == 1
     assert dongle == UNREGISTERED_DONGLE_ID
     assert self.params.get("DongleId") == dongle
+
+  def test_missing_imei_does_not_block_fresh_install(self, mocker):
+    self._generate_keys()
+    mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", return_value=None)
+    clock = mocker.patch("openpilot.system.athena.registration.time.monotonic", side_effect=range(0, 200, 5))
+    mocker.patch("openpilot.system.athena.registration.time.sleep")
+    api = mocker.patch("openpilot.system.athena.registration.api_get")
+    api.return_value = MockResponse(json.dumps({'dongle_id': 'RECOVERED'}), 200)
+    assert register() == 'RECOVERED'
+    assert clock.call_count < 10
+
+  def test_network_outage_is_bounded_without_spinner_and_retries_next_boot(self, mocker):
+    self._generate_keys()
+    mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", return_value='')
+    mocker.patch("openpilot.system.athena.registration.time.monotonic", side_effect=range(0, 1000, 10))
+    mocker.patch("openpilot.system.athena.registration.time.sleep")
+    api = mocker.patch("openpilot.system.athena.registration.api_get", side_effect=TimeoutError('offline'))
+    assert register() == UNREGISTERED_DONGLE_ID
+    assert api.call_count <= 3
+    api.side_effect = None
+    api.return_value = MockResponse(json.dumps({'dongle_id': 'RECOVERED'}), 200)
+    assert register() == 'RECOVERED'
+
+  def test_registration_timeout_always_closes_spinner(self, mocker):
+    self._generate_keys()
+    mocker.patch("openpilot.system.athena.registration.HARDWARE.get_imei", return_value='')
+    mocker.patch("openpilot.system.athena.registration.time.monotonic", side_effect=range(0, 1000, 10))
+    mocker.patch("openpilot.system.athena.registration.time.sleep")
+    mocker.patch("openpilot.system.athena.registration.api_get", side_effect=TimeoutError('offline'))
+    spinner = mocker.patch("openpilot.system.athena.registration.Spinner")
+    assert register(show_spinner=True) == UNREGISTERED_DONGLE_ID
+    spinner.return_value.close.assert_called_once()

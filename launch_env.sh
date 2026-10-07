@@ -27,7 +27,7 @@ fi
 if [ -z "$SP_PROFILE_VALUE" ]; then
   SP_MODEL_VALUE=""
   if [ -f "$SP_MODEL_FILE" ]; then
-    SP_MODEL_VALUE="$(tr -d '\000\r\n ' < "$SP_MODEL_FILE")"
+    SP_MODEL_VALUE="$(tr -d '\000\r\n' < "$SP_MODEL_FILE")"
   fi
   [ "$SP_MODEL_VALUE" = "comma tici" ] && SP_PROFILE_VALUE="c3xl" || SP_PROFILE_VALUE="standard"
 fi
