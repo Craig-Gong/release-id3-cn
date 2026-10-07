@@ -214,7 +214,9 @@ def test_stop_line_extra_slider_range():
   assert _sanitize_lead_m(1.5) == 1.5
   assert _sanitize_lead_m(2.0) == 2.0
   assert _sanitize_lead_m(0) == 0.0
-  assert _sanitize_lead_m(9) == 4.0
+  assert _sanitize_lead_m(4.5) == 4.5
+  assert _sanitize_lead_m(5) == 5.0
+  assert _sanitize_lead_m(9) == 5.0
 
 
 def test_shouldstop_blip_does_not_release_brake():

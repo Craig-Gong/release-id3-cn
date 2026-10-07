@@ -43,7 +43,7 @@ OFFSET_STEP_M = 0.5
 # Live slider (Cruise). Not a calculated bumper/lag — road cross was 1–2 m.
 TRAFFIC_STOP_LEAD_PARAM = "TrafficStopLead"
 MIN_LEAD_M = 0.0
-MAX_LEAD_M = 4.0
+MAX_LEAD_M = 5.0
 DEFAULT_LEAD_M = 1.5
 LEAD_STEP_M = 0.5
 

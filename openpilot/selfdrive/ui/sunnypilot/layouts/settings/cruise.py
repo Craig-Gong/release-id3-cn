@@ -105,7 +105,7 @@ class CruiseLayout(Widget):
       title=tr("Stop Line Extra"),
       description=tr("Extra meters before the painted line, on top of Traffic Stop Offset. Live: about every 3 seconds, no reboot. You crossed by 1–2 m at offset 10 — start at 1.5, then 2.0 if still over. 0 disables. Does not change follow gap."),
       param="TrafficStopLead",
-      min_value=0, max_value=400, value_change_step=50,
+      min_value=0, max_value=500, value_change_step=50,
       use_float_scaling=True,
       label_callback=lambda x: f"{x / 100:.1f} m",
       inline=True,
