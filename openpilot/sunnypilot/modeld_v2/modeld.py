@@ -12,11 +12,14 @@ os.environ['GMMU'] = '0'
 from openpilot.common.hardware import COMMA_HARDWARE
 from openpilot.selfdrive.modeld.helpers import chestnut_present
 from openpilot.sunnypilot.modeld_v2.egpu_loader import (
-  C3XL_MODEL_LOAD_TIMEOUT, chestnut_skip_drive, configure_default_device, load_with_progress, load_with_timeout,
+  C3XL_MODEL_LOAD_TIMEOUT, DOCK_ABSENT, chestnut_skip_drive, clear_chestnut_dock_seen, configure_default_device,
+  dock_usable, load_with_progress, load_with_timeout, mark_chestnut_dock_decided, mark_chestnut_dock_seen,
+  should_wait_for_dock, wait_for_chestnut_dock,
 )
 from openpilot.sunnypilot.modeld_v2.helpers import load_oob
 from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
-configure_default_device(COMMA_HARDWARE, c3xl=get_hardware_profile() == HardwareProfile.C3XL)
+IS_C3XL = get_hardware_profile() == HardwareProfile.C3XL
+configure_default_device(COMMA_HARDWARE, c3xl=IS_C3XL)
 import numpy as np
 import time
 from setproctitle import setproctitle
@@ -58,6 +61,7 @@ from openpilot.sunnypilot.modeld_v2.compile_modeld import (derive_frame_skip, ma
                                                            make_supercombo_input_queues, nv12_copy_size,
                                                            WARP_INPUTS, POLICY_INPUTS)
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
+from openpilot.sunnypilot.models.artifact_status import chestnut_model_ready
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
 from openpilot.sunnypilot.models.helpers import get_active_bundle
 from openpilot.sunnypilot.selfdrive.controls.lib.relc import RoadEdgeLaneChangeController
@@ -84,6 +88,14 @@ def _find_driving_pkl(bundle):
   if _pkl_exists(pkl_path):
     return pkl_path
   return None
+
+
+def _chestnut_weights_ready(params) -> bool:
+  try:
+    return chestnut_model_ready(params)
+  except Exception:
+    cloudlog.exception("chestnut weights check failed")
+    return False
 
 
 def load_models_with_fallback(*, chestnut, load_big, load_small, params, update_loading_progress, hold_loading=False):
@@ -417,18 +429,39 @@ def main(demo=False):
   setproctitle(PROCESS_NAME)
   config_realtime_process(7, 54)
 
+  params = Params()
   skip_drive = chestnut_skip_drive()
   CHESTNUT = chestnut_present() and not skip_drive
+  dock_wait_timed_out = False
   if skip_drive:
     cloudlog.warning("chestnut skip-drive leftover; loading QCOM only")
+  elif IS_C3XL and should_wait_for_dock(CHESTNUT) and _chestnut_weights_ready(params):
+    # Hold the loading state (blocks engage, shows the bar) while 12 V comes up.
+    params.remove("ChestnutActive")
+    params.put_bool("ChestnutLoading", True)
+    params.put("ChestnutLoadingProgress", 0, block=True)
+    wait_st = time.monotonic()
+    state = wait_for_chestnut_dock()
+    CHESTNUT = dock_usable(state)
+    dock_wait_timed_out = not CHESTNUT
+    if state == DOCK_ABSENT:
+      clear_chestnut_dock_seen()
+    cloudlog.warning(f"chestnut dock wait: {state} after {time.monotonic() - wait_st:.1f}s")
+  if IS_C3XL:
+    mark_chestnut_dock_decided()
+    if CHESTNUT:
+      mark_chestnut_dock_seen()
   if CHESTNUT:
     os.environ['HCQDEV_WAIT_TIMEOUT_MS'] = '3000'
   cloudlog.warning(f"egpu env DEV={os.environ.get('DEV')} AM_POWER_LIMIT={os.environ.get('AM_POWER_LIMIT')} XDG_CACHE_HOME={os.environ.get('XDG_CACHE_HOME')} chestnut={CHESTNUT} skip={skip_drive}")
 
-  params = Params()
+  if dock_wait_timed_out:
+    # Expected an eGPU that never became usable: report a fallback, not an endless wait.
+    params.put_bool("ChestnutActive", False, block=True)
+  else:
+    params.remove("ChestnutActive")
   params.put_bool("ChestnutLoading", CHESTNUT or skip_drive)
   params.put("ChestnutLoadingProgress", 1 if CHESTNUT else 0, block=True)
-  params.remove("ChestnutActive")
 
   last_loading_progress = -1
   def update_loading_progress(progress: int):

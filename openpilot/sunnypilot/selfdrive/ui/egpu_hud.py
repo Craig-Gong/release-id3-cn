@@ -52,10 +52,16 @@ def build_hud_egpu_view(*, onroad: bool, connected: bool, compiled: bool, loadin
   waiting = bool(connected and compiled and not loading and active is True and not running)
   dc_text, dc_kind = dc_chip_from_label(dc_label)
 
-  if not connected:
+  if not connected and loading and compiled:
+    # modeld is holding startup for the dock while 12 V comes up.
+    headline, detail, severity, healthy = "大模型", "等待 eGPU 上电", "warning", False
+  elif not connected:
     headline, detail, severity, healthy = "eGPU", "未连接", "muted", False
   elif not compiled:
     headline, detail, severity, healthy = "大模型", "未编译", "warning", False
+  elif loading and int(loading_progress) <= 0:
+    # Dock is up; modeld is still waiting for the PCIe link (loading starts at 1%).
+    headline, detail, severity, healthy = "大模型", "等待 eGPU 就绪", "warning", False
   elif loading:
     headline, detail, severity, healthy = "大模型", f"加载 {int(loading_progress)}%", "warning", False
   elif fallback:

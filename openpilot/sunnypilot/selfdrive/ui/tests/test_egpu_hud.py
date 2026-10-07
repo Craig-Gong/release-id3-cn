@@ -41,6 +41,21 @@ class TestHudEgpuView(unittest.TestCase):
     self.assertEqual(view.metrics, ())
     self.assertEqual(view.severity, "muted")
 
+  def test_waiting_for_dock_power_is_not_disconnected(self):
+    view = _hud(connected=False, loading=True, active=None, model_alive=False,
+                model_big=False, telemetry_valid=False, loading_progress=0)
+    self.assertEqual(view.headline, "大模型")
+    self.assertEqual(view.detail, "等待 eGPU 上电")
+    self.assertEqual(view.severity, "warning")
+
+  def test_waiting_for_dock_link(self):
+    view = _hud(loading=True, active=None, model_alive=False, model_big=False,
+                telemetry_valid=False, loading_progress=0)
+    self.assertEqual(view.detail, "等待 eGPU 就绪")
+    started = _hud(loading=True, active=None, model_alive=False, model_big=False,
+                   telemetry_valid=False, loading_progress=1)
+    self.assertEqual(started.detail, "加载 1%")
+
   def test_fallback_and_loading(self):
     fallback = _hud(active=False, model_big=False, telemetry_valid=False)
     self.assertEqual(fallback.headline, "大模型")

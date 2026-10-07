@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from collections.abc import Callable, MutableMapping
 
 
@@ -20,16 +21,35 @@ C3XL_AM_POWER_LIMIT_W = 100
 # inherit a tighter experimental poll.
 C3XL_AMD_USB_POLL_US = 500
 
+# READY can beat the GPU: EcoFlow / KL15 12 V arrives after modeld has started.
+# The ASM bridge may enumerate on USB-C 5 V alone, or only once 12 V is up; the
+# GPU is usable only when PCIe reaches L0. modeld decides eGPU once at startup,
+# so wait for a usable link instead of committing to the small model.
+C3XL_DOCK_WAIT_TIMEOUT = 30.0
+# Present at 5 Gbps but LTSSM unreadable this long: load anyway, as before.
+C3XL_DOCK_UNKNOWN_GRACE = 10.0
+# Settle after a freshly powered GPU first reaches L0.
+C3XL_DOCK_SETTLE = 2.0
+DOCK_WAIT_POLL = 0.5
+
+DOCK_READY = "ready"
+DOCK_ABSENT = "absent"
+DOCK_NOT_READY = "not_ready"  # present, but USB < 5 Gbps or PCIe not in L0
+DOCK_UNKNOWN = "unknown"  # present at 5 Gbps, LTSSM unreadable
+
 # Survives modeld restart during the same onroad; /dev/shm clears on reboot.
 # Offroad chestnut_statusd unlinks it so the next READY can try eGPU again.
 CHESTNUT_SKIP_DRIVE_PATH = "/dev/shm/chestnut_skip_drive"
+# A restarted modeld must not hold the model back again mid-drive (it may be
+# engaged), so the startup wait happens once per onroad. Cleared offroad.
+CHESTNUT_DOCK_DECIDED_PATH = "/dev/shm/chestnut_dock_decided"
+# A dock has been used on this device, so a missing one at READY is most likely
+# still powering up. Cleared when a wait finds nothing, so an unplugged dock
+# costs one wait, not one per drive.
+CHESTNUT_DOCK_SEEN_PATH = "/data/chestnut_dock_seen"
 
 
-def chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> bool:
-  return os.path.exists(path)
-
-
-def set_chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> None:
+def _touch(path: str) -> None:
   fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
   try:
     os.write(fd, b"1")
@@ -38,15 +58,111 @@ def set_chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> None:
     os.close(fd)
 
 
-def clear_chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> None:
+def _unlink(path: str) -> None:
   try:
     os.unlink(path)
   except FileNotFoundError:
     pass
 
 
+def chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> bool:
+  return os.path.exists(path)
+
+
+def set_chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> None:
+  _touch(path)
+
+
+def clear_chestnut_skip_drive(path: str = CHESTNUT_SKIP_DRIVE_PATH) -> None:
+  _unlink(path)
+
+
+def _best_effort(action: Callable[[str], None], path: str) -> None:
+  try:
+    action(path)
+  except OSError:
+    pass
+
+
+def mark_chestnut_dock_decided(path: str = CHESTNUT_DOCK_DECIDED_PATH) -> None:
+  _best_effort(_touch, path)
+
+
+def clear_chestnut_dock_decided(path: str = CHESTNUT_DOCK_DECIDED_PATH) -> None:
+  _best_effort(_unlink, path)
+
+
+def mark_chestnut_dock_seen(path: str = CHESTNUT_DOCK_SEEN_PATH) -> None:
+  if not os.path.exists(path):
+    _best_effort(_touch, path)
+
+
+def clear_chestnut_dock_seen(path: str = CHESTNUT_DOCK_SEEN_PATH) -> None:
+  _best_effort(_unlink, path)
+
+
+def should_wait_for_dock(present: bool, *, decided_path: str = CHESTNUT_DOCK_DECIDED_PATH,
+                         seen_path: str = CHESTNUT_DOCK_SEEN_PATH) -> bool:
+  if os.path.exists(decided_path):
+    return False
+  return present or os.path.exists(seen_path)
+
+
 class EgpuModelLoadError(RuntimeError):
   pass
+
+
+def chestnut_dock_link_state() -> str:
+  """Passive check only: USB speed from sysfs plus a read-only LTSSM EP0 read."""
+  from openpilot.common.hardware.usb import get_usb_state, is_chestnut_runtime_device
+  from openpilot.system.hardware.chestnut.status import MIN_USB_SPEED_MBPS, PCIE_L0, read_pcie_ltssm
+  speeds = [d["speedMbps"] for d in get_usb_state() if is_chestnut_runtime_device(d)]
+  if not speeds:
+    return DOCK_ABSENT
+  if max(speeds) < MIN_USB_SPEED_MBPS:
+    return DOCK_NOT_READY
+  try:
+    ltssm = read_pcie_ltssm()
+  except (OSError, RuntimeError):
+    return DOCK_UNKNOWN
+  return DOCK_READY if ltssm == PCIE_L0 else DOCK_NOT_READY
+
+
+def dock_usable(state: str) -> bool:
+  return state in (DOCK_READY, DOCK_UNKNOWN)
+
+
+def wait_for_chestnut_dock(probe: Callable[[], str] = chestnut_dock_link_state, *,
+                           timeout: float = C3XL_DOCK_WAIT_TIMEOUT, unknown_grace: float = C3XL_DOCK_UNKNOWN_GRACE,
+                           settle: float = C3XL_DOCK_SETTLE, poll: float = DOCK_WAIT_POLL,
+                           sleep: Callable[[float], None] = time.sleep,
+                           monotonic: Callable[[], float] = time.monotonic) -> str:
+  """Poll probe until the GPU link is usable or timeout; return the last state.
+
+  UNKNOWN (link unreadable) is accepted only after unknown_grace, so a readable
+  L0 still gets its chance.
+  """
+  deadline = monotonic() + timeout
+  unknown_since = None
+  waited = False
+  state = probe()
+  while state != DOCK_READY:
+    now = monotonic()
+    if state == DOCK_UNKNOWN:
+      if unknown_since is None:
+        unknown_since = now
+      if now - unknown_since >= unknown_grace:
+        return state
+    else:
+      unknown_since = None
+    if now >= deadline:
+      return state
+    sleep(poll)
+    waited = True
+    state = probe()
+  if waited:
+    sleep(settle)
+  return state
 
 
 def load_with_progress(loader, stream, *, total_size: int | None = None, progress_callback=None):

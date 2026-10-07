@@ -7,7 +7,9 @@ import openpilot.cereal.messaging as messaging
 from openpilot.common.hardware.usb import is_chestnut_runtime_device
 from openpilot.common.realtime import Ratekeeper
 from openpilot.system.hardware.chestnut.status import read_pcie_ltssm
-from openpilot.sunnypilot.modeld_v2.egpu_loader import clear_chestnut_skip_drive
+from openpilot.sunnypilot.modeld_v2.egpu_loader import (
+  clear_chestnut_dock_decided, clear_chestnut_skip_drive, mark_chestnut_dock_seen,
+)
 
 
 POLL_INTERVAL = 2.0
@@ -53,16 +55,21 @@ def _chestnut_usb(device_state) -> tuple[bool, int]:
 
 
 def main() -> None:
-  # Next READY may try eGPU again; skip-drive only lasts this onroad.
+  # Next READY may try eGPU again; skip-drive and the startup dock wait only last this onroad.
   clear_chestnut_skip_drive()
+  clear_chestnut_dock_decided()
   pm = messaging.PubMaster(["chestnutState"])
   sm = messaging.SubMaster(["deviceState"])
   probe = PcieLinkProbe()
   rk = Ratekeeper(10, print_delay_threshold=None)
+  seen_marked = False
 
   while True:
     sm.update(0)
     connected, speed = _chestnut_usb(sm["deviceState"])
+    if connected and not seen_marked:
+      mark_chestnut_dock_seen()
+      seen_marked = True
     valid, ltssm = probe.update(connected=connected, usb_speed_mbps=speed)
     msg = messaging.new_message("chestnutState", valid=valid)
     msg.chestnutState.pcieLtssm = ltssm

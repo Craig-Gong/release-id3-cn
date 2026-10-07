@@ -13,6 +13,7 @@ from openpilot.sunnypilot.selfdrive.selfdrived.events import ET, EventsSP
 class LoadingParams:
   def __init__(self):
     self.loading = False
+    self.active = None
 
   def get_bool(self, key):
     assert key == "ChestnutLoading"
@@ -20,7 +21,7 @@ class LoadingParams:
 
   def get(self, key):
     assert key == "ChestnutActive"
-    raise StopAfterBigModelLoading
+    return self.active
 
 
 class StopAfterBigModelLoading(Exception):
@@ -39,6 +40,8 @@ class ControlsState:
 
 class SelfdriveInputs:
   def __getitem__(self, key):
+    if key == "deviceState":
+      raise StopAfterBigModelLoading
     assert key == "controlsState"
     return ControlsState()
 
@@ -59,7 +62,7 @@ def test_big_model_ready_event_serializes_as_permanent():
   assert event.permanent
 
 
-def test_big_model_ready_fires_once_on_loading_completion():
+def _selfdrive():
   selfdrive = SelfdriveD.__new__(SelfdriveD)
   selfdrive.params = LoadingParams()
   selfdrive.events = Events()
@@ -67,6 +70,11 @@ def test_big_model_ready_fires_once_on_loading_completion():
   selfdrive.sm = SelfdriveInputs()
   selfdrive.big_model_loading = False
   selfdrive.big_model_ready_t = 0.
+  return selfdrive
+
+
+def test_big_model_ready_fires_once_on_loading_completion():
+  selfdrive = _selfdrive()
   ready = custom.OnroadEventSP.EventName.bigModelReady
 
   update_through_big_model_loading(selfdrive)
@@ -76,10 +84,25 @@ def test_big_model_ready_fires_once_on_loading_completion():
   update_through_big_model_loading(selfdrive)
   assert not selfdrive.events_sp.has(ready)
 
+  selfdrive.params.active = True
   selfdrive.params.loading = False
   update_through_big_model_loading(selfdrive)
   assert selfdrive.events_sp.has(ready)
 
+  update_through_big_model_loading(selfdrive)
+  assert not selfdrive.events_sp.has(ready)
+
+
+@pytest.mark.parametrize("active", (False, None))
+def test_big_model_ready_not_announced_without_big_model(active):
+  # Load failure or dock-wait timeout also ends loading; that is not "ready".
+  selfdrive = _selfdrive()
+  ready = custom.OnroadEventSP.EventName.bigModelReady
+  selfdrive.params.loading = True
+  update_through_big_model_loading(selfdrive)
+
+  selfdrive.params.active = active
+  selfdrive.params.loading = False
   update_through_big_model_loading(selfdrive)
   assert not selfdrive.events_sp.has(ready)
 
