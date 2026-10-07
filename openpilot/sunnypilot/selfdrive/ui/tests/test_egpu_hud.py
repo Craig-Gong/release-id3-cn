@@ -45,8 +45,17 @@ class TestHudEgpuView(unittest.TestCase):
     view = _hud(connected=False, loading=True, active=None, model_alive=False,
                 model_big=False, telemetry_valid=False, loading_progress=0)
     self.assertEqual(view.headline, "大模型")
-    self.assertEqual(view.detail, "等待 eGPU 上电")
+    self.assertEqual(view.detail, "等待 12V 上电")
     self.assertEqual(view.severity, "warning")
+
+  def test_dock_up_after_small_model_chosen_asks_for_ignition_cycle(self):
+    view = _hud(loading=False, active=None, model_alive=True, model_big=False, telemetry_valid=False)
+    self.assertEqual(view.headline, "eGPU")
+    self.assertEqual(view.detail, "已上线 · 熄火再点火切换")
+    self.assertEqual(view.severity, "warning")
+    # Before modeld publishes anything at READY there is no model yet: no hint.
+    early = _hud(loading=False, active=None, model_alive=False, model_big=False, telemetry_valid=False)
+    self.assertEqual(early.detail, "等待启动")
 
   def test_waiting_for_dock_link(self):
     view = _hud(loading=True, active=None, model_alive=False, model_big=False,

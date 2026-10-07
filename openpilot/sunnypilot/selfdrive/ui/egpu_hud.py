@@ -54,7 +54,7 @@ def build_hud_egpu_view(*, onroad: bool, connected: bool, compiled: bool, loadin
 
   if not connected and loading and compiled:
     # modeld is holding startup for the dock while 12 V comes up.
-    headline, detail, severity, healthy = "大模型", "等待 eGPU 上电", "warning", False
+    headline, detail, severity, healthy = "大模型", "等待 12V 上电", "warning", False
   elif not connected:
     headline, detail, severity, healthy = "eGPU", "未连接", "muted", False
   elif not compiled:
@@ -66,6 +66,10 @@ def build_hud_egpu_view(*, onroad: bool, connected: bool, compiled: bool, loadin
     headline, detail, severity, healthy = "大模型", f"加载 {int(loading_progress)}%", "warning", False
   elif fallback:
     headline, detail, severity, healthy = "大模型", "已回退小模型", "danger", False
+  elif active is None and model_alive and not model_big:
+    # modeld settled on the small model before the dock came up; it only
+    # re-decides on the next READY.
+    headline, detail, severity, healthy = "eGPU", "已上线 · 熄火再点火切换", "warning", False
   elif waiting or active is not True:
     headline, detail, severity, healthy = "大模型", "等待启动", "warning", False
   elif degraded:

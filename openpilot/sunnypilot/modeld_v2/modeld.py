@@ -12,9 +12,10 @@ os.environ['GMMU'] = '0'
 from openpilot.common.hardware import COMMA_HARDWARE
 from openpilot.selfdrive.modeld.helpers import chestnut_present
 from openpilot.sunnypilot.modeld_v2.egpu_loader import (
-  C3XL_MODEL_LOAD_TIMEOUT, DOCK_ABSENT, chestnut_skip_drive, clear_chestnut_dock_seen, configure_default_device,
-  dock_usable, load_with_progress, load_with_timeout, mark_chestnut_dock_decided, mark_chestnut_dock_seen,
-  should_wait_for_dock, wait_for_chestnut_dock,
+  C3XL_MODEL_LOAD_TIMEOUT, POWER_UNKNOWN, chestnut_skip_drive, clear_chestnut_dock_seen, configure_default_device,
+  dock_usable, ecoflow_dock_power, keep_dock_seen_after_wait, load_with_progress, load_with_timeout,
+  mark_chestnut_dock_absent, mark_chestnut_dock_decided, mark_chestnut_dock_seen, should_wait_for_dock,
+  wait_for_chestnut_dock,
 )
 from openpilot.sunnypilot.modeld_v2.helpers import load_oob
 from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
@@ -435,18 +436,21 @@ def main(demo=False):
   dock_wait_timed_out = False
   if skip_drive:
     cloudlog.warning("chestnut skip-drive leftover; loading QCOM only")
-  elif IS_C3XL and should_wait_for_dock(CHESTNUT) and _chestnut_weights_ready(params):
+  elif (IS_C3XL and should_wait_for_dock(CHESTNUT, power_expected=ecoflow_dock_power() != POWER_UNKNOWN)
+        and _chestnut_weights_ready(params)):
     # Hold the loading state (blocks engage, shows the bar) while 12 V comes up.
     params.remove("ChestnutActive")
     params.put_bool("ChestnutLoading", True)
     params.put("ChestnutLoadingProgress", 0, block=True)
     wait_st = time.monotonic()
-    state = wait_for_chestnut_dock()
+    state = wait_for_chestnut_dock(power=ecoflow_dock_power)
+    rail = ecoflow_dock_power()
     CHESTNUT = dock_usable(state)
     dock_wait_timed_out = not CHESTNUT
-    if state == DOCK_ABSENT:
+    if not keep_dock_seen_after_wait(state, rail):
       clear_chestnut_dock_seen()
-    cloudlog.warning(f"chestnut dock wait: {state} after {time.monotonic() - wait_st:.1f}s")
+      mark_chestnut_dock_absent()
+    cloudlog.warning(f"chestnut dock wait: {state} rail={rail} after {time.monotonic() - wait_st:.1f}s")
   if IS_C3XL:
     mark_chestnut_dock_decided()
     if CHESTNUT:
