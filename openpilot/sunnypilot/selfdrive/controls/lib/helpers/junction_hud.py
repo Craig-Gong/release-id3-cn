@@ -8,7 +8,7 @@ from openpilot.sunnypilot.nav.hud_copy import (
   STOP_YELLOW, STRAIGHT_AHEAD, STRAIGHT_LANE, WAIT_DETECT, WAIT_PAIR, WATCH_AHEAD,
 )
 from openpilot.sunnypilot.nav.protocol import format_tbt_capsule, lane_hint
-from openpilot.sunnypilot.nav.snapshot import NavSnapshot
+from openpilot.sunnypilot.nav.snapshot import NavSnapshot, nav_light_dist
 
 GREEN_FLASH_S = 1.5
 _LIGHTS = ("red", "yellow", "green")
@@ -131,7 +131,7 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
 
   if stopping:
     headline = _stop_headline(light)
-    dist = float(snap.dist_m or 0.0)
+    dist = nav_light_dist(snap)
     remain = float(snap.remain_s or 0.0)
     if light == "green":
       return JunctionView(True, light, headline, GO_AHEAD, False, False)

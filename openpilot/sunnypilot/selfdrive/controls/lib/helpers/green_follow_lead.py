@@ -181,7 +181,7 @@ def lead_owns_nav_stop(sm: Any, snap: Any) -> bool:
   """
   if snap is None or not bool(getattr(snap, "stop_for_light", False)):
     return False
-  light_d = float(getattr(snap, "dist_m", 0.0) or 0.0)
+  light_d = float(getattr(snap, "dist_m", 0.0) or 0.0) if bool(getattr(snap, "dist_ok", False)) else 0.0
   lead = read_nav_red_lead(sm, light_d)
   if not lead.present:
     return False
@@ -203,9 +203,9 @@ def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: 
   # Queue behind a stopped bumper: lead owns; keep gap logic but ban +a.
   stop_intent = bool(red_pin or model_stop)
   try:
-    from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable
+    from openpilot.sunnypilot.nav.snapshot import light_executable, read_snapshot
     snap = read_snapshot()
-    nav_red = bool(red_pin or (snapshot_executable(snap) and snap.stop_for_light))
+    nav_red = bool(red_pin or (light_executable(snap) and snap.stop_for_light))
     stop_intent = bool(stop_intent or nav_red)
     if nav_red and not lead_owns_nav_stop(sm, snap):
       return float(a_target), bool(should_stop)

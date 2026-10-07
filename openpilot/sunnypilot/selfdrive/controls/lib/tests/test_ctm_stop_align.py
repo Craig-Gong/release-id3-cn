@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import (
-  StandstillHold, _GO_LAUNCH_FLOOR_A, _STANDSTILL_HOLD_RELEASE_S,
+  StandstillHold, _CAMERA_GO_S, _GO_LAUNCH_FLOOR_A, _STANDSTILL_HOLD_RELEASE_S,
 )
 
 _HELPERS = Path(__file__).resolve().parents[1]
@@ -49,7 +49,7 @@ def test_offset_module_still_gates_on_nav_red_flag():
   """adjust(..., nav_red=True) must no-op; planner only sets that for green latch."""
   src = _OFFSET.read_text()
   assert "nav_red" in src
-  assert "if self.distance <= 0. or not stop_light or right_blinker or nav_red:" in src
+  assert "if self.distance <= 0. or right_blinker or nav_red:" in src
 
 
 def test_at_rest_red_pin_still_nails_hold():
@@ -58,9 +58,9 @@ def test_at_rest_red_pin_still_nails_hold():
   h = StandstillHold()
   t0 = 90.0
   red = _snap(ts=t0, dist_m=5.0)
-  orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
+  orig_read, orig_exec = mod.read_snapshot, mod.light_executable
   mod.read_snapshot = lambda: red
-  mod.snapshot_executable = lambda snap, now=None: True
+  mod.light_executable = lambda snap, now=None: True
   try:
     stop, a = h.apply(True, -0.2, 0.0, standstill=True, gas=False, model_stop=False,
                       sm=_radar_sm(), now=t0)
@@ -69,7 +69,7 @@ def test_at_rest_red_pin_still_nails_hold():
     assert a <= -1.0
   finally:
     mod.read_snapshot = orig_read
-    mod.snapshot_executable = orig_exec
+    mod.light_executable = orig_exec
 
 
 def test_confirmed_green_releases_after_dwell():
@@ -81,16 +81,16 @@ def test_confirmed_green_releases_after_dwell():
     ts=t0, traffic_light="green", remain_s=0.0, remain_go=False,
     stop_for_light=False, dist_m=20.0,
   )
-  orig_read, orig_exec = mod.read_snapshot, mod.snapshot_executable
+  orig_read, orig_exec = mod.read_snapshot, mod.light_executable
   mod.read_snapshot = lambda: green
-  mod.snapshot_executable = lambda snap, now=None: True
+  mod.light_executable = lambda snap, now=None: True
   try:
     h.observe_nav(_snap(ts=t0 - 1.0), now=t0 - 1.0, gas=False, v_ego=0.0)
-    for i in range(int(_STANDSTILL_HOLD_RELEASE_S / 0.05) + 2):
+    for i in range(int((_CAMERA_GO_S + _STANDSTILL_HOLD_RELEASE_S) / 0.05) + 3):
       stop, a = h.apply(False, 0.2, 0.0, standstill=True, gas=False, model_stop=False,
                         sm=_radar_sm(), now=t0 + 0.05 * i)
     assert stop is False
     assert a >= _GO_LAUNCH_FLOOR_A
   finally:
     mod.read_snapshot = orig_read
-    mod.snapshot_executable = orig_exec
+    mod.light_executable = orig_exec

@@ -10,7 +10,6 @@ import time
 from openpilot.cereal import messaging, custom
 from opendbc.car import structs
 from openpilot.common.constants import CV
-from openpilot.common.params import Params, UnknownKeyName
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.sunnypilot.selfdrive.controls.lib.dec.dec import DynamicExperimentalController
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
@@ -24,7 +23,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import
   apply_lead_stop_safety,
   apply_radar_range_floor,
 )
-from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import StandstillHold, apply_follow_launch
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import (
+  StandstillHold, apply_follow_launch, hold_approach_accel, nav_light_live,
+)
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
 from openpilot.sunnypilot.nav.protocol import (
@@ -34,8 +35,11 @@ from openpilot.sunnypilot.nav.protocol import (
   nav_red_speed_ms,
   traffic_stop_margin_m,
 )
-from openpilot.sunnypilot.nav.snapshot import read_snapshot, snapshot_executable, write_cluster_hud
+from openpilot.sunnypilot.nav.snapshot import nav_light_dist, read_snapshot, snapshot_executable, write_cluster_hud
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import snapshot_long_ok
+
+# Yellow with a real distance: if stopping needs more than this, go through.
+_YELLOW_DILEMMA_DECEL = 2.5
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_resolver import SpeedLimitResolver
@@ -100,6 +104,16 @@ class LongitudinalPlannerSP:
     self._nav_red_cache_margin = float(margin)
     return remaining, margin, a_cap
 
+  def _nav_red_dist_active(self, snap, v_ego: float, gear, now: float | None = None) -> bool:
+    """Nav red/yellow with a real light distance, fresh from Gaode."""
+    if not (snap.stop_for_light and snap.dist_ok and nav_light_live(snap, gear, now=now)):
+      return False
+    if snap.light_token == "yellow":
+      d = max(1.0, float(snap.dist_m or 0.0))
+      if (float(v_ego) ** 2) / (2.0 * d) > _YELLOW_DILEMMA_DECEL:
+        return False
+    return True
+
   def _clear_nav_red_a(self) -> None:
     self._nav_red_a_prev = None
     self._nav_red_a_t = 0.0
@@ -122,14 +136,10 @@ class LongitudinalPlannerSP:
     # until confirmed green (MEB must not ANFAHREN on e2e creep).
     try:
       CS = sm['carState']
-      snap = read_snapshot()
-      gear = CS.gearShifter
-      # After IQ-link green / while latched, do not let vision shouldStop
-      # force cruise-only — that fought the green launch with a hitch.
-      nav_go_guard = bool(
-        getattr(self.standstill_hold, "_nav_go_latched", False)
-        or (snapshot_long_ok(snap, gear) and snap.light_token == "green")
-      )
+      # While latched after a confirmed go, do not let a vision shouldStop
+      # hitch force cruise-only. A raw nav green token is not enough — it may
+      # be another direction's light; the latch already required the camera.
+      nav_go_guard = bool(getattr(self.standstill_hold, "_nav_go_latched", False))
       if (not nav_go_guard and (CS.standstill or float(CS.vEgo) <= 0.6)
           and bool(sm['modelV2'].action.shouldStop)):
         return False
@@ -172,14 +182,8 @@ class LongitudinalPlannerSP:
     # briefly clear snapshot_executable while Assist is still active).
     snap_gate = read_snapshot()
     sla_v = float(self.sla.output_v_target)
-    neutralize_sla = bool(snapshot_executable(snap_gate))
-    if not neutralize_sla:
-      try:
-        neutralize_sla = bool(Params().get_bool("IqlinkEnabled"))
-      except UnknownKeyName:
-        neutralize_sla = False
-      except Exception:
-        neutralize_sla = False
+    # iqlinkd mirrors IqlinkEnabled into the snapshot at 5 Hz; no per-frame Params read.
+    neutralize_sla = bool(snapshot_executable(snap_gate) or snap_gate.iqlink_enabled)
     # Gas Sync / SET raised MAX above SLA's posted target.
     if (not neutralize_sla) and sla_v < float(V_CRUISE_UNSET) and v_cruise > sla_v + 0.5:
       neutralize_sla = True
@@ -198,7 +202,9 @@ class LongitudinalPlannerSP:
         self.output_v_target = min(float(self.output_v_target), float(curve))
       # Nav red = safety floor only (min with cruise/e2e). CTM owns far-field
       # feel when experimental e2e is active; soft FAR/COAST must not replace it.
-      if snap.stop_for_light and not lead_owns_nav_stop(sm, snap):
+      # Needs a real light distance: a guessed one braked for phantom lines.
+      if (self._nav_red_dist_active(snap, v_ego, CS.gearShifter)
+          and not lead_owns_nav_stop(sm, snap)):
         remaining, margin, a_cap = self._nav_red_plan(
           sm, snap, v_ego, float(snap.accel_target or -2.0),
         )
@@ -260,7 +266,8 @@ class LongitudinalPlannerSP:
       return a_target, should_stop
     now = time.monotonic()
     snap = read_snapshot()
-    long_ok = snapshot_long_ok(snap, CS.gearShifter, now=now)
+    light_live = nav_light_live(snap, CS.gearShifter, now=now)
+    nav_dist_red = self._nav_red_dist_active(snap, v_ego, CS.gearShifter, now=now)
     # Arm sticky red before lead-gap / e2e so a stale link cannot re-enable creep.
     self.standstill_hold.observe_nav(
       snap, now, gas=bool(CS.gasPressed), v_ego=float(v_ego), gear=CS.gearShifter, sm=sm,
@@ -283,7 +290,8 @@ class LongitudinalPlannerSP:
     model_stop = bool(getattr(model.action, "shouldStop", False))
     self.traffic_stop_offset.update()
     # CTM parity: live IQ-link light color must NOT skip TrafficStopOffset.
-    # Skip only after nav green latch (avoid hitch) — lead/RTOR handled inside adjust.
+    # Skip only while the go latch holds (avoid hitch); a sustained model stop
+    # cancels the latch in standstill_hold — lead/RTOR handled inside adjust.
     skip_vision_stop = bool(getattr(self.standstill_hold, "_nav_go_latched", False))
     a_target, should_stop = self.traffic_stop_offset.adjust(
       a_target, should_stop, v_ego, model,
@@ -295,15 +303,13 @@ class LongitudinalPlannerSP:
       sm, v_ego, a_target, should_stop, red_pin=red_pin, model_stop=model_stop,
     )
     a_target, should_stop = apply_lead_stop_safety(sm, v_ego, a_target, should_stop)
-    if (red_pin or (long_ok and snap.stop_for_light)) and not lead_owns:
+    if nav_dist_red and not lead_owns:
       # Safety net only: min() with model/e2e — near lamp if CTM has not shouldStop yet.
       remaining, margin, a_cap = self._nav_red_plan(
-        sm, snap, v_ego,
-        float(snap.accel_target if snap.stop_for_light else -2.0),
+        sm, snap, v_ego, float(snap.accel_target or -2.0),
       )
       a_target = min(float(a_target), a_cap)
-      # Only force LongControl.stopping near/past the line — rolling red_pin
-      # must keep PID + hard a_target (standstill_hold pins at rest).
+      # Only force LongControl.stopping near/past the line (standstill_hold pins at rest).
       if nav_red_force_stop(v_ego, float(snap.dist_m), margin, remaining_m=remaining):
         should_stop = True
         if v_ego <= 0.6 or remaining <= 0.0:
@@ -318,9 +324,27 @@ class LongitudinalPlannerSP:
     a_target, should_stop = apply_radar_range_floor(
       sm, v_ego, a_target, should_stop, gas=bool(CS.gasPressed),
     )
+    lead_going = False
+    if lead_owns:
+      try:
+        own = read_nav_red_lead(sm, nav_light_dist(snap))
+        lead_going = bool(own.present and own.v_lead >= 1.0 and own.d_rel >= 5.0)
+      except Exception:
+        lead_going = False
+    # Nav red without a real distance is not a stop intent: it may be the
+    # next intersection, and -0.45 below 14 km/h would stall the car short.
+    stop_intent = bool(
+      (model_stop or self.traffic_stop_offset._engaged or (nav_dist_red and not lead_owns))
+      and not lead_going
+    )
+    a_target = hold_approach_accel(
+      a_target, v_ego, stop_intent=stop_intent,
+      go_latched=bool(self.standstill_hold._nav_go_latched),
+      gas=bool(CS.gasPressed), right_blinker=bool(CS.rightBlinker),
+    )
     approaching = junction_stop_active(
       has_lead=has_lead,
-      nav_red=bool((self.standstill_hold.red_pin or snap.stop_for_light) and not lead_owns),
+      nav_red=bool((self.standstill_hold.red_pin or (light_live and snap.stop_for_light)) and not lead_owns),
       model_stop=model_stop,
       standstill_hold=self.standstill_hold.hold, light=snap.light_token,
     )

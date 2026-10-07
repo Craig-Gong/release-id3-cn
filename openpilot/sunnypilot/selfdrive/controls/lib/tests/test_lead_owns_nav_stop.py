@@ -45,8 +45,14 @@ def test_mid_range_lead_owns_far_red():
 
 def test_lead_past_light_does_not_own():
   # Track beyond the light point — do not treat as queue bumper.
-  snap = NavSnapshot(stop_for_light=True, dist_m=15.0, traffic_light="red")
+  snap = NavSnapshot(stop_for_light=True, dist_m=15.0, dist_ok=True, traffic_light="red")
   assert lead_owns_nav_stop(_sm(d_rel=20.0, v_lead=0.0), snap) is False
+
+
+def test_guessed_light_distance_is_ignored():
+  # APK-guessed distance (no trusted source): any in-range lead owns.
+  snap = NavSnapshot(stop_for_light=True, dist_m=15.0, dist_ok=False, traffic_light="red")
+  assert lead_owns_nav_stop(_sm(d_rel=20.0, v_lead=0.0), snap) is True
 
 
 def test_gap_helper_runs_when_lead_owns_far_red(monkeypatch=None):
@@ -54,13 +60,12 @@ def test_gap_helper_runs_when_lead_owns_far_red(monkeypatch=None):
     ts=10.0, link_ok=True, iqlink_enabled=True, stop_for_light=True,
     dist_m=201.0, traffic_light="red", accel_target=-2.0,
   )
-  import openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead as mod
-  orig = mod.read_snapshot if hasattr(mod, "read_snapshot") else None
   # apply_stopped_lead_gap imports read_snapshot locally; patch snapshot module.
   import openpilot.sunnypilot.nav.snapshot as snap_mod
   old = snap_mod.read_snapshot
+  old_exec = snap_mod.light_executable
   snap_mod.read_snapshot = lambda: snap
-  snap_mod.snapshot_executable = lambda s, now=None: True
+  snap_mod.light_executable = lambda s, now=None: True
   try:
     # 6 m behind stopped lead: should pin (gap), not passthrough nav skip.
     a, stop = apply_stopped_lead_gap(_sm(d_rel=6.0, v_lead=0.0), v_ego=0.2, a_target=0.5,
@@ -74,6 +79,7 @@ def test_gap_helper_runs_when_lead_owns_far_red(monkeypatch=None):
     assert a2 <= 0.0
   finally:
     snap_mod.read_snapshot = old
+    snap_mod.light_executable = old_exec
 
 
 def test_gap_helper_bans_creep_on_vision_model_stop():

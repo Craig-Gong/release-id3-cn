@@ -169,6 +169,7 @@ class TrafficStopOffset:
     self._filtered_stop: float | None = None
     self._engaged = False
     self._a_prev: float | None = None
+    self._dropout_s = 0.0
     self.read_params()
 
   def read_params(self) -> None:
@@ -202,6 +203,33 @@ class TrafficStopOffset:
     self._filtered_stop = None
     self._engaged = False
     self._a_prev = None
+    self._dropout_s = 0.0
+
+  def _apply_engaged_brake(self, a_target: float, should_stop: bool, v_ego: float) -> tuple[float, bool]:
+    """Keep braking toward the last stop point."""
+    filtered_stop = float(self._filtered_stop if self._filtered_stop is not None else 0.0)
+    hard_remaining = filtered_stop - self.distance
+    remaining = soft_release_remaining(hard_remaining, filtered_stop)
+    if remaining <= E2E_STOP_HOLD_BUFFER:
+      should_stop = True
+    lead = float(self.lead_m)
+    brake_rem = 0.0 if remaining <= lead else max(remaining - lead, 0.3)
+    a_cap = vision_stop_accel_cap(v_ego, brake_rem, prev_a=self._a_prev, dt=DT_MDL)
+    self._a_prev = float(a_cap)
+    a_cap = max(float(a_cap), float(ACCEL_MIN))
+    if a_cap < float(a_target):
+      a_target = a_cap
+    return a_target, should_stop
+
+  def _hold_dropout(self, a_target: float, should_stop: bool, v_ego: float) -> tuple[float, bool] | None:
+    # Model shouldStop / end-speed often blips off in the last meters, which
+    # used to return +e2e and roll through the line.
+    if not self._engaged or self._filtered_stop is None or float(v_ego) > 6.0:
+      return None
+    if self._dropout_s >= 0.8:
+      return None
+    self._dropout_s += DT_MDL
+    return self._apply_engaged_brake(a_target, should_stop, v_ego)
 
   def _filter_stop(self, raw_stop: float, v_ego: float) -> float:
     """Allow stop to jump farther instantly; limit noisy jump-near.
@@ -227,15 +255,25 @@ class TrafficStopOffset:
              *, stop_light: bool, has_lead: bool, right_blinker: bool,
              lead_d_rel: float | None = None, nav_red: bool = False,
              steering_angle_deg: float = 0.0) -> tuple[float, bool]:
-    if self.distance <= 0. or not stop_light or right_blinker or nav_red:
+    if self.distance <= 0. or right_blinker or nav_red:
       self._reset_session()
       return a_target, should_stop
+
+    if not stop_light:
+      held = self._hold_dropout(a_target, should_stop, v_ego)
+      if held is None:
+        self._reset_session()
+        return a_target, should_stop
+      return held
 
     x = model_msg.position.x
     v = model_msg.velocity.x
     if len(x) < E2E_STOP_MIN_SAMPLES or len(v) < E2E_STOP_MIN_SAMPLES or len(x) != len(v):
-      self._reset_session()
-      return a_target, should_stop
+      held = self._hold_dropout(a_target, should_stop, v_ego)
+      if held is None:
+        self._reset_session()
+        return a_target, should_stop
+      return held
 
     raw_stop = float(x[-1])
     if _lead_owns_stop(has_lead, lead_d_rel, raw_stop):
@@ -243,9 +281,21 @@ class TrafficStopOffset:
       return a_target, should_stop
 
     # Stop-sign / cruise-through: model still plans speed at the horizon.
+    # Once engaged and still slow, a one-frame fast ending is the same blip.
     if float(v[-1]) > E2E_STOP_PLAN_VEL_THRESHOLD:
-      self._reset_session()
-      return a_target, should_stop
+      held = self._hold_dropout(a_target, should_stop, v_ego)
+      if held is None:
+        self._reset_session()
+        return a_target, should_stop
+      return held
+
+    # Near the line, a sudden farther stop point is the model giving up the
+    # stop. Don't follow it or the brake releases and the nose rolls.
+    if self._filtered_stop is not None and raw_stop > float(self._filtered_stop) + 1.0:
+      if float(v_ego) < 6.0 and (float(self._filtered_stop) - self.distance) < 18.0:
+        raw_stop = float(self._filtered_stop)
+
+    self._dropout_s = 0.0
 
     # Entry gate only — once engaged, finish the stop even if wheel turns.
     if not self._engaged:

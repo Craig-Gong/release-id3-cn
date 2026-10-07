@@ -42,6 +42,12 @@ _offset_cache = NAV_STOP_MARGIN_M
 _offset_n = 0
 _YELLOW_STOP_DIST_M = 30.0
 LIGHT_TURN_WINDOW_M = 150.0
+# Red-light right turn exemption: the right turn must be at THIS light. 150 m
+# also matched the next intersection and skipped the red in front.
+RTOR_TURN_WINDOW_M = 50.0
+# trafficLightDistSrc values that are a measured/route distance (not a guess
+# from nTBTDist / segment remain). Current partner APKs send none.
+_TRUSTED_LIGHT_DIST_SRC = {"route", "map"}
 # Toast / send_turn / nav-led longitudinal prep.
 TURN_DESIRE_WINDOW_M = 150.0
 # Lateral desire + turn-in (no stalk widen). Lebowski needed ~30 m; CTM v2 /
@@ -285,10 +291,19 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
     send_turn = True
 
   light = _s(data, "trafficLight", "none").strip().lower() or "none"
+  if light not in ("red", "yellow", "green"):
+    light = "none"
   light_dist = _f(data, "trafficLightDistM")
+  dist_src = _s(data, "trafficLightDistSrc").strip().lower()
+  dist_ok = light_dist > 0.0 and dist_src in _TRUSTED_LIGHT_DIST_SRC
+  light_dir = _s(data, "trafficLightDir", "none").strip().lower() or "none"
+  light_raw = int(_f(data, "trafficLightStatusRaw", -1.0))
+  light_age_s = max(0.0, _f(data, "trafficLightAgeMs")) / 1000.0
+  light_ts = float(now) - light_age_s if light != "none" else 0.0
   remain_s = int(_f(data, "trafficLightRemainS"))
   remain_go = "trafficLightRemainS" in data and remain_s == 1
-  right_turn_pending = bucket == "turn_right" and 0.0 < turn_dist <= LIGHT_TURN_WINDOW_M
+  right_turn_pending = (bucket == "turn_right" and 0.0 < turn_dist <= RTOR_TURN_WINDOW_M
+                        and light_dir != "right")
 
   stop_for_light = False
   speed_target = road_ms
@@ -299,12 +314,13 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
       # stop_for_light so standstill stays pinned until traffic_light=green.
       # Follow cars still use remain_go + radar lead motion in StandstillHold.
       stop_for_light = True
-    elif light == "yellow" and 0.0 < light_dist <= _YELLOW_STOP_DIST_M:
+    elif light == "yellow" and dist_ok and 0.0 < light_dist <= _YELLOW_STOP_DIST_M:
       stop_for_light = True
   if stop_for_light:
-    margin = traffic_stop_margin_m()
-    speed_target = nav_red_speed_ms(light_dist, road_ms, margin)
     accel_target = _RED_LIGHT_ACCEL
+    if dist_ok:
+      margin = traffic_stop_margin_m()
+      speed_target = nav_red_speed_ms(light_dist, road_ms, margin)
 
   maneuver = "none"
   if bucket.startswith("turn"):
@@ -348,6 +364,10 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
     go_dist_m=float(max(go_dist, 0.0)),
     go_time_s=float(max(go_time, 0.0)),
     goal_name=goal_name[:40],
+    dist_ok=bool(dist_ok),
+    light_ts=float(light_ts),
+    light_dir=light_dir[:16],
+    light_raw=int(light_raw),
   )
 
 

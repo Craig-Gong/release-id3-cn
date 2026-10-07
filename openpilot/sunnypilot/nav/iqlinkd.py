@@ -16,7 +16,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.nav.ble_gatt import BleGattServer
 from openpilot.sunnypilot.nav.envelope import FIXED_BLE_PSK, EnvelopeVerifier
 from openpilot.sunnypilot.nav.gatt_json import MAX_GATT_BUF, pop_complete_json
-from openpilot.sunnypilot.nav.protocol import parse_carrot
+from openpilot.sunnypilot.nav.protocol import flatten_payload, parse_carrot
 from openpilot.sunnypilot.nav.road_limit_hold import IqlinkRoadLimitHold
 from openpilot.sunnypilot.nav.snapshot import (
   HMAC_FRESH_S,
@@ -31,6 +31,9 @@ LINK_CONNECTING = 1
 LINK_CONNECTED = 2
 BLE_RETRY_S = 5.0
 UDP_RETRY_S = 5.0
+LIGHT_LOG_PATH = "/data/iqlink_light_log.csv"
+LIGHT_LOG_MAX_BYTES = 2 * 1024 * 1024
+_LIGHT_LOG_HEADER = "wall,mono,light,raw,dir,remain_s,dist_m,dist_ok,age_ms,stop,tbt_type,tbt_dist\n"
 
 
 def _param_bool(params: Params, key: str, default: bool = False) -> bool:
@@ -76,8 +79,30 @@ class IqlinkDaemon:
     self._was_hmac_fresh = False
     self._buf = bytearray()
     self._road_limit_hold = IqlinkRoadLimitHold()
+    self._light_log_key: tuple | None = None
     self.ble = BleGattServer(self._on_gatt_write)
     self.udp = UdpNavServer(self._on_udp_datagram)
+
+  def _log_light(self, snap: NavSnapshot, data: dict, now: float) -> None:
+    """One CSV row per light / countdown change, for matching against drives."""
+    key = (snap.traffic_light, snap.light_raw, snap.light_dir, int(snap.remain_s), snap.stop_for_light)
+    if key == self._light_log_key:
+      return
+    self._light_log_key = key
+    try:
+      if os.path.exists(LIGHT_LOG_PATH) and os.path.getsize(LIGHT_LOG_PATH) > LIGHT_LOG_MAX_BYTES:
+        os.replace(LIGHT_LOG_PATH, LIGHT_LOG_PATH + ".1")
+      new_file = not os.path.exists(LIGHT_LOG_PATH)
+      age_ms = int(float(data.get("trafficLightAgeMs", -1) or -1))
+      row = (f"{time.strftime('%Y-%m-%d %H:%M:%S')},{now:.2f},{snap.traffic_light},{snap.light_raw},"
+             f"{snap.light_dir},{int(snap.remain_s)},{snap.dist_m:.0f},{int(snap.dist_ok)},{age_ms},"
+             f"{int(snap.stop_for_light)},{int(float(data.get('nTBTTurnType', 0) or 0))},{snap.tbt_dist:.0f}\n")
+      with open(LIGHT_LOG_PATH, "a", encoding="utf-8") as f:
+        if new_file:
+          f.write(_LIGHT_LOG_HEADER)
+        f.write(row)
+    except Exception:
+      pass
 
   def _apply_road_limit_hold(self, snap: NavSnapshot, now: float) -> NavSnapshot:
     """Debounce Gaode nRoadLimitSpeed; keep red-light targets untouched."""
@@ -144,6 +169,7 @@ class IqlinkDaemon:
         write_snapshot(self._last_snap)
       return
     snap = self._apply_road_limit_hold(snap, now)
+    self._log_light(snap, flatten_payload(data), now)
     self._last_snap = snap
     if hmac_ok:
       self._last_hmac_ts = now

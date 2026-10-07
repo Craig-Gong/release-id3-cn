@@ -16,6 +16,9 @@ INJECT_SHM_PATH = "/dev/shm/sp_nav_inject.json"
 # dropped nav control while the HUD was still green.
 HMAC_FRESH_S = 8.0
 STALE_LINK_S = HMAC_FRESH_S
+# Light color is only acted on while Gaode itself refreshed it recently. The
+# phone re-sends its last state every second, so link freshness is not enough.
+LIGHT_FRESH_S = 2.0
 
 
 @dataclass
@@ -42,6 +45,13 @@ class NavSnapshot:
   go_dist_m: float = 0.0
   go_time_s: float = 0.0
   goal_name: str = ""
+  # Gaode 60073 carries no distance; partner APKs used to guess one from the
+  # next maneuver. Only a declared real source may drive distance braking.
+  dist_ok: bool = False
+  # Car monotonic time of the last Gaode light update (phone age subtracted).
+  light_ts: float = 0.0
+  light_dir: str = "none"
+  light_raw: int = -1
 
   @property
   def apk_green(self) -> bool:
@@ -120,3 +130,20 @@ def snapshot_executable(snap: NavSnapshot, *, now: float | None = None) -> bool:
   if snap.ts <= 0.0:
     return False
   return (clock - snap.ts) <= STALE_LINK_S
+
+
+def light_executable(snap: NavSnapshot, *, now: float | None = None) -> bool:
+  """Link is live and Gaode refreshed the light within LIGHT_FRESH_S."""
+  clock = time.monotonic() if now is None else now
+  if not snapshot_executable(snap, now=clock):
+    return False
+  if snap.light_ts <= 0.0:
+    return False
+  return (clock - snap.light_ts) <= LIGHT_FRESH_S
+
+
+def nav_light_dist(snap: NavSnapshot) -> float:
+  """Light distance only when its source is real; 0 = unknown."""
+  if not snap.dist_ok:
+    return 0.0
+  return float(snap.dist_m or 0.0)

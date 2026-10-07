@@ -101,3 +101,40 @@ def test_red_remain_go_keeps_stop_for_light():
   assert snap.remain_go is True
   assert snap.stop_for_light is True
   assert snap.traffic_light == "red"
+
+
+def test_guessed_light_distance_is_not_trusted():
+  snap = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "trafficLightDistM": 40})
+  assert snap.stop_for_light is True
+  assert snap.dist_ok is False
+  # No distance braking target from a guess: cruise target stays the road limit.
+  assert abs(snap.speed_target - 50 / 3.6) < 1e-6
+
+
+def test_trusted_light_distance_source():
+  snap = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "trafficLightDistM": 40,
+                 "trafficLightDistSrc": "route"})
+  assert snap.dist_ok is True
+  assert snap.speed_target < 50 / 3.6
+
+
+def test_yellow_without_real_distance_does_not_stop():
+  snap = _parse({"nRoadLimitSpeed": 50, "trafficLight": "yellow", "trafficLightDistM": 20})
+  assert snap.stop_for_light is False
+
+
+def test_light_ts_subtracts_phone_age():
+  snap = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "trafficLightAgeMs": 1500}, now=100.0)
+  assert abs(snap.light_ts - 98.5) < 1e-6
+  dark = _parse({"nRoadLimitSpeed": 50, "trafficLight": "none"}, now=100.0)
+  assert dark.light_ts == 0.0
+
+
+def test_rtor_only_near_and_not_right_arrow():
+  near = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 2, "nTBTDist": 40})
+  assert near.stop_for_light is False
+  far = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 2, "nTBTDist": 120})
+  assert far.stop_for_light is True
+  arrow = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 2, "nTBTDist": 40,
+                  "trafficLightDir": "right"})
+  assert arrow.stop_for_light is True

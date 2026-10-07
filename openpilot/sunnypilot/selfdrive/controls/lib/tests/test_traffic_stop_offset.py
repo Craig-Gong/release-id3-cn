@@ -20,6 +20,7 @@ def _build(distance):
   c._filtered_stop = None
   c._engaged = False
   c._a_prev = None
+  c._dropout_s = 0.0
   return c
 
 
@@ -214,3 +215,26 @@ def test_stop_line_extra_slider_range():
   assert _sanitize_lead_m(2.0) == 2.0
   assert _sanitize_lead_m(0) == 0.0
   assert _sanitize_lead_m(9) == 4.0
+
+
+def test_shouldstop_blip_does_not_release_brake():
+  c = _build(10.0)
+  msg = _model_msg(12.0, 0.2)
+  a0, _ = c.adjust(1.0, False, 3.0, msg, stop_light=True, has_lead=False, right_blinker=False)
+  assert a0 < 0.0
+  assert c._engaged is True
+  # Model drops shouldStop for one frame and asks to go. Keep braking.
+  a1, _ = c.adjust(1.2, False, 2.5, msg, stop_light=False, has_lead=False, right_blinker=False)
+  assert a1 < 0.0
+  assert c._engaged is True
+
+
+def test_approach_creep_clamp():
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import hold_approach_accel
+
+  assert hold_approach_accel(1.2, 2.0, stop_intent=True, go_latched=False, gas=False, right_blinker=False) <= -0.4
+  assert hold_approach_accel(1.2, 2.0, stop_intent=True, go_latched=True, gas=False, right_blinker=False) == 1.2
+  assert hold_approach_accel(1.2, 2.0, stop_intent=True, go_latched=False, gas=True, right_blinker=False) == 1.2
+  assert hold_approach_accel(1.2, 2.0, stop_intent=True, go_latched=False, gas=False, right_blinker=True) == 1.2
+  assert hold_approach_accel(1.2, 8.0, stop_intent=True, go_latched=False, gas=False, right_blinker=False) == 1.2
+  assert hold_approach_accel(-1.5, 1.0, stop_intent=True, go_latched=False, gas=False, right_blinker=False) == -1.5
