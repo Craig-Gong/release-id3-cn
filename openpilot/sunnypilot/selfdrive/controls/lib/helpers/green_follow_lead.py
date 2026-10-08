@@ -11,6 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_comfort_stop import (
+  MIN_GAP_M, STOP_V_MPS, comfort_stop_accel, settle_cap,
+)
+
 _DT_MDL = 0.05
 
 LEAD_QUEUE_M = 20.0
@@ -42,9 +46,6 @@ STOPPED_LEAD_V_MPS = LEAD_GO_SPEED_MPS
 STOPPED_LEAD_GAP_M = 3.5
 STOPPED_LEAD_CREEP_M = 5.0
 STOPPED_LEAD_SOFT_M = 8.0
-STOPPED_LEAD_HARD_A = -2.5
-STOPPED_LEAD_SOFT_A = -1.5
-STOPPED_LEAD_HOLD_A = -1.2
 STOPPED_LEAD_CLOSE_A = 0.25
 STOPPED_LEAD_CLOSE_V_MAX = 0.8
 RADAR_TO_CAMERA_M = 1.52
@@ -196,8 +197,10 @@ def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: 
                            *, red_pin: bool = False, model_stop: bool = False) -> tuple[float, bool]:
   """Keep ~3.5 m behind a stopped lead; only creep when clearly too far (>5.0 m).
 
-  Under nav red / vision model_stop / red_pin: never soft-zone +a creep
-  (MEB ANFAHREN on tiny positive a → stop-creep-stop at the line).
+  While rolling, the approach uses the continuous comfort profile and only
+  requests LongControl stopping below STOP_V_MPS. Under nav red / vision
+  model_stop / red_pin: never soft-zone +a creep (MEB ANFAHREN on tiny
+  positive a → stop-creep-stop at the line).
   """
   # Never creep into a head-car nav red — that fights standstill hold.
   # Queue behind a stopped bumper: lead owns; keep gap logic but ban +a.
@@ -231,30 +234,24 @@ def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: 
     except Exception:
       pass
 
-  if d_rel < STOPPED_LEAD_GAP_M:
-    should_stop = True
-    brake = STOPPED_LEAD_HARD_A if v_ego > 0.15 else STOPPED_LEAD_HOLD_A
-    a_target = min(float(a_target), brake)
+  if d_rel >= STOPPED_LEAD_SOFT_M:
     return float(a_target), bool(should_stop)
 
-  if d_rel < STOPPED_LEAD_CREEP_M:
-    # Near the settle gap: pin, do not nudge into the bumper.
-    should_stop = True
-    brake = STOPPED_LEAD_SOFT_A if v_ego > 0.15 else STOPPED_LEAD_HOLD_A
-    a_target = min(float(a_target), brake)
-    return float(a_target), bool(should_stop)
-
-  if d_rel < STOPPED_LEAD_SOFT_M:
+  pin_zone = d_rel < STOPPED_LEAD_CREEP_M or stop_intent
+  if not pin_zone and v_ego <= STOPPED_LEAD_CLOSE_V_MAX:
     # Soft zone: congestion creep only when NOT stopping for a light/line.
-    if stop_intent or v_ego > STOPPED_LEAD_CLOSE_V_MAX:
-      should_stop = True if stop_intent else should_stop
-      brake = STOPPED_LEAD_SOFT_A if v_ego > 0.15 else STOPPED_LEAD_HOLD_A
-      a_target = min(float(a_target), brake)
-    else:
-      should_stop = False
-      a_target = min(max(float(a_target), STOPPED_LEAD_CLOSE_A * 0.5), STOPPED_LEAD_CLOSE_A)
-    return float(a_target), bool(should_stop)
+    return min(max(float(a_target), STOPPED_LEAD_CLOSE_A * 0.5), STOPPED_LEAD_CLOSE_A), False
 
+  # Rolling toward a stopped bumper: continuous comfort profile, never +a.
+  a_cap, urgent = comfort_stop_accel(v_ego, d_rel, lead.v_lead)
+  a_target = min(float(a_target), 0.0)
+  if a_cap is not None:
+    a_target = min(a_target, a_cap)
+  if pin_zone and v_ego <= STOP_V_MPS:
+    should_stop = True
+    a_target = min(a_target, settle_cap(v_ego))
+  elif urgent and d_rel < MIN_GAP_M:
+    should_stop = True
   return float(a_target), bool(should_stop)
 
 

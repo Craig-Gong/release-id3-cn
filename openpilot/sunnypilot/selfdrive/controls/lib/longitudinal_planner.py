@@ -19,6 +19,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead impor
   apply_stopped_lead_gap, follow_lead_present, lead_owns_nav_stop, read_nav_queue_lead,
   read_nav_red_lead, radar_state_readable,
 )
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_comfort_stop import (
+  BrakeOnsetLimiter, lead_brake_urgent, read_lead_kinematics,
+)
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import (
   apply_lead_stop_safety,
   apply_radar_range_floor,
@@ -64,6 +67,9 @@ class LongitudinalPlannerSP:
     self.turn_prep = UrbanTurnPrep()
     self.traffic_stop_offset = TrafficStopOffset()
     self.standstill_hold = StandstillHold()
+    self.brake_onset = BrakeOnsetLimiter()
+    # Red-light stops keep their own slew (vision 0.95/3.2, nav red).
+    self._light_stop_active = False
     # Nav-red a_cap slew state (jerk limit across planner frames).
     self._nav_red_a_prev: float | None = None
     self._nav_red_a_t = 0.0
@@ -256,8 +262,25 @@ class LongitudinalPlannerSP:
       snap=snap,
     )
 
+  def limit_brake_onset(self, sm: messaging.SubMaster, v_ego: float, a_target: float, dt: float,
+                        *, reset: bool) -> float:
+    """Slew brake increases of the final accel; physics-urgent cases pass through."""
+    bypass = bool(reset or self._light_stop_active)
+    if not bypass:
+      try:
+        CS = sm['carState']
+        bypass = bool(CS.gasPressed or CS.standstill)
+      except Exception:
+        bypass = True
+    if not bypass:
+      kin = read_lead_kinematics(sm)
+      if kin is not None:
+        bypass = lead_brake_urgent(kin[0], kin[1], kin[2], v_ego)
+    return self.brake_onset.update(a_target, v_ego, dt, bypass=bypass)
+
   def apply_stop_helpers(self, sm: messaging.SubMaster, v_ego: float, a_target: float,
                          should_stop: bool) -> tuple[float, bool]:
+    self._light_stop_active = False
     try:
       CS = sm['carState']
       model = sm['modelV2']
@@ -336,6 +359,10 @@ class LongitudinalPlannerSP:
     stop_intent = bool(
       (model_stop or self.traffic_stop_offset._engaged or (nav_dist_red and not lead_owns))
       and not lead_going
+    )
+    self._light_stop_active = bool(
+      (self.traffic_stop_offset._engaged or nav_dist_red or red_pin or (model_stop and not has_lead))
+      and not lead_owns
     )
     a_target = hold_approach_accel(
       a_target, v_ego, stop_intent=stop_intent,

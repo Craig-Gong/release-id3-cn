@@ -196,6 +196,8 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.output_a_target = np.clip(self.output_a_target, ACCEL_MIN, ACCEL_MAX)
     if empty_cap is not None:
       self.output_a_target = min(float(self.output_a_target), float(empty_cap))
+    self.output_a_target = self.limit_brake_onset(
+      sm, v_ego, float(self.output_a_target), self.dt, reset=bool(reset_state or self.fcw))
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
 

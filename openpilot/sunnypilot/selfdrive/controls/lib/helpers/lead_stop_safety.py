@@ -1,15 +1,19 @@
-"""Hard kinematic brake / hold behind leads — independent of MPC comfort.
+"""Kinematic brake / hold behind leads — independent of MPC comfort.
 
 MPC alone uses a soft comfort envelope (A_CHANGE_COST / J_EGO) and can coast
-into a stationary bumper until late. This layer caps accel from geometry:
-
-  a <= -closing^2 / (2 * max(d - stop_gap, min_slack))
+into a stationary bumper until late. Slow leads use the continuous comfort
+stop profile (lead_comfort_stop); constant hard brakes only apply inside the
+hard minimum gap or when the profile reports urgency.
 
 Effective stop gap matches LongitudinalTuning.stop_distance default (3.5 m).
 """
 from __future__ import annotations
 
 from typing import Any
+
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_comfort_stop import (
+  MIN_GAP_M, STOP_V_MPS, comfort_stop_accel, settle_cap,
+)
 
 # Keep in sync with LongitudinalTuning.stop_distance default.
 STOP_GAP_M = 3.5
@@ -18,7 +22,6 @@ SLOW_LEAD_MPS = 1.0
 MIN_SLACK_M = 0.75
 HARD_A_FLOOR = -3.5
 CLOSE_BRAKE_A = -2.2
-HOLD_A = -1.2
 STANDSTILL_V = 0.35
 
 
@@ -86,10 +89,17 @@ def apply_radar_range_floor(sm: Any, v_ego: float, a_target: float, should_stop:
   if departed:
     return a_out, stop
   if d_rel < RADAR_NO_PUNCH_M and not opening:
-    stop = True
-    cap = HOLD_A if v_ego <= STANDSTILL_V else CLOSE_BRAKE_A
-    if d_rel >= STOP_GAP_M and v_ego <= 1.0 and v_lead >= SLOW_LEAD_MPS:
+    if v_ego <= STANDSTILL_V:
+      stop = True
+      cap = settle_cap(v_ego)
+    elif d_rel < MIN_GAP_M and v_ego > v_lead + 0.05:
+      stop = True
+      cap = CLOSE_BRAKE_A
+    else:
+      # No punch toward the bumper; the comfort profile owns the decel.
       cap = 0.0
+      if v_ego <= STOP_V_MPS and v_lead < SLOW_LEAD_MPS:
+        stop = True
     a_out = min(a_out, cap)
   return a_out, stop
 
@@ -118,17 +128,14 @@ def apply_lead_stop_safety(sm: Any, v_ego: float, a_target: float, should_stop: 
   stop = bool(should_stop)
 
   if v_lead < SLOW_LEAD_MPS:
-    slack = max(d_rel - STOP_GAP_M, MIN_SLACK_M)
-    if closing > 0.05 or v_ego > STANDSTILL_V:
-      a_need = -(closing * closing) / (2.0 * slack)
-      a_out = min(a_out, max(a_need, HARD_A_FLOOR))
-    if d_rel < NEAR_HOLD_M:
-      if v_ego <= STANDSTILL_V:
-        stop = True
-        a_out = min(a_out, HOLD_A)
-      elif d_rel < STOP_GAP_M:
-        stop = True
-        a_out = min(a_out, CLOSE_BRAKE_A)
+    a_cap, urgent = comfort_stop_accel(v_ego, d_rel, v_lead)
+    if a_cap is not None:
+      a_out = min(a_out, a_cap)
+    if urgent and d_rel < MIN_GAP_M:
+      stop = True
+    if d_rel < NEAR_HOLD_M and v_ego <= STOP_V_MPS:
+      stop = True
+      a_out = min(a_out, settle_cap(v_ego))
     return a_out, stop
 
   # Moving lead: still enforce a kinematic floor when closing hard.
