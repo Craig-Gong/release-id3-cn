@@ -33,7 +33,8 @@ FOLLOW_TIMEOUT_MIN_D_M = 12.0
 FOLLOW_TIMEOUT_S = 4.0
 # Cap when still nose-to-bumper and lead is stopped (do not punch into it).
 FOLLOW_LEAD_START_ACCEL = 1.5
-# Floor once lead is rolling and ego is still slow (queue takeoff / MEB ANFAHREN).
+# Legacy hard floor (1.2). Congestion takeoff now uses lead_follow_comfort
+# soft floor ≤ FOLLOW_FLOOR_SOFT_A with confirm / a_lead / anticipate.
 FOLLOW_LEAD_GO_FLOOR_A = 1.2
 FOLLOW_LEAD_LAUNCH_V_EGO = 2.5
 VISION_LEAD_PROB = 0.5

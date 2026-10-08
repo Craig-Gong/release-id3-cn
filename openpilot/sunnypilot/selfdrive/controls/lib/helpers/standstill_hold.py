@@ -17,19 +17,18 @@ from __future__ import annotations
 
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import radar_lead_departed
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
-  FOLLOW_LEAD_GO_FLOOR_A,
-  FOLLOW_LEAD_LAUNCH_V_EGO,
-  FOLLOW_LEAD_START_ACCEL,
   LEAD_GO_SPEED_MPS,
   STOPPED_LEAD_CREEP_M,
   STOPPED_LEAD_GAP_M,
   GreenFollowLeadGate,
-  follow_lead_soft_launch,
   is_nav_head_car,
   lead_owns_nav_stop,
   radar_nose_clear,
   read_follow_lead,
   read_nav_queue_lead,
+)
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_follow_comfort import (
+  FollowLaunchController,
 )
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, light_executable, read_snapshot
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import nav_long_blocked
@@ -400,22 +399,13 @@ class StandstillHold:
     return should_stop, a_target
 
 
-def apply_follow_launch(sm, v_ego: float, a_target: float) -> float:
-  if v_ego > FOLLOW_LEAD_LAUNCH_V_EGO:
-    return float(a_target)
-  lead = read_follow_lead(sm)
-  if not lead.present:
-    return float(a_target)
-  # Past settle gap and lead actually rolling (~3 km/h): follow, don't wait for 5 m.
-  if lead.d_rel >= STOPPED_LEAD_GAP_M and lead.v_lead >= 0.8:
-    return max(float(a_target), FOLLOW_LEAD_GO_FLOOR_A)
-  # Critically closed: never add a positive floor. Stopped lead also forbids accel.
-  if lead.d_rel < STOPPED_LEAD_CREEP_M:
-    if lead.v_lead < LEAD_GO_SPEED_MPS:
-      return min(float(a_target), 0.0)
-    return float(a_target)
-  if lead.v_lead >= LEAD_GO_SPEED_MPS:
-    return max(float(a_target), FOLLOW_LEAD_GO_FLOOR_A)
-  if follow_lead_soft_launch(sm, v_ego):
-    return min(float(a_target), FOLLOW_LEAD_START_ACCEL)
-  return float(a_target)
+# Module-level controller for the pure-function call site in apply_stop_helpers.
+# LongitudinalPlannerSP also owns one; tests may reset via FollowLaunchController.reset.
+_follow_launch = FollowLaunchController()
+
+
+def apply_follow_launch(sm, v_ego: float, a_target: float, dt: float = 0.05,
+                        controller: FollowLaunchController | None = None) -> float:
+  """Soft congestion takeoff floor + lead-decel anticipate (see lead_follow_comfort)."""
+  ctrl = controller if controller is not None else _follow_launch
+  return ctrl.apply(sm, v_ego, a_target, dt=dt)

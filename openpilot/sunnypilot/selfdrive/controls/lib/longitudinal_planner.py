@@ -22,6 +22,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead impor
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_comfort_stop import (
   BrakeOnsetLimiter, lead_brake_urgent, read_lead_kinematics,
 )
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_follow_comfort import (
+  AccelOnsetLimiter, FollowLaunchController,
+)
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_stop_safety import (
   apply_lead_stop_safety,
   apply_radar_range_floor,
@@ -67,6 +70,8 @@ class LongitudinalPlannerSP:
     self.turn_prep = UrbanTurnPrep()
     self.traffic_stop_offset = TrafficStopOffset()
     self.standstill_hold = StandstillHold()
+    self.follow_launch = FollowLaunchController()
+    self.accel_onset = AccelOnsetLimiter()
     self.brake_onset = BrakeOnsetLimiter()
     # Red-light stops keep their own slew (vision 0.95/3.2, nav red).
     self._light_stop_active = False
@@ -262,6 +267,23 @@ class LongitudinalPlannerSP:
       snap=snap,
     )
 
+  def limit_accel_onset(self, sm: messaging.SubMaster, v_ego: float, a_target: float, dt: float,
+                        *, reset: bool) -> float:
+    """Slew positive accel increases; standstill go / gas / reset pass through."""
+    bypass = bool(reset)
+    if not bypass:
+      try:
+        CS = sm['carState']
+        # One-frame MEB ANFAHREN floor must clear standstill without being slewed.
+        bypass = bool(CS.gasPressed or CS.standstill)
+      except Exception:
+        bypass = True
+    out = self.accel_onset.update(a_target, v_ego, dt, bypass=bypass)
+    # Keep brake limiter's memory aligned so the two half-axes share one trail.
+    if self.brake_onset.a_prev is None:
+      self.brake_onset.a_prev = self.accel_onset.a_prev
+    return out
+
   def limit_brake_onset(self, sm: messaging.SubMaster, v_ego: float, a_target: float, dt: float,
                         *, reset: bool) -> float:
     """Slew brake increases of the final accel; physics-urgent cases pass through."""
@@ -276,7 +298,9 @@ class LongitudinalPlannerSP:
       kin = read_lead_kinematics(sm)
       if kin is not None:
         bypass = lead_brake_urgent(kin[0], kin[1], kin[2], v_ego)
-    return self.brake_onset.update(a_target, v_ego, dt, bypass=bypass)
+    out = self.brake_onset.update(a_target, v_ego, dt, bypass=bypass)
+    self.accel_onset.a_prev = self.brake_onset.a_prev
+    return out
 
   def apply_stop_helpers(self, sm: messaging.SubMaster, v_ego: float, a_target: float,
                          should_stop: bool) -> tuple[float, bool]:
@@ -342,7 +366,7 @@ class LongitudinalPlannerSP:
       standstill=bool(CS.standstill), gas=bool(CS.gasPressed), model_stop=model_stop,
       sm=sm, now=now,
     )
-    a_target = apply_follow_launch(sm, v_ego, a_target)
+    a_target = apply_follow_launch(sm, v_ego, a_target, controller=self.follow_launch)
     # Radar dRel is the last word — green / launch floors cannot punch a close bumper.
     a_target, should_stop = apply_radar_range_floor(
       sm, v_ego, a_target, should_stop, gas=bool(CS.gasPressed),
