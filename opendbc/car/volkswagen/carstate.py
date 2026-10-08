@@ -1,5 +1,6 @@
 from opendbc.can import CANParser
-from opendbc.car import Bus, structs
+from opendbc.car import DT_CTRL, Bus, structs
+from opendbc.car.carlog import carlog
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.volkswagen.values import DBC, CanBus, NetworkLocation, TransmissionType, GearShifter, \
@@ -10,12 +11,17 @@ ButtonType = structs.CarState.ButtonEvent.Type
 
 
 class CarState(CarStateBase, CarStateExt):
+  ACC_FAULT_LOG_MAX = 50  # per card process; a flapping signal must not flood swaglog
+
   def __init__(self, CP, CP_SP):
     super().__init__(CP, CP_SP)
     CarStateExt.__init__(self, CP, CP_SP)
     self.frame = 0
     self.eps_init_complete = False
     self.tsk_recovery_timer = 0
+    self.acc_fault_raw_frame: int | None = None
+    self.acc_fault_log_count = 0
+    self.esp_hold_frame: int | None = None
     self.CCP = CarControllerParams(CP)
     self.button_states = {button.event_type: False for button in self.CCP.BUTTONS}
     self.esp_hold_confirmation = False
@@ -297,9 +303,20 @@ class CarState(CarStateBase, CarStateExt):
     engine_off = pt_cp.vl["Motor_54"]["Engine_On"] == 0
     long_control_inhibit = pt_cp.vl["VMM_02"]["Long_Control_Inhibit"] == 2
     # Gate MEB TSK 6/7: READY/EPB init and just-after-D often look like cruise fault.
+    aeb_unavailable = ext_cp.vl["AWV_03"]["AWV_Unavailable"] == 1
     ret.accFaulted = (self.update_acc_fault(tsk_faulted, engine_off, long_control_inhibit,
                                             drive_mode=in_drive, parking_brake=ret.parkingBrake) or
-                      ext_cp.vl["AWV_03"]["AWV_Unavailable"] == 1)  # AEB unavailable (i.e. radar covered)
+                      aeb_unavailable)  # AEB unavailable (i.e. radar covered)
+    self.log_acc_fault_edges(tsk_faulted or aeb_unavailable, {
+      "tsk": int(pt_cp.vl["Motor_51"]["TSK_Status"]),
+      "aeb_unavailable": aeb_unavailable,
+      "acc_faulted": ret.accFaulted,
+      "engine_off": engine_off,
+      "long_inhibit": long_control_inhibit,
+      "in_drive": in_drive,
+      "parking_brake": ret.parkingBrake,
+      "v_ego": round(ret.vEgo, 2),
+    })
 
     # TSK winds braking down through brake_only after driver brakes at low speeds. Requesting drive-off in this
     # state can fault TSK, and stock refuses to engage here as well, so block entry until it clears.
@@ -408,6 +425,29 @@ class CarState(CarStateBase, CarStateExt):
     perm_fault = in_drive and hca_status == "DISABLED" or (self.eps_init_complete and hca_status == "FAULT")
     temp_fault = in_drive and hca_status in ("REJECTED", "PREEMPTED") or not self.eps_init_complete
     return temp_fault, perm_fault
+
+  def log_acc_fault_edges(self, raw_fault: bool, info: dict) -> None:
+    # Log-only: raw TSK 6/7 / AEB-unavailable edges (gated ones too), to tell which one raised Cruise Fault.
+    if self.esp_hold_confirmation:
+      if self.esp_hold_frame is None:
+        self.esp_hold_frame = self.frame
+    else:
+      self.esp_hold_frame = None
+    held_s = None if self.esp_hold_frame is None else round((self.frame - self.esp_hold_frame) * DT_CTRL, 1)
+
+    if raw_fault and self.acc_fault_raw_frame is None:
+      self.acc_fault_raw_frame = self.frame
+      event = {"event": "meb_acc_fault_raw_start", "esp_hold_s": held_s, **info}
+    elif not raw_fault and self.acc_fault_raw_frame is not None:
+      dur_s = round((self.frame - self.acc_fault_raw_frame) * DT_CTRL, 2)
+      self.acc_fault_raw_frame = None
+      event = {"event": "meb_acc_fault_raw_end", "dur_s": dur_s, "esp_hold_s": held_s, **info}
+    else:
+      return
+
+    if self.acc_fault_log_count < self.ACC_FAULT_LOG_MAX:
+      self.acc_fault_log_count += 1
+      carlog.warning(event)
 
   def update_acc_fault(self, acc_fault, engine_off, long_inhibit, *,
                        drive_mode=True, parking_brake=False, recovery_frames=300):
