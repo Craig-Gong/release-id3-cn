@@ -68,6 +68,39 @@ def test_arrive_drops_send_turn():
   assert snap.send_turn is False
 
 
+def test_arrived_hud_then_empty_when_cleared():
+  from openpilot.sunnypilot.nav.hud_copy import ARRIVED, ARRIVE_SOON, NAV_EMPTY
+  from openpilot.sunnypilot.nav.protocol import lane_hint
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_lane_guide_view
+
+  soon = _parse({
+    "nRoadLimitSpeed": 40, "nTBTTurnType": 1, "nTBTDist": 40, "nGoPosDist": 80,
+  })
+  assert soon is not None
+  assert soon.maneuver == "arrive"
+  assert lane_hint(soon) == ARRIVE_SOON
+  soon_view = build_lane_guide_view(onroad=True, snap=soon)
+  assert soon_view.empty is False and soon_view.kind == "arrive"
+  assert soon_view.capsule is not None
+  assert soon_view.capsule[0] == "80"
+
+  done = _parse({
+    "nRoadLimitSpeed": 40, "nTBTTurnType": 1, "nTBTDist": 10, "nGoPosDist": 12,
+  })
+  assert done is not None
+  assert done.maneuver == "arrived"
+  assert lane_hint(done) == ARRIVED
+  done_view = build_lane_guide_view(onroad=True, snap=done)
+  assert done_view.empty is False and done_view.capsule is None
+
+  cleared = _parse({"nRoadLimitSpeed": 40})
+  assert cleared is not None
+  assert cleared.maneuver == "none"
+  assert lane_hint(cleared) == ""
+  empty_view = build_lane_guide_view(onroad=True, snap=cleared)
+  assert empty_view.empty is True and empty_view.text == NAV_EMPTY
+
+
 def test_keepalive_without_limit_is_none():
   assert _parse({"trafficLight": "red"}) is None
 

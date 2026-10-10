@@ -133,6 +133,29 @@ class Controls(ControlsExt):
       CC.leftBlinker = model_v2.meta.laneChangeDirection == LaneChangeDirection.left
       CC.rightBlinker = model_v2.meta.laneChangeDirection == LaneChangeDirection.right
 
+    # MEB EA_02 software blinker: Force + gated nav (defaults off). Yield to physical stalk only.
+    try:
+      from openpilot.sunnypilot.nav.snapshot import read_snapshot
+      from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_auto_blinker import (
+        evaluate_blinker_request,
+      )
+      _cs = self.CI.CS
+      _blink = evaluate_blinker_request(
+        snap=read_snapshot(),
+        v_ego_mps=float(CS.vEgo),
+        gear=CS.gearShifter,
+        left_blindspot=bool(CS.leftBlindspot),
+        right_blindspot=bool(CS.rightBlindspot),
+        left_blinker_active=bool(getattr(_cs, "left_blinker_stalk", False)),
+        right_blinker_active=bool(getattr(_cs, "right_blinker_stalk", False)),
+      )
+      if _blink.left:
+        CC.leftBlinker = True
+      if _blink.right:
+        CC.rightBlinker = True
+    except Exception:
+      pass
+
     if not CC.latActive:
       self.LaC.reset()
     if not CC.longActive:

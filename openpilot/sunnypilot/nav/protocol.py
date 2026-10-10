@@ -5,7 +5,7 @@ import math
 from typing import Any
 
 from openpilot.sunnypilot.nav.hud_copy import (
-  ARRIVE_SOON, EXIT_AHEAD, KILOMETERS, LANE_LEFT, LANE_RIGHT, METERS,
+  ARRIVED, ARRIVE_SOON, EXIT_AHEAD, KILOMETERS, LANE_LEFT, LANE_RIGHT, METERS,
   STRAIGHT_AHEAD, STRAIGHT_LANE, TURN_LEFT, TURN_RIGHT,
 )
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot
@@ -58,6 +58,8 @@ NAV_LATERAL_TURN_M = 50.0
 # Do not promote Gaode lc_* → send_turn at highway limits (fork stays LC).
 NAV_LC_PROMOTE_MAX_KPH = 70.0
 NEAR_DEST_REMAIN_M = 150.0
+# Final meters: HUD "到达目的地" (no leftover "即将到达" + segment meters).
+ARRIVED_REMAIN_M = 20.0
 _NAV_RED_HARD_A = -3.5
 _NAV_RED_HOLD_A = -1.5
 # Final meters before the intended stop: force shouldStop even if still rolling.
@@ -334,7 +336,10 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
 
   go_dist = _f(data, "nGoPosDist")
   go_time = _f(data, "nGoPosTime")
-  if 0.0 < go_dist <= NEAR_DEST_REMAIN_M:
+  if 0.0 < go_dist <= ARRIVED_REMAIN_M:
+    send_turn = False
+    maneuver = "arrived"
+  elif 0.0 < go_dist <= NEAR_DEST_REMAIN_M:
     send_turn = False
     maneuver = "arrive"
 
@@ -410,6 +415,8 @@ def lane_hint(snap: NavSnapshot) -> str:
   maneuver = (snap.maneuver or "none").lower()
   if maneuver == "exit" and float(snap.tbt_dist or 0.0) > 0.0:
     return EXIT_AHEAD
+  if maneuver == "arrived":
+    return ARRIVED
   if maneuver == "arrive":
     return ARRIVE_SOON
   if rec == "straight":

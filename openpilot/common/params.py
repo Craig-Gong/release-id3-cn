@@ -128,12 +128,18 @@ _PREBUILT_KEY_DEFAULTS = {
   "EcoflowEnabled": False,
   "EcoflowGpuRecover": False,
   "TrafficStopLead": 1.5,
+  "MebForceBlinker": 0,
+  "NavAutoBlinker": False,
+  "NavAutoLaneChange": False,
 }
 
 # Not in the on-device libparams yet. UI and planner share this file so the
 # slider works without rebuilding params (rsync-only).
 _FILE_BACKED_PARAMS = {
   "TrafficStopLead": 1.5,
+  "MebForceBlinker": 0,
+  "NavAutoBlinker": False,
+  "NavAutoLaneChange": False,
 }
 _FILE_BACKED_DIR = "/data/openpilot_extra_params"
 
@@ -149,13 +155,18 @@ def _read_file_backed(key: str):
   except OSError:
     return None
   default = _FILE_BACKED_PARAMS[key]
+  if isinstance(default, bool):
+    return raw in ("1", "True", "true")
+  if isinstance(default, int) and not isinstance(default, bool):
+    try:
+      return int(raw)
+    except ValueError:
+      return default
   if isinstance(default, float):
     try:
       return float(raw)
     except ValueError:
       return default
-  if isinstance(default, bool):
-    return raw in ("1", "True", "true")
   return raw
 
 

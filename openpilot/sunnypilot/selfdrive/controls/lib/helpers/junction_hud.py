@@ -77,7 +77,7 @@ def _lane_kind(snap: NavSnapshot, text: str) -> str:
   maneuver = (snap.maneuver or "none").lower()
   if maneuver == "exit":
     return "exit"
-  if maneuver == "arrive":
+  if maneuver in ("arrive", "arrived"):
     return "arrive"
   if text in (STRAIGHT_AHEAD, STRAIGHT_LANE) or rec == "straight":
     return "straight"
@@ -95,9 +95,18 @@ def build_lane_guide_view(*, onroad: bool, snap: NavSnapshot) -> LaneGuideView:
   # Avoid duplicating maneuver words as "进入 · 右转"
   if enter in ("左转", "右转", "调头", "直行", "测试右转", "前方红灯"):
     enter = ""
+  # Arrive card is trip-remain, not "进入 · next road".
+  if kind == "arrive":
+    enter = ""
 
   capsule = None
-  if float(snap.tbt_dist or 0.0) >= 1.0 and kind not in ("none", "left", "right"):
+  maneuver = (snap.maneuver or "none").lower()
+  if maneuver == "arrive" and float(snap.go_dist_m or 0.0) >= 1.0:
+    # Show route remain, not sticky next-segment meters.
+    capsule = format_tbt_capsule(snap.go_dist_m)
+  elif maneuver == "arrived":
+    capsule = None
+  elif float(snap.tbt_dist or 0.0) >= 1.0 and kind not in ("none", "left", "right"):
     capsule = format_tbt_capsule(snap.tbt_dist)
 
   empty = not text and not enter
