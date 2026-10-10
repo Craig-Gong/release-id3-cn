@@ -311,6 +311,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LaneTurnValue", {PERSISTENT | BACKUP, FLOAT, "28.0"}},
     // Xiaoge lane.onnx solid/dashed assist (default off; needs /data/media/0/models/lane.onnx)
     {"LaneTypeOnnx", {PERSISTENT | BACKUP, BOOL, "0"}},
+    // Cautious unprotected left: slow/hold/HUD — never gap-accept (default on)
+    {"UnprotectedTurnAssist", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"AutoGasSyncSpeed", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"TrafficStopOffset", {PERSISTENT | BACKUP, FLOAT, "3.0"}},
     {"TrafficStopLead", {PERSISTENT | BACKUP, FLOAT, "1.5"}},

@@ -116,6 +116,14 @@ class CruiseLayout(Widget):
       description=tr("Follow phone nav over Wi‑Fi UDP (PSK 999999). BLE is off by default. Off = do not control from nav; the car still listens for UDP. Green at a light waits for a close lead to move."),
       param="IqlinkEnabled")
 
+    self.cut_toggle = toggle_item_sp(
+      title=tr("Unprotected Turn Assist"),
+      description=tr(
+        "Cautious left: near the corner cap ~12 km/h, hold when stopped, HUD「看对向」. "
+        "Never auto-accept a gap. Gas / near lead / nav green exit. Default on."
+      ),
+      param="UnprotectedTurnAssist")
+
     self.ecoflow_toggle = toggle_item_sp(
       title=tr("EcoFlow 12V"),
       description=tr("Delta 3 12V DC follows KL15; delayed off after lock. While parked, use Recover eGPU to pulse 12V (USB stays). Never pulses while engaged. Credentials in /data/ecoflow_params/."),
@@ -140,6 +148,7 @@ class CruiseLayout(Widget):
       self.traffic_stop_offset,
       self.traffic_stop_lead,
       self.iqlink_toggle,
+      self.cut_toggle,
       self.ecoflow_toggle,
       self.ecoflow_recover_btn,
       self.sla_settings_button,

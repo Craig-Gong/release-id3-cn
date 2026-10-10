@@ -37,6 +37,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.standstill_hold import 
 )
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import TrafficStopOffset
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.turn_prep import UrbanTurnPrep
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn import (
+  UnprotectedTurnAssist, CutDecision,
+)
 from openpilot.sunnypilot.nav.protocol import (
   nav_red_accel_cap,
   nav_red_force_stop,
@@ -72,6 +75,7 @@ class LongitudinalPlannerSP:
     self.e2e_alerts_helper = E2EAlertsHelper()
     self.turn_prep = UrbanTurnPrep()
     self.nav_cruise = NavCruisePolicy()
+    self.cut = UnprotectedTurnAssist()
     self.traffic_stop_offset = TrafficStopOffset()
     self.standstill_hold = StandstillHold()
     self.follow_launch = FollowLaunchController()
@@ -83,6 +87,7 @@ class LongitudinalPlannerSP:
     self._nav_red_a_prev: float | None = None
     self._nav_red_a_t = 0.0
     self._nav_policy_a_pos: float | None = None
+    self._cut_decision = CutDecision()
 
     self.output_v_target = 0.
     self.output_a_target = 0.
@@ -213,6 +218,11 @@ class LongitudinalPlannerSP:
       self.output_v_target = min(float(self.output_v_target), float(prep_v))
     snap = snap_gate
     self._nav_policy_a_pos = None
+    try:
+      queue = read_nav_queue_lead(sm)
+      near_lead = bool(queue.present and float(queue.d_rel) <= 12.0)
+    except Exception:
+      near_lead = False
     if snapshot_long_ok(snap, CS.gearShifter):
       curve = nav_soft_curve_ms(snap, v_ego)
       if curve is not None:
@@ -234,11 +244,6 @@ class LongitudinalPlannerSP:
       else:
         self._clear_nav_red_a()
       # Camera / dest / dual-TBT / congestion / light accel — after soft curve.
-      try:
-        queue = read_nav_queue_lead(sm)
-        near_lead = bool(queue.present and float(queue.d_rel) <= 12.0)
-      except Exception:
-        near_lead = False
       decision = self.nav_cruise.update(
         snap, float(v_ego),
         gear=CS.gearShifter,
@@ -253,6 +258,10 @@ class LongitudinalPlannerSP:
     else:
       self._clear_nav_red_a()
       self.nav_cruise.reset()
+    # Cautious unprotected left: near-corner 12 km/h cap (never gap-accept).
+    self._cut_decision = self._cut_update(sm, v_ego, long_enabled, near_lead, snap)
+    if self._cut_decision.v_cap_ms is not None:
+      self.output_v_target = min(float(self.output_v_target), float(self._cut_decision.v_cap_ms))
     return self.output_v_target, self.output_a_target
 
   def _turn_prep_speed(self, sm: messaging.SubMaster, v_ego: float, enabled: bool) -> float | None:
@@ -289,6 +298,41 @@ class LongitudinalPlannerSP:
       path_y=path_y,
       big=big,
       snap=snap,
+    )
+
+  def _cut_update(self, sm: messaging.SubMaster, v_ego: float, enabled: bool,
+                  near_lead: bool, snap) -> CutDecision:
+    try:
+      CS = sm['carState']
+      model = sm['modelV2']
+    except Exception:
+      self.cut.reset()
+      return CutDecision()
+    try:
+      path_x = model.position.x
+      path_y = model.position.y
+    except Exception:
+      path_x, path_y = None, None
+    try:
+      lane_change_state = int(model.meta.laneChangeState)
+    except Exception:
+      lane_change_state = 0
+    posted = float(self.resolver.speed_limit or 0.0)
+    return self.cut.update(
+      v_ego=float(v_ego),
+      enabled=bool(enabled),
+      standstill=bool(CS.standstill),
+      gas=bool(CS.gasPressed),
+      left_blinker=bool(CS.leftBlinker),
+      right_blinker=bool(CS.rightBlinker),
+      steering_angle_deg=float(CS.steeringAngleDeg or 0.0),
+      lane_change_state=lane_change_state,
+      near_lead=bool(near_lead),
+      posted_limit_ms=posted,
+      path_x=path_x,
+      path_y=path_y,
+      snap=snap,
+      nav_go_latched=bool(getattr(self.standstill_hold, "_nav_go_latched", False)),
     )
 
   def limit_accel_onset(self, sm: messaging.SubMaster, v_ego: float, a_target: float, dt: float,
@@ -420,6 +464,17 @@ class LongitudinalPlannerSP:
     a_target = apply_a_pos_cap(
       a_target, self._nav_policy_a_pos, gas=bool(CS.gasPressed),
     )
+    # CUT standstill pin last — blocks follow-launch / e2e creep. Gas exits in helper.
+    try:
+      near_cut_lead = bool(has_lead and lead_d_rel is not None and float(lead_d_rel) <= 12.0)
+    except (TypeError, ValueError):
+      near_cut_lead = bool(has_lead)
+    self._cut_decision = self._cut_update(
+      sm, v_ego, bool(sm['carControl'].enabled), near_cut_lead, snap,
+    )
+    if self._cut_decision.hold and not bool(CS.gasPressed):
+      should_stop = True
+      a_target = min(float(a_target), -1.0)
     approaching = junction_stop_active(
       has_lead=has_lead,
       nav_red=bool((self.standstill_hold.red_pin or (light_live and snap.stop_for_light)) and not lead_owns),
