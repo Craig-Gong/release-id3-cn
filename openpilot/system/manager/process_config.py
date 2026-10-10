@@ -110,6 +110,20 @@ def iqlink_needed(started, params: Params, CP: car.CarParams) -> bool:
 def ecoflow_needed(started, params: Params, CP: car.CarParams) -> bool:
   return _param_flag(params, "EcoflowEnabled", False)
 
+def lane_type_needed(started, params: Params, CP: car.CarParams) -> bool:
+  # Onroad + LaneTypeOnnx (file_params fallback for prebuilt libparams).
+  if not started:
+    return False
+  try:
+    return bool(params.get_bool("LaneTypeOnnx"))
+  except Exception:
+    pass
+  try:
+    from openpilot.common.file_params import read_file_param
+    return bool(read_file_param("LaneTypeOnnx", False))
+  except Exception:
+    return False
+
 def sunnylink_ready_shim(started, params, CP: car.CarParams) -> bool:
   """Shim for sunnylink_ready to match the process manager signature."""
   return sunnylink_ready(params)
@@ -246,6 +260,9 @@ procs += [
   # IQ-link BLE + EcoFlow 12V (never cycle 12V while chestnut SuperSpeed)
   PythonProcess("iqlinkd", "openpilot.sunnypilot.nav.iqlinkd", iqlink_needed),
   PythonProcess("ecoflowd", "openpilot.sunnypilot.system.ecoflow.daemon", ecoflow_needed),
+
+  # Xiaoge lane.onnx solid/dashed (shm only; default off)
+  PythonProcess("lane_typed", "openpilot.sunnypilot.vision.lane_type.daemon", lane_type_needed),
 ]
 
 if os.path.exists("../../sunnypilot/sunnylink/uploader.py"):

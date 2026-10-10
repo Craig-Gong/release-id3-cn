@@ -131,6 +131,7 @@ _PREBUILT_KEY_DEFAULTS = {
   "MebForceBlinker": 0,
   "NavAutoBlinker": False,
   "NavAutoLaneChange": False,
+  "LaneTypeOnnx": False,
 }
 
 # Not in the on-device libparams yet. UI and planner share this file so the
@@ -140,6 +141,7 @@ _FILE_BACKED_PARAMS = {
   "MebForceBlinker": 0,
   "NavAutoBlinker": False,
   "NavAutoLaneChange": False,
+  "LaneTypeOnnx": False,
 }
 _FILE_BACKED_DIR = "/data/openpilot_extra_params"
 
@@ -240,6 +242,10 @@ class Params:
     try:
       return bool(params_get_bool(self.p, self.check_key(key), block))
     except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        stored = _read_file_backed(key)
+        if stored is not None:
+          return bool(stored)
       return bool(_PREBUILT_KEY_DEFAULTS.get(key, False))
 
   def _put_cast(self, key, dat):
@@ -262,6 +268,9 @@ class Params:
     try:
       params_put_bool(self.p, self.check_key(key), val, block)
     except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        _write_file_backed(key, bool(val))
+        return
       cloudlog.warning(f"skip unknown param {key}")
 
   def remove(self, key):

@@ -382,17 +382,33 @@ class SelfdriveD(CruiseHelper):
     if self.sm['modelV2'].meta.laneChangeState == LaneChangeState.preLaneChange:
       direction = self.sm['modelV2'].meta.laneChangeDirection
       mdv2sp = self.sm['modelDataV2SP']
+      going_left = direction == LaneChangeDirection.left
 
-      if (CS.leftBlindspot and direction == LaneChangeDirection.left) or \
-         (CS.rightBlindspot and direction == LaneChangeDirection.right):
+      solid_or_unknown = False
+      try:
+        from openpilot.sunnypilot.vision.lane_type.gate import (
+          lane_type_enabled, side_is_solid_raw, side_is_unknown,
+        )
+        from openpilot.sunnypilot.vision.lane_type.snapshot import read_lane_type
+        if lane_type_enabled():
+          snap = read_lane_type()
+          solid_or_unknown = side_is_solid_raw(snap, going_left) or side_is_unknown(snap, going_left)
+      except Exception:
+        solid_or_unknown = False
+
+      if (CS.leftBlindspot and going_left) or (CS.rightBlindspot and not going_left):
         self.events.add(EventName.laneChangeBlocked)
 
-      elif (mdv2sp.leftLaneChangeEdgeBlock and direction == LaneChangeDirection.left) or \
-           (mdv2sp.rightLaneChangeEdgeBlock and direction == LaneChangeDirection.right):
+      elif solid_or_unknown:
+        # Solid hard-blocks in DesireHelper; unknown is fail-open toast only.
+        self.events.add(EventName.laneChangeBlocked)
+
+      elif (mdv2sp.leftLaneChangeEdgeBlock and going_left) or \
+           (mdv2sp.rightLaneChangeEdgeBlock and not going_left):
         self.events_sp.add(custom.OnroadEventSP.EventName.laneChangeRoadEdge)
 
       else:
-        if direction == LaneChangeDirection.left:
+        if going_left:
           self.events.add(EventName.preLaneChangeLeft)
         else:
           self.events.add(EventName.preLaneChangeRight)

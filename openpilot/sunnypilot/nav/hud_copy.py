@@ -47,6 +47,11 @@ EGPU_DETAIL = (
 )
 EGPU_DC = "开关未启用未知"
 
+# Lane-type assist (Xiaoge ONNX) — keep glyphs in atlas.
+SOLID_LINE_BLOCK = "实线·不可变道"
+LINE_TYPE_UNKNOWN = "线型未知"
+DASHED_LINE_HINT = "虚线·缓变道"
+
 
 def overlay_font_chars() -> str:
   return "".join((
@@ -57,4 +62,5 @@ def overlay_font_chars() -> str:
     APPROACH_DEST, NAV_GUIDE, LANE_GUIDE, TURN_HINT,
     STRAIGHT_HINT, EXIT_HINT, ARRIVE_HINT, ENTER_PREFIX, REMAIN_DIST, REMAIN_TIME,
     NAV_GOAL, DETAIL_SEP, EGPU_HEAD, EGPU_DETAIL, EGPU_DC,
+    SOLID_LINE_BLOCK, LINE_TYPE_UNKNOWN, DASHED_LINE_HINT,
   ))

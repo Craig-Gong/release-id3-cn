@@ -102,6 +102,48 @@ def too_distracted_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubM
   return NoEntryAlert("Pay Attention to Engage", priority=Priority.HIGH)
 
 
+def lane_change_blocked_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
+  """BSM first; else Xiaoge solid-line / unknown toast (no cereal EventName)."""
+  direction = sm['modelV2'].meta.laneChangeDirection
+  going_left = direction == log.LaneChangeDirection.left
+  bsm = (CS.leftBlindspot and going_left) or (CS.rightBlindspot and not going_left)
+  if bsm:
+    return Alert(
+      "Car Detected in Blindspot",
+      "",
+      AlertStatus.userPrompt, AlertSize.small,
+      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, .1)
+
+  try:
+    from openpilot.sunnypilot.nav.hud_copy import LINE_TYPE_UNKNOWN, SOLID_LINE_BLOCK
+    from openpilot.sunnypilot.vision.lane_type.gate import (
+      lane_type_enabled, side_is_solid_raw, side_is_unknown,
+    )
+    from openpilot.sunnypilot.vision.lane_type.snapshot import read_lane_type
+    if lane_type_enabled():
+      snap = read_lane_type()
+      if side_is_solid_raw(snap, going_left):
+        return Alert(
+          SOLID_LINE_BLOCK,
+          "",
+          AlertStatus.userPrompt, AlertSize.small,
+          Priority.LOW, VisualAlert.none, AudibleAlert.none, .1)
+      if side_is_unknown(snap, going_left):
+        return Alert(
+          LINE_TYPE_UNKNOWN,
+          "",
+          AlertStatus.normal, AlertSize.small,
+          Priority.LOW, VisualAlert.none, AudibleAlert.none, .1)
+  except Exception:
+    pass
+
+  return Alert(
+    "Car Detected in Blindspot",
+    "",
+    AlertStatus.userPrompt, AlertSize.small,
+    Priority.LOW, VisualAlert.none, AudibleAlert.prompt, .1)
+
+
 # *** debug alerts ***
 
 def out_of_space_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
@@ -428,11 +470,7 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
 
   EventName.laneChangeBlocked: {
-    ET.WARNING: Alert(
-      "Car Detected in Blindspot",
-      "",
-      AlertStatus.userPrompt, AlertSize.small,
-      Priority.LOW, VisualAlert.none, AudibleAlert.prompt, .1),
+    ET.WARNING: lane_change_blocked_alert,
   },
 
   EventName.laneChange: {
@@ -876,11 +914,7 @@ if HARDWARE.get_device_type() == 'mici':
         Priority.LOW, VisualAlert.none, AudibleAlert.none, .1),
     },
     EventName.laneChangeBlocked: {
-      ET.WARNING: Alert(
-        "Car in Blindspot",
-        "",
-        AlertStatus.userPrompt, AlertSize.small,
-        Priority.LOW, VisualAlert.none, AudibleAlert.prompt, .1),
+      ET.WARNING: lane_change_blocked_alert,
     },
     EventName.steerSaturated: {
       ET.WARNING: Alert(

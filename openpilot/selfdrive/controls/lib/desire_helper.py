@@ -16,6 +16,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import (
   snapshot_long_ok,
 )
 from openpilot.sunnypilot.selfdrive.controls.lib.lane_turn_desire import LaneTurnController
+from openpilot.sunnypilot.vision.lane_type.gate import lane_type_enabled, side_is_unknown
+from openpilot.sunnypilot.vision.lane_type.hysteresis import LaneTypeGate
+from openpilot.sunnypilot.vision.lane_type.snapshot import read_lane_type
 
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
@@ -54,6 +57,9 @@ class DesireHelper:
     self.turn_desire_stop_timer = 0.0
     self.turn_desire_stop_active = False
     self.turn_desire_cycle_input = log.Desire.none
+    self._lane_type_gate = LaneTypeGate()
+    self.solid_line_blocked = False
+    self.lane_type_unknown = False
 
   @staticmethod
   def get_lane_change_direction(CS):
@@ -132,6 +138,17 @@ class DesireHelper:
         blindspot_detected = (((carstate.leftBlindspot or left_edge_detected) and self.lane_change_direction == LaneChangeDirection.left) or
                               ((carstate.rightBlindspot or right_edge_detected) and self.lane_change_direction == LaneChangeDirection.right))
 
+        self._update_lane_type_gate()
+        going_left = self.lane_change_direction == LaneChangeDirection.left
+        solid_line_blocked = self._lane_type_gate.blocks(going_left)
+        self.solid_line_blocked = solid_line_blocked
+        snap = self._lane_type_gate._last_snap
+        self.lane_type_unknown = (
+          self._lane_type_gate.enabled
+          and not solid_line_blocked
+          and side_is_unknown(snap, going_left)
+        )
+
         self.alc.update_lane_change(blindspot_detected, carstate.brakePressed)
 
         auto_lc = self.alc.auto_lane_change_allowed
@@ -139,7 +156,7 @@ class DesireHelper:
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
           self.lane_change_timer = 0.0
-        elif (torque_applied or auto_lc) and not blindspot_detected:
+        elif (torque_applied or auto_lc) and not blindspot_detected and not solid_line_blocked:
           self.lane_change_state = LaneChangeState.laneChangeStarting
           self.lane_change_timer = 0.0
 
@@ -189,6 +206,13 @@ class DesireHelper:
         self.keep_pulse_timer = 0.0
 
     self.alc.update_state()
+    if self.lane_change_state != LaneChangeState.preLaneChange:
+      self.solid_line_blocked = False
+      self.lane_type_unknown = False
+
+  def _update_lane_type_gate(self) -> None:
+    snap = read_lane_type()
+    self._lane_type_gate.update(snap, enabled=lane_type_enabled())
 
   def _clear_turn_desire_cycle(self) -> None:
     self.turn_desire_committed = False
