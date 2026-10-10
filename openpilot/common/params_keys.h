@@ -66,9 +66,10 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"IsReleaseBranch", {CLEAR_ON_MANAGER_START, BOOL}},
     {"IsTestedBranch", {CLEAR_ON_MANAGER_START, BOOL}},
     {"JoystickDebugMode", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
-    {"LanguageSetting", {PERSISTENT | BACKUP, STRING, "en"}},
+    {"LanguageSetting", {PERSISTENT | BACKUP, STRING, "zh-CHS"}},
     {"LastAthenaPingTime", {CLEAR_ON_MANAGER_START, INT}},
     {"LastGPSPosition", {PERSISTENT, STRING}},
+    {"LastKnownGoodTime", {PERSISTENT, TIME}},
     {"LastManagerExitReason", {CLEAR_ON_MANAGER_START, STRING}},
     {"LastOffroadStatusPacket", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, JSON}},
     {"LastAgnosPowerMonitorShutdown", {CLEAR_ON_MANAGER_START, STRING}},
@@ -108,6 +109,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"RecordAudio", {PERSISTENT | BACKUP, BOOL}},
     {"RecordFront", {PERSISTENT | BACKUP, BOOL}},
     {"RecordFrontLock", {PERSISTENT, BOOL}},  // for the internal fleet
+    {"RecordRoadVideo", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"SecOCKey", {PERSISTENT | DONT_LOG | BACKUP, STRING}},
     {"ShowDebugInfo", {PERSISTENT, BOOL}},
     {"RouteCount", {PERSISTENT, INT, "0"}},
@@ -134,12 +136,23 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ChestnutLoading", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, BOOL}},
     {"ChestnutLoadingProgress", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, INT, "0"}},
     {"ChestnutModelError", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, BOOL}},
+    {"UsbGpuEjectError", {CLEAR_ON_MANAGER_START | CLEAR_ON_IGNITION_ON, STRING}},
+    {"UsbGpuEjectRequest", {CLEAR_ON_MANAGER_START | CLEAR_ON_IGNITION_ON, BOOL}},
+    {"UsbGpuEjectStatus", {CLEAR_ON_MANAGER_START | CLEAR_ON_IGNITION_ON, STRING}},
+    // One-release compatibility for rollback to the pre-Chestnut local build.
+    {"UsbGpuActive", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, BOOL}},
+    {"UsbGpuLoading", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, BOOL}},
+    {"UsbGpuLoadingProgress", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION | CLEAR_ON_IGNITION_ON, INT, "0"}},
     {"Version", {PERSISTENT, STRING}},
 
     // --- sunnypilot params --- //
     {"ApiCache_DriveStats", {PERSISTENT, JSON}},
     {"AutoLaneChangeBsmDelay", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"AutoLaneChangeTimer", {PERSISTENT | BACKUP, INT, "0"}},
+    // MEB EA_02 software blinker (file-backed defaults off; static probe + gated nav)
+    {"MebForceBlinker", {PERSISTENT, INT, "0"}},  // 0 off, 1 left, 2 right (3 s hold)
+    {"NavAutoBlinker", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"NavAutoLaneChange", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"BlinkerLateralReengageDelay", {PERSISTENT | BACKUP, INT, "0"}},  // seconds
     {"BlinkerMinLateralControlSpeed", {PERSISTENT | BACKUP, INT, "20"}},  // MPH or km/h
     {"BlinkerPauseLateralControl", {PERSISTENT | BACKUP, INT, "0"}},
@@ -197,15 +210,22 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     // Model Manager params
     {"ModelManager_ActiveBundle", {PERSISTENT, JSON}},
-    {"ModelManager_ActiveBundleUSBGPU", {PERSISTENT, JSON}}, //TODO-SP: kept for migration, remove on next sync?
+    // Legacy USBGPU slot remains registered for one migration release.
+    {"ModelManager_ActiveBundleUSBGPU", {PERSISTENT, JSON}},
     {"ModelManager_ActiveBundleChestnut", {PERSISTENT, JSON}},
+    {"ModelManager_ActiveSource", {PERSISTENT | BACKUP, STRING, "qcom"}},  // deprecated, no longer authoritative
+    {"ModelManager_ActiveBundleRequiresUsbGpu", {PERSISTENT, BOOL, "0"}},
     {"ModelManager_ActiveJson", {CLEAR_ON_MANAGER_START, JSON}},
     {"ModelManager_ClearCache", {CLEAR_ON_MANAGER_START, BOOL}},
     {"ModelManager_DownloadRef", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, STRING}},
+    // Deprecated compatibility key for requests created by the previous UI.
+    {"ModelManager_DownloadIndex", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, INT}},
     {"ModelManager_Favs", {PERSISTENT | BACKUP, STRING}},
     {"ModelManager_LastSyncTime", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, INT, "0"}},
+    {"ModelManager_LastSyncTime_USBGPU", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, INT, "0"}},
     {"ModelManager_LastSyncTime_Chestnut", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, INT, "0"}},
     {"ModelManager_ModelsCache", {PERSISTENT | BACKUP, JSON}},
+    {"ModelManager_ModelsCache_USBGPU", {PERSISTENT | BACKUP, JSON}},
     {"ModelManager_ModelsCache_Chestnut", {PERSISTENT | BACKUP, JSON}},
 
     // Neural Network Lateral Control
@@ -232,6 +252,47 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SubaruStopAndGoManualParkingBrake", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"TeslaCoopSteering", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"TeslaMadsScreenButton", {PERSISTENT | BACKUP, INT, "0"}},
+    // Tesla Control Profile. Radar is an enum: 0=OEM, 1=ARS408, 2=off.
+    {"TeslaARS408Radar", {PERSISTENT | BACKUP, INT, "0"}},
+    {"TeslaTouchLongitudinalSwitch", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"TeslaApHybrid", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"TeslaDynamicApLongitudinal", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"TeslaSpeedButtonValidation", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"TeslaTurnSignalValidation", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"TeslaWebDrivingVisualization", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"TeslaTurnSignalTestRequest", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, JSON}},
+    {"TeslaTurnSignalTestResult", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, JSON}},
+    {"TeslaTurnSignalTestStatus", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, JSON}},
+    {"TeslaTurnSignalTestCancel", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, JSON}},
+    {"DynamicAutoStock", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"DynamicAutoStockBlinkerToSP", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"DynamicAutoStockCurveToSP", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"DynamicAutoStockSpeedKph", {PERSISTENT | BACKUP, INT, "80"}},
+    {"DynamicAutoStockSpeedLowKph", {PERSISTENT | BACKUP, INT, "70"}},
+    // Desired provider is persistent; Active is latched for one onroad session.
+    {"LongitudinalPlannerMode", {PERSISTENT | BACKUP, INT, "0"}},
+    {"ActiveLongitudinalBackend", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, INT}},
+    {"LongitudinalTuningConfig", {PERSISTENT | BACKUP, JSON}},
+    {"MpcTuningProfile", {PERSISTENT | BACKUP, INT, "0"}},
+    {"MpcXObstacleCost", {PERSISTENT | BACKUP, INT, "300"}},
+    {"MpcJerkCost", {PERSISTENT | BACKUP, INT, "500"}},
+    {"MpcAccelChangeCost", {PERSISTENT | BACKUP, INT, "20000"}},
+    {"MpcDangerZoneCost", {PERSISTENT | BACKUP, INT, "10000"}},
+    {"MpcLeadDangerFactor", {PERSISTENT | BACKUP, INT, "75"}},
+    {"MpcComfortBrake", {PERSISTENT | BACKUP, INT, "250"}},
+    {"MpcStopDistance", {PERSISTENT | BACKUP, INT, "600"}},
+    {"MpcJerkFactorStandard", {PERSISTENT | BACKUP, INT, "100"}},
+    {"MpcTFollowRelaxed", {PERSISTENT | BACKUP, INT, "175"}},
+    {"MpcTFollowStandard", {PERSISTENT | BACKUP, INT, "145"}},
+    {"MpcTFollowAggressive", {PERSISTENT | BACKUP, INT, "125"}},
+    {"AccelPersonalityEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"AccelPersonality", {PERSISTENT | BACKUP, INT, "1"}},
+    // The private-LAN console is directly accessible; its opt-in Bash terminal has separate authentication.
+    {"WebTerminalEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"WebTerminalPassword", {PERSISTENT | DONT_LOG | BACKUP, STRING, "123456"}},
+    {"TeslaTrafficSignalControlEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"TeslaTrafficStopReference", {PERSISTENT | BACKUP, INT, "50"}},  // decimeters
+    {"TeslaTrafficControlMaxSpeed", {PERSISTENT | BACKUP, INT, "60"}},  // km/h
     {"ToyotaEnforceStockLongitudinal", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"ToyotaStopAndGoHack", {PERSISTENT | BACKUP, BOOL, "0"}},
 
@@ -248,9 +309,13 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LagdValueCache", {PERSISTENT, FLOAT, "0.2"}},
     {"LaneTurnDesire", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"LaneTurnValue", {PERSISTENT | BACKUP, FLOAT, "28.0"}},
+    // Xiaoge lane.onnx solid/dashed assist (default off; needs /data/media/0/models/lane.onnx)
+    {"LaneTypeOnnx", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"AutoGasSyncSpeed", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"TrafficStopOffset", {PERSISTENT | BACKUP, FLOAT, "3.0"}},
+    {"TrafficStopLead", {PERSISTENT | BACKUP, FLOAT, "1.5"}},
     {"IqlinkEnabled", {PERSISTENT | BACKUP, BOOL, "1"}},
+    {"IqlinkBleEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"IqlinkBlePsk", {PERSISTENT | BACKUP | DONT_LOG, STRING, "999999"}},
     {"IqlinkBleLinkState", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"IqlinkBleConnected", {CLEAR_ON_MANAGER_START, BOOL, "0"}},
@@ -261,7 +326,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     // mapd
     {"MapAdvisorySpeedLimit", {CLEAR_ON_ONROAD_TRANSITION, FLOAT}},
-    {"Mapd_ClearCache", {CLEAR_ON_MANAGER_START, BOOL}},
     {"MapdVersion", {PERSISTENT, STRING}},
     {"MapSpeedLimit", {CLEAR_ON_ONROAD_TRANSITION, FLOAT, "0.0"}},
     {"NextMapSpeedLimit", {CLEAR_ON_ONROAD_TRANSITION, JSON}},
@@ -284,6 +348,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // Speed Limit
     {"SpeedLimitMode", {PERSISTENT | BACKUP, INT, "1"}},
     {"SpeedLimitOffsetType", {PERSISTENT | BACKUP, INT, "0"}},
+    {"SpeedLimitOffsetMaxSpeed", {PERSISTENT | BACKUP, INT, "0"}},
     {"SpeedLimitPolicy", {PERSISTENT | BACKUP, INT, "3"}},
     {"SpeedLimitValueOffset", {PERSISTENT | BACKUP, INT, "0"}},
 

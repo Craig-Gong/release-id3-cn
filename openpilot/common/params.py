@@ -1,4 +1,5 @@
 import sys
+import os
 import json
 import ctypes
 import weakref
@@ -120,12 +121,61 @@ _PREBUILT_KEY_DEFAULTS = {
   "TrafficStopOffset": 3.0,
   "AutoGasSyncSpeed": True,
   "IqlinkEnabled": True,
+  "IqlinkBleEnabled": False,
   "IqlinkBlePsk": "999999",
   "IqlinkBleLinkState": 0,
   "IqlinkBleConnected": False,
   "EcoflowEnabled": False,
   "EcoflowGpuRecover": False,
+  "TrafficStopLead": 1.5,
+  "MebForceBlinker": 0,
+  "NavAutoBlinker": False,
+  "NavAutoLaneChange": False,
+  "LaneTypeOnnx": False,
 }
+
+# Not in the on-device libparams yet. UI and planner share this file so the
+# slider works without rebuilding params (rsync-only).
+_FILE_BACKED_PARAMS = {
+  "TrafficStopLead": 1.5,
+  "MebForceBlinker": 0,
+  "NavAutoBlinker": False,
+  "NavAutoLaneChange": False,
+  "LaneTypeOnnx": False,
+}
+_FILE_BACKED_DIR = "/data/openpilot_extra_params"
+
+
+def _file_backed_path(key: str) -> str:
+  return os.path.join(_FILE_BACKED_DIR, key)
+
+
+def _read_file_backed(key: str):
+  try:
+    with open(_file_backed_path(key)) as f:
+      raw = f.read().strip()
+  except OSError:
+    return None
+  default = _FILE_BACKED_PARAMS[key]
+  if isinstance(default, bool):
+    return raw in ("1", "True", "true")
+  if isinstance(default, int) and not isinstance(default, bool):
+    try:
+      return int(raw)
+    except ValueError:
+      return default
+  if isinstance(default, float):
+    try:
+      return float(raw)
+    except ValueError:
+      return default
+  return raw
+
+
+def _write_file_backed(key: str, dat) -> None:
+  os.makedirs(_FILE_BACKED_DIR, exist_ok=True)
+  with open(_file_backed_path(key), "w") as f:
+    f.write(str(dat))
 
 
 class Params:
@@ -170,6 +220,12 @@ class Params:
     try:
       k = self.check_key(key)
     except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        stored = _read_file_backed(key)
+        if stored is not None:
+          return stored
+        if return_default:
+          return _FILE_BACKED_PARAMS[key]
       if return_default:
         return _PREBUILT_KEY_DEFAULTS.get(key)
       return None
@@ -186,6 +242,10 @@ class Params:
     try:
       return bool(params_get_bool(self.p, self.check_key(key), block))
     except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        stored = _read_file_backed(key)
+        if stored is not None:
+          return bool(stored)
       return bool(_PREBUILT_KEY_DEFAULTS.get(key, False))
 
   def _put_cast(self, key, dat):
@@ -196,6 +256,9 @@ class Params:
     try:
       k = self.check_key(key)
     except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        _write_file_backed(key, dat)
+        return
       cloudlog.warning(f"skip unknown param {key}")
       return
     value = self._put_cast(k, dat)
@@ -205,6 +268,9 @@ class Params:
     try:
       params_put_bool(self.p, self.check_key(key), val, block)
     except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        _write_file_backed(key, bool(val))
+        return
       cloudlog.warning(f"skip unknown param {key}")
 
   def remove(self, key):

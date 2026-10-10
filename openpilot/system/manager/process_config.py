@@ -5,13 +5,14 @@ import platform
 from opendbc.car.structs import car
 from openpilot.cereal import custom
 from openpilot.common.params import Params
-from openpilot.common.hardware import PC, COMMA_HARDWARE, has_cabin_camera
+from openpilot.common.hardware import PC, COMMA_HARDWARE
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
 from openpilot.common.hardware.hw import Paths
 
 from openpilot.sunnypilot.mapd.mapd_manager import MAPD_PATH
 
 from openpilot.sunnypilot.models.helpers import get_active_model_runner
+from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile, has_driver_camera, has_microphone
 from openpilot.sunnypilot.sunnylink.utils import sunnylink_need_register, sunnylink_ready, use_sunnylink_uploader
 
 WEBCAM = os.getenv("USE_WEBCAM") is not None
@@ -19,14 +20,17 @@ WEBCAM = os.getenv("USE_WEBCAM") is not None
 def driverview(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started or params.get_bool("IsDriverViewEnabled")
 
-def cabin_camera(started: bool, params: Params, CP: car.CarParams) -> bool:
-  return driverview(started, params, CP) and has_cabin_camera()
+def visual_driver_monitoring(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return has_driver_camera() and driverview(started, params, CP)
 
 def notcar(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started and CP.notCar
 
 def iscar(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started and not CP.notCar
+
+def audio_input(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return has_microphone(get_hardware_profile()) and iscar(started, params, CP)
 
 def logging(started: bool, params: Params, CP: car.CarParams) -> bool:
   run = (not CP.notCar) or not params.get_bool("DisableLogging")
@@ -65,6 +69,17 @@ def always_run(started: bool, params: Params, CP: car.CarParams) -> bool:
 def only_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started
 
+def c3xl_local_diagnostics(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return started and get_hardware_profile() == HardwareProfile.C3XL
+
+def record_route_video(started: bool, params: Params, CP: car.CarParams) -> bool:
+  if get_hardware_profile() == HardwareProfile.C3XL:
+    return False
+  try:
+    return started and params.get_bool("RecordRoadVideo")
+  except Exception:
+    return started
+
 def only_offroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return not started
 
@@ -73,6 +88,41 @@ def livestream(started: bool, params: Params, CP: car.CarParams) -> bool:
 
 def use_copyparty(started, params, CP: car.CarParams) -> bool:
   return bool(params.get_bool("EnableCopyparty"))
+
+def use_external_buzzer(started: bool, params: Params, CP: car.CarParams) -> bool:
+  # C3XL GPIO buzzer is muted (2026-09-04). Keep the process off so GPIO 42
+  # is never exported. Cluster FCW still uses the car speaker.
+  return False
+
+def _param_flag(params: Params, key: str, default: bool = False) -> bool:
+  try:
+    return bool(params.get_bool(key))
+  except Exception:
+    return default
+
+def iqlink_needed(started, params: Params, CP: car.CarParams) -> bool:
+  # Always run iqlinkd so UDP :17710 keeps listening. IqlinkEnabled only gates
+  # nav *execution*; IqlinkBleEnabled (default off) gates optional BLE GATT.
+  # Tying the process to the toggle caused silent "nobody listening" when the
+  # param was 0 while the phone still looked connected.
+  return True
+
+def ecoflow_needed(started, params: Params, CP: car.CarParams) -> bool:
+  return _param_flag(params, "EcoflowEnabled", False)
+
+def lane_type_needed(started, params: Params, CP: car.CarParams) -> bool:
+  # Onroad + LaneTypeOnnx (file_params fallback for prebuilt libparams).
+  if not started:
+    return False
+  try:
+    return bool(params.get_bool("LaneTypeOnnx"))
+  except Exception:
+    pass
+  try:
+    from openpilot.common.file_params import read_file_param
+    return bool(read_file_param("LaneTypeOnnx", False))
+  except Exception:
+    return False
 
 def sunnylink_ready_shim(started, params, CP: car.CarParams) -> bool:
   """Shim for sunnylink_ready to match the process manager signature."""
@@ -88,17 +138,11 @@ def use_sunnylink_uploader_shim(started, params, CP: car.CarParams) -> bool:
 
 def is_tinygrad_model(started, params, CP: car.CarParams) -> bool:
   """Check if the active model runner is tinygrad."""
-  try:
-    return bool(get_active_model_runner(params, not started) == custom.ModelManagerSP.Runner.tinygrad)
-  except Exception:
-    return False
+  return bool(get_active_model_runner(params, not started) == custom.ModelManagerSP.Runner.tinygrad)
 
 def is_stock_model(started, params, CP: car.CarParams) -> bool:
-  """Check if the active model runner is stock. Always the fallback so one modeld starts."""
-  try:
-    return not is_tinygrad_model(started, params, CP)
-  except Exception:
-    return True
+  """Check if the active model runner is stock."""
+  return bool(get_active_model_runner(params, not started) == custom.ModelManagerSP.Runner.stock)
 
 def mapd_ready(started: bool, params: Params, CP: car.CarParams) -> bool:
   return bool(os.path.exists(Paths.mapd_root()))
@@ -108,18 +152,6 @@ def uploader_ready(started: bool, params: Params, CP: car.CarParams) -> bool:
     return only_offroad(started, params, CP)
 
   return always_run(started, params, CP)
-
-def _param_flag(params: Params, key: str, default: bool = False) -> bool:
-  try:
-    return bool(params.get_bool(key))
-  except Exception:
-    return default
-
-def iqlink_needed(started, params: Params, CP: car.CarParams) -> bool:
-  return _param_flag(params, "IqlinkEnabled", True)
-
-def ecoflow_needed(started, params: Params, CP: car.CarParams) -> bool:
-  return _param_flag(params, "EcoflowEnabled", False)
 
 def or_(*fns):
   def _or(*args):
@@ -139,11 +171,15 @@ def and_(*fns):
     return True
   return _and
 
+def not_(*fns):
+  return lambda *args: operator.not_(*(fn(*args) for fn in fns))
+
 procs = [
   DaemonProcess("manage_athenad", "openpilot.system.athena.manage_athenad", "AthenadPid"),
 
   NativeProcess("loggerd", "openpilot/system/loggerd", ["./loggerd"], logging),
-  NativeProcess("encoderd", "openpilot/system/loggerd", ["./encoderd"], only_onroad),
+  PythonProcess("local_diagnosticsd", "openpilot.selfdrive.debug.local_diagnostics", c3xl_local_diagnostics),
+  NativeProcess("encoderd", "openpilot/system/loggerd", ["./encoderd"], record_route_video),
   NativeProcess("stream_encoderd", "openpilot/system/loggerd", ["./encoderd", "--stream"], or_(livestream, notcar)),
   PythonProcess("logmessaged", "openpilot.system.logmessaged", always_run),
 
@@ -151,14 +187,16 @@ procs = [
   PythonProcess("webcamerad", "openpilot.system.camerad.webcam.camerad", driverview, enabled=WEBCAM),
   PythonProcess("proclogd", "openpilot.system.proclogd", only_onroad, enabled=platform.system() != "Darwin"),
   PythonProcess("journald", "openpilot.system.journald", only_onroad, platform.system() != "Darwin"),
-  PythonProcess("micd", "openpilot.system.micd", iscar),
+  PythonProcess("micd", "openpilot.system.micd", audio_input),
   PythonProcess("timed", "openpilot.system.timed", always_run, enabled=not PC),
 
   PythonProcess("modeld", "openpilot.selfdrive.modeld.modeld", and_(only_onroad, is_stock_model)),
-  PythonProcess("dmonitoringmodeld", "openpilot.selfdrive.modeld.dmonitoringmodeld", cabin_camera, enabled=(WEBCAM or not PC)),
+  # The camera-less C3XL follows its known-good deployment behavior: neither
+  # visual DM process is started. Standard comma profiles retain upstream DM.
+  PythonProcess("dmonitoringmodeld", "openpilot.selfdrive.modeld.dmonitoringmodeld", visual_driver_monitoring, enabled=(WEBCAM or not PC)),
 
   PythonProcess("sensord", "openpilot.system.sensord.sensord", only_onroad, enabled=not PC),
-  PythonProcess("ui", "openpilot.selfdrive.ui.ui", always_run),
+  PythonProcess("ui", "openpilot.selfdrive.ui.ui", always_run, restart_if_crash=True),
   PythonProcess("soundd", "openpilot.selfdrive.ui.soundd", driverview),
   PythonProcess("locationd", "openpilot.selfdrive.locationd.locationd", only_onroad),
   NativeProcess("_pandad", "openpilot/selfdrive/pandad", ["./pandad"], always_run, enabled=False),
@@ -169,7 +207,7 @@ procs = [
   PythonProcess("selfdrived", "openpilot.selfdrive.selfdrived.selfdrived", only_onroad),
   PythonProcess("card", "openpilot.selfdrive.car.card", only_onroad),
   PythonProcess("deleter", "openpilot.system.loggerd.deleter", always_run),
-  PythonProcess("dmonitoringd", "openpilot.selfdrive.monitoring.dmonitoringd", cabin_camera, enabled=(WEBCAM or not PC)),
+  PythonProcess("dmonitoringd", "openpilot.selfdrive.monitoring.dmonitoringd", visual_driver_monitoring, enabled=(WEBCAM or not PC)),
   PythonProcess("qcomgpsd", "openpilot.system.qcomgpsd.qcomgpsd", qcomgps, enabled=COMMA_HARDWARE),
   PythonProcess("pandad", "openpilot.selfdrive.pandad.pandad", always_run),
   PythonProcess("paramsd", "openpilot.selfdrive.locationd.paramsd", only_onroad),
@@ -200,6 +238,11 @@ procs = [
 
 # sunnypilot
 procs += [
+  # Optional C3XL integrations are isolated processes; disabling them restores
+  # the upstream process graph and control behavior.
+  PythonProcess("alert_output", "openpilot.sunnypilot.system.alert_output", use_external_buzzer),
+  PythonProcess("chestnut_statusd", "openpilot.system.hardware.chestnut.statusd", only_offroad),
+
   # Models
   PythonProcess("models_manager", "openpilot.sunnypilot.models.manager", only_offroad),
   NativeProcess("modeld_tinygrad", "openpilot/sunnypilot/modeld_v2", ["./modeld"], and_(only_onroad, is_tinygrad_model)),
@@ -214,9 +257,12 @@ procs += [
   # locationd
   NativeProcess("locationd_llk", "openpilot/sunnypilot/selfdrive/locationd", ["./locationd"], only_onroad),
 
-  # IQ-link BLE + EcoFlow 12V (not in modeld; chestnut SuperSpeed is never cycled here)
+  # IQ-link BLE + EcoFlow 12V (never cycle 12V while chestnut SuperSpeed)
   PythonProcess("iqlinkd", "openpilot.sunnypilot.nav.iqlinkd", iqlink_needed),
   PythonProcess("ecoflowd", "openpilot.sunnypilot.system.ecoflow.daemon", ecoflow_needed),
+
+  # Xiaoge lane.onnx solid/dashed (shm only; default off)
+  PythonProcess("lane_typed", "openpilot.sunnypilot.vision.lane_type.daemon", lane_type_needed),
 ]
 
 if os.path.exists("../../sunnypilot/sunnylink/uploader.py"):

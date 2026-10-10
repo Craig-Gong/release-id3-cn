@@ -56,6 +56,14 @@ class LaneChangeSettingsLayout(Widget):
       title=lambda: tr("Block Lane Change: Road Edge Detection"),
       description=lambda: tr("Blocks the lane change if the model sees a road edge on your signaled side."),
     )
+    self._lane_type_onnx = toggle_item_sp(
+      param="LaneTypeOnnx",
+      title=lambda: tr("Lane Type Assist"),
+      description=lambda: tr(
+        "Block blinker lane changes (≥45 km/h) when Xiaoge ONNX sees a solid line on that side. "
+        "Requires /data/media/0/models/lane.onnx. Default off; unknown/stale fails open."
+      ),
+    )
 
     items = [
       self._lane_change_timer,
@@ -63,6 +71,8 @@ class LaneChangeSettingsLayout(Widget):
       self._bsm_delay,
       LineSeparatorSP(40),
       self._road_edge_block,
+      LineSeparatorSP(40),
+      self._lane_type_onnx,
     ]
 
     return items
