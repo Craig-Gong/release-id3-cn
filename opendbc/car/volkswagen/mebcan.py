@@ -67,17 +67,18 @@ ACC_HUD_DISABLED = 0
 
 
 def meb_pid_hold_should_start(esp_hold: bool, v_ego: float, accel: float, gas_pressed: bool,
-                             *, v_hold: float = 0.25) -> bool:
+                             *, v_hold: float = 0.25, min_accel: float = 0.35) -> bool:
   """pid + ESP-hold RELEASE only when actually launching.
 
   Keep LongCtrlState.starting as the primary go. Do not treat pid flicker
-  with accel<=0 as takeoff (stop-then-creep). Gas always wins.
+  or soft-zone creep (~+0.25) as takeoff (stop-then-creep at reds). Gas
+  always wins. Real go floors are ≥~0.9 so min_accel still clears.
   """
   if not (esp_hold or v_ego < v_hold):
     return False
   if gas_pressed:
     return True
-  return accel > 0.0
+  return accel > min_accel
 
 
 class MebLongStateMachine:

@@ -30,6 +30,9 @@ class CarState(CarStateBase, CarStateExt):
     self.acc_type = 0
     self.travel_assist_available = False
     self.curvature_meas = 0.
+    self.ea_hud_stock_values = {}
+    self.left_blinker_stalk = False
+    self.right_blinker_stalk = False
 
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
@@ -275,6 +278,8 @@ class CarState(CarStateBase, CarStateExt):
     ret.steerFaultTemporary, ret.steerFaultPermanent = self.update_hca_state(hca_status, in_drive)
 
     ret.carFaultedNonCritical = cam_cp.vl["EA_01"]["EA_Funktionsstatus"] in (3, 4, 5, 6)
+    # Lazy-subscribed via VLDict; stock HUD fields for EA_02 Force TX.
+    self.ea_hud_stock_values = cam_cp.vl["EA_02"]
 
     ret.gasPressed = pt_cp.vl["Motor_51"]["Accel_Pedal_Pressure"] > 0
     ret.brakePressed = bool(pt_cp.vl["Motor_14"]["MO_Fahrer_bremst"])
@@ -323,8 +328,12 @@ class CarState(CarStateBase, CarStateExt):
     # Secondly, after harshly braking, long control is temporarily inhibited (ignored as a fault above)
     ret.carNotReady = pt_cp.vl["Motor_51"]["TSK_Status"] == 5 or long_control_inhibit
 
-    ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_stalk(240, pt_cp.vl["SMLS_01"]["BH_Blinker_li"],
-                                                                            pt_cp.vl["SMLS_01"]["BH_Blinker_re"])
+    stalk_left = bool(pt_cp.vl["SMLS_01"]["BH_Blinker_li"])
+    stalk_right = bool(pt_cp.vl["SMLS_01"]["BH_Blinker_re"])
+    self.left_blinker_stalk = stalk_left
+    self.right_blinker_stalk = stalk_right
+    # carState blinkers: stalk only (software EA_02 shows on BM_*; do not feed back into yield).
+    ret.leftBlinker, ret.rightBlinker = self.update_blinker_from_stalk(240, stalk_left, stalk_right)
 
     if self.CP.enableBsm:
       bsm_cp = pt_cp if self.CP.flags & VolkswagenFlags.MEB_GEN2 else ext_cp
