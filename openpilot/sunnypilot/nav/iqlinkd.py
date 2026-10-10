@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""IQ-link BLE daemon: HMAC writes → /dev/shm/sp_nav.json. Isolated from modeld."""
+"""IQ-link daemon: BLE + LAN UDP HMAC → /dev/shm/sp_nav.json. Isolated from modeld."""
 from __future__ import annotations
 
 import json
@@ -19,6 +19,7 @@ from openpilot.sunnypilot.nav.snapshot import (
   NavSnapshot,
   write_snapshot,
 )
+from openpilot.sunnypilot.nav.udp_nav import UdpNavServer
 
 LINK_OFF = 0
 LINK_CONNECTING = 1
@@ -69,6 +70,22 @@ class IqlinkDaemon:
     self._was_hmac_fresh = False
     self._buf = bytearray()
     self.ble = BleGattServer(self._on_gatt_write)
+    self.udp = UdpNavServer(self._on_udp_datagram)
+
+  def _handle_envelope(self, blob: bytes) -> None:
+    status, data = self.verifier.inspect(blob)
+    if status == "bad" or data is None:
+      return
+    if status == "replay":
+      self._heartbeat_only()
+      return
+    self._ingest(data, hmac_ok=True)
+
+  def _on_udp_datagram(self, raw: bytes) -> None:
+    """One UDP datagram = one complete HMAC envelope (no GATT fragmentation)."""
+    if not raw:
+      return
+    self._handle_envelope(raw)
 
   def _on_gatt_write(self, raw: bytes) -> None:
     if not raw:
@@ -81,13 +98,7 @@ class IqlinkDaemon:
       blob = pop_complete_json(self._buf)
       if blob is None:
         return
-      status, data = self.verifier.inspect(blob)
-      if status == "bad" or data is None:
-        continue
-      if status == "replay":
-        self._heartbeat_only()
-        continue
-      self._ingest(data, hmac_ok=True)
+      self._handle_envelope(blob)
 
   def _ingest(self, data: dict, *, hmac_ok: bool) -> None:
     enabled = _param_bool(self.params, "IqlinkEnabled", True)
@@ -145,6 +156,7 @@ class IqlinkDaemon:
       # Phone may restart seq after a drop; do not seq-replay the next session forever.
       self.verifier = EnvelopeVerifier(_psk(self.params))
     self._was_hmac_fresh = hmac_fresh
+    transport_up = bool(self.ble.running or self.udp.running)
     if not enabled:
       state = LINK_OFF
       ok = False
@@ -152,7 +164,7 @@ class IqlinkDaemon:
       state = LINK_CONNECTED
       ok = True
     else:
-      state = LINK_CONNECTING if self.ble.running else LINK_OFF
+      state = LINK_CONNECTING if transport_up else LINK_OFF
       ok = False
     self._last_snap.iqlink_enabled = enabled
     self._last_snap.link_ok = ok
@@ -165,24 +177,34 @@ class IqlinkDaemon:
 
   def run(self) -> None:
     rk = Ratekeeper(5)
-    ble_wanted = False
+    transport_wanted = False
     last_ble_try = 0.0
+    last_udp_try = 0.0
     while True:
       enabled = _param_bool(self.params, "IqlinkEnabled", True)
       now = time.monotonic()
       if enabled:
+        if not self.udp.running and (now - last_udp_try) >= BLE_RETRY_S:
+          last_udp_try = now
+          if not self.ble.running:
+            self.verifier = EnvelopeVerifier(_psk(self.params))
+          udp_ok = self.udp.start()
+          cloudlog.info(f"iqlinkd UDP start ok={udp_ok}")
         if not self.ble.running and (now - last_ble_try) >= BLE_RETRY_S:
           last_ble_try = now
-          self.verifier = EnvelopeVerifier(_psk(self.params))
+          if not self.udp.running:
+            self.verifier = EnvelopeVerifier(_psk(self.params))
           started = self.ble.start()
           cloudlog.info(f"iqlinkd BLE start ok={started}")
-        ble_wanted = True
-      elif ble_wanted:
+        transport_wanted = True
+      elif transport_wanted:
         self.ble.stop()
-        ble_wanted = False
+        self.udp.stop()
+        transport_wanted = False
         self._last_hmac_ts = 0.0
         self._was_hmac_fresh = False
         last_ble_try = 0.0
+        last_udp_try = 0.0
       self._poll_inject()
       self._publish_link(enabled)
       rk.keep_time()
