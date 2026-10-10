@@ -4,7 +4,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from openpilot.sunnypilot.nav.hud_copy import LANE_LEFT, LANE_RIGHT, TURN_LEFT, TURN_RIGHT
+from openpilot.sunnypilot.nav.hud_copy import (
+  ARRIVED, ARRIVE_SOON, EXIT_AHEAD, KILOMETERS, LANE_LEFT, LANE_RIGHT, METERS,
+  STRAIGHT_AHEAD, STRAIGHT_LANE, TURN_LEFT, TURN_RIGHT,
+)
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot
 
 _TURN_LEFT = {1, 12, 16, 17, 18}
@@ -16,15 +19,53 @@ _EXIT = {6, 11}
 
 _RED_LIGHT_ACCEL = -2.0
 _RED_LIGHT_DECEL = 2.0
-# Fallback when TrafficStopOffset is 0. Live offset is applied in parse_carrot
-# and again in the planner so a long-lived iqlinkd cannot keep the old 3 m.
-_STOP_BEFORE_LINE_M = 3.0
-_offset_cache = _STOP_BEFORE_LINE_M
+# Required-decel tiers (a_req = v²/(2·remaining)). Safety net under CTM e2e:
+# never far-hold at 0 while stop_for_light. Soft FAR/COAST must not replace
+# experimental model braking — planner min()s these with e2e/cruise.
+_NAV_RED_COMFORT_DECEL = 1.5
+_NAV_RED_HOLD_REQ = 0.30    # a_req below → light floor (earlier bite)
+_NAV_RED_COAST_REQ = 0.90   # a_req below → chauffeur coast
+_NAV_RED_COAST_A = -0.85
+_NAV_RED_FAR_A = -0.75      # far/low a_req: keep authority (never 0)
+_NAV_RED_MAIN_REQ = 1.40    # a_req below → main brake tracks −a_req
+_NAV_RED_JERK = 1.25        # m/s³ slew — catch planner hard brake sooner
+_NAV_RED_CATCHUP_M = 18.0   # inside this, slew fast enough that lag does not cross the line
+_NAV_RED_NEAR_JERK = 3.2
+_NAV_RED_DT = 0.05
+# Floor when TrafficStopOffset is 0 / unset. Live slider applies to IQ-link red
+# (amap light distance ≠ stop line). Cap matches vision slider so 8–10 m works.
+NAV_STOP_MARGIN_M = 3.0
+NAV_STOP_MARGIN_MAX_M = 10.0
+# Amap trafficLightDistM is to the lamp, not the painted line (IQ used +2 m).
+_STOP_LINE_EARLY_COMP_M = 2.0
+_offset_cache = NAV_STOP_MARGIN_M
 _offset_n = 0
 _YELLOW_STOP_DIST_M = 30.0
 LIGHT_TURN_WINDOW_M = 150.0
+# Red-light right turn exemption: the right turn must be at THIS light. 150 m
+# also matched the next intersection and skipped the red in front.
+RTOR_TURN_WINDOW_M = 50.0
+# trafficLightDistSrc values that are a measured/route distance (not a guess
+# from nTBTDist / segment remain). Current partner APKs send none.
+_TRUSTED_LIGHT_DIST_SRC = {"route", "map"}
+# Toast / send_turn / nav-led longitudinal prep.
 TURN_DESIRE_WINDOW_M = 150.0
+# Lateral desire + turn-in (no stalk widen). Lebowski needed ~30 m; CTM v2 /
+# similar big models understeer if armed that late — 50 m ≈ 4–5 s @ 36–45
+# km/h after turn_prep. Toast / send_turn / prep stay 150 m. Commit-hold
+# matches this so once desire arms it stays continuous.
+NAV_LATERAL_TURN_M = 50.0
+# Do not promote Gaode lc_* → send_turn at highway limits (fork stays LC).
+NAV_LC_PROMOTE_MAX_KPH = 70.0
 NEAR_DEST_REMAIN_M = 150.0
+# Final meters: HUD "到达目的地" (no leftover "即将到达" + segment meters).
+ARRIVED_REMAIN_M = 20.0
+_NAV_RED_HARD_A = -3.5
+_NAV_RED_HOLD_A = -1.5
+# Final meters before the intended stop: force shouldStop even if still rolling.
+_NAV_RED_NEAR_M = 3.5
+# Bumper gap when fusing mmWave dRel into the nav stop point.
+_NAV_RED_LEAD_STOP_GAP_M = 3.5
 
 
 def _f(data: dict[str, Any], key: str, default: float = 0.0) -> float:
@@ -83,26 +124,133 @@ def approach_speed_ms(dist_m: float, decel: float, cap_ms: float = 0.0) -> float
   return v
 
 
-def nav_stop_margin_m(offset_m: float) -> float:
-  """Meters short of amap trafficLightDistM. Offset 0 keeps the 3 m default."""
+def nav_stop_margin_m(offset_m: float | None = None) -> float:
+  """Meters short of amap trafficLightDistM for IQ-link red.
+
+  Uses TrafficStopOffset when > 0, floored at 3 m and capped at the vision
+  slider max (10 m). Offset 0 / unset keeps the 3 m default.
+  """
+  if offset_m is None:
+    return NAV_STOP_MARGIN_M
   try:
     o = float(offset_m)
   except (TypeError, ValueError):
-    return _STOP_BEFORE_LINE_M
-  return o if o > 0.0 else _STOP_BEFORE_LINE_M
+    return NAV_STOP_MARGIN_M
+  if o <= 0.0:
+    return NAV_STOP_MARGIN_M
+  return min(max(o, NAV_STOP_MARGIN_M), NAV_STOP_MARGIN_MAX_M)
 
 
-def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float) -> float:
-  """Target speed for a nav red. Already at/past the intended stop → 0, not a 0.5 m crawl."""
-  d = float(light_dist or 0.0)
-  m = float(margin)
-  if d <= 0.0 or d <= m:
+def nav_red_remaining_m(light_dist: float, margin: float,
+                        lead_d_rel: float | None = None,
+                        stop_gap: float = _NAV_RED_LEAD_STOP_GAP_M) -> float:
+  """Meters left to the intended stop (light − margin − line bias, ± radar).
+
+  When a mmWave track sits between ego and the light, use min(light, bumper−gap)
+  so we do not plan past a stopped queue as if the light were the only stop.
+  """
+  light_rem = float(light_dist or 0.0) - float(margin) - _STOP_LINE_EARLY_COMP_M
+  if lead_d_rel is None:
+    return light_rem
+  d = float(lead_d_rel)
+  if d <= 0.5:
+    return light_rem
+  light_d = float(light_dist or 0.0)
+  # Lead at/behind the light point → do not treat bumper as earlier stop.
+  if light_d > 1.0 and d >= (light_d - 1.0):
+    return light_rem
+  lead_rem = d - float(stop_gap)
+  if light_rem <= 0.0:
+    return lead_rem
+  return min(light_rem, lead_rem)
+
+
+def nav_red_speed_ms(light_dist: float, road_ms: float, margin: float,
+                     remaining_m: float | None = None) -> float:
+  """Target speed ceiling for a nav red (√(2·2·d) envelope, capped by road).
+
+  Far away this stays above urban cruise so min() does not grind speed; closer
+  it drops along a constant-decel curve. Forced brake uses nav_red_accel_cap.
+  """
+  rem = float(remaining_m) if remaining_m is not None else (
+    float(light_dist or 0.0) - float(margin) - _STOP_LINE_EARLY_COMP_M
+  )
+  if rem <= 0.0:
     return 0.0
-  v = approach_speed_ms(d - m, _RED_LIGHT_DECEL, cap_ms=road_ms)
+  v = approach_speed_ms(rem, _RED_LIGHT_DECEL, cap_ms=road_ms)
   return 0.0 if v <= 0.05 else v
 
 
-def _traffic_stop_margin_m() -> float:
+def nav_red_comfort_speed_ms(light_dist: float, margin: float,
+                             remaining_m: float | None = None) -> float:
+  """Max speed that can still stop with comfort decel at remaining."""
+  remaining = float(remaining_m) if remaining_m is not None else (
+    float(light_dist or 0.0) - float(margin) - _STOP_LINE_EARLY_COMP_M
+  )
+  if remaining <= 0.0:
+    return 0.0
+  return math.sqrt(2.0 * _NAV_RED_COMFORT_DECEL * remaining)
+
+
+def nav_red_accel_raw(v_ego: float, remaining: float,
+                      accel_target: float = _RED_LIGHT_ACCEL) -> float:
+  """Unsmoothed a_cap from a_req tiers (far floor / coast / main / hard)."""
+  rem = float(remaining)
+  v = max(0.0, float(v_ego))
+  if rem <= 0.0:
+    return min(float(accel_target), _NAV_RED_HOLD_A)
+  a_req = (v * v) / (2.0 * max(rem, 0.3))
+  if a_req <= _NAV_RED_HOLD_REQ:
+    # Far: keep light authority (never 0 — that caused late first brake).
+    return _NAV_RED_FAR_A
+  if a_req <= _NAV_RED_COAST_REQ:
+    return _NAV_RED_COAST_A
+  if a_req <= _NAV_RED_MAIN_REQ:
+    # Continuous main brake: track −a_req (≈ −1.05 … −1.5 in this band).
+    return -a_req
+  a_kin = -a_req
+  return max(a_kin, _NAV_RED_HARD_A)
+
+
+def nav_red_accel_cap(v_ego: float, light_dist: float, margin: float,
+                      accel_target: float = _RED_LIGHT_ACCEL,
+                      remaining_m: float | None = None,
+                      prev_a: float | None = None,
+                      dt: float = _NAV_RED_DT) -> float:
+  """Accel ceiling toward the stop: a_req tiers + optional jerk slew.
+
+  Far band uses a light floor (not a=0). Coast then track −a_req, then hard
+  floor. When prev_a is set, slew at _NAV_RED_JERK.
+  """
+  remaining = float(remaining_m) if remaining_m is not None else (
+    float(light_dist or 0.0) - float(margin) - _STOP_LINE_EARLY_COMP_M
+  )
+  raw = nav_red_accel_raw(v_ego, remaining, accel_target)
+  if prev_a is None:
+    return raw
+  jerk = _NAV_RED_NEAR_JERK if float(remaining) <= _NAV_RED_CATCHUP_M else _NAV_RED_JERK
+  step = jerk * max(1e-3, float(dt))
+  lo = float(prev_a) - step
+  hi = float(prev_a) + step
+  return max(lo, min(hi, raw))
+
+
+def nav_red_force_stop(v_ego: float, light_dist: float, margin: float,
+                       remaining_m: float | None = None) -> bool:
+  """True when already at/past the intended stop or in the final hold zone."""
+  d = float(light_dist or 0.0)
+  remaining = float(remaining_m) if remaining_m is not None else (
+    d - float(margin) - _STOP_LINE_EARLY_COMP_M
+  )
+  if d <= 0.0 or remaining <= 0.0:
+    return True
+  if remaining <= _NAV_RED_NEAR_M:
+    return True
+  return nav_red_speed_ms(d, 0.0, margin, remaining_m=remaining) <= 0.5 and float(v_ego) <= 1.5
+
+
+def traffic_stop_margin_m() -> float:
+  """Cached live TrafficStopOffset → nav margin. Safe for iqlinkd + planner."""
   global _offset_cache, _offset_n
   _offset_n += 1
   if _offset_n % 15 != 1:
@@ -140,26 +288,41 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
   send_turn = bool(is_turn and near_turn)
   # Urban: Gaode often labels intersections as lc_*. Promote toast / desire
   # when near; maneuver stays fork so HUD / soft-curve still know it is LC.
-  if is_lc and near_turn and lane_rec != "straight":
+  # Highway/fast roads: keep fork as LC — do not inject turn desire.
+  if is_lc and near_turn and lane_rec != "straight" and road_kph < NAV_LC_PROMOTE_MAX_KPH:
     send_turn = True
 
   light = _s(data, "trafficLight", "none").strip().lower() or "none"
+  if light not in ("red", "yellow", "green"):
+    light = "none"
   light_dist = _f(data, "trafficLightDistM")
+  dist_src = _s(data, "trafficLightDistSrc").strip().lower()
+  dist_ok = light_dist > 0.0 and dist_src in _TRUSTED_LIGHT_DIST_SRC
+  light_dir = _s(data, "trafficLightDir", "none").strip().lower() or "none"
+  light_raw = int(_f(data, "trafficLightStatusRaw", -1.0))
+  light_age_s = max(0.0, _f(data, "trafficLightAgeMs")) / 1000.0
+  light_ts = float(now) - light_age_s if light != "none" else 0.0
   remain_s = int(_f(data, "trafficLightRemainS"))
   remain_go = "trafficLightRemainS" in data and remain_s == 1
-  right_turn_pending = bucket == "turn_right" and 0.0 < turn_dist <= LIGHT_TURN_WINDOW_M
+  right_turn_pending = (bucket == "turn_right" and 0.0 < turn_dist <= RTOR_TURN_WINDOW_M
+                        and light_dir != "right")
 
   stop_for_light = False
   speed_target = road_ms
   accel_target = 0.0
   if not right_turn_pending:
     if light == "red":
-      stop_for_light = not remain_go
-    elif light == "yellow" and 0.0 < light_dist <= _YELLOW_STOP_DIST_M:
+      # Countdown remainS==1 is NOT a clear-to-go for the head car — keep
+      # stop_for_light so standstill stays pinned until traffic_light=green.
+      # Follow cars still use remain_go + radar lead motion in StandstillHold.
+      stop_for_light = True
+    elif light == "yellow" and dist_ok and 0.0 < light_dist <= _YELLOW_STOP_DIST_M:
       stop_for_light = True
   if stop_for_light:
-    speed_target = nav_red_speed_ms(light_dist, road_ms, _traffic_stop_margin_m())
     accel_target = _RED_LIGHT_ACCEL
+    if dist_ok:
+      margin = traffic_stop_margin_m()
+      speed_target = nav_red_speed_ms(light_dist, road_ms, margin)
 
   maneuver = "none"
   if bucket.startswith("turn"):
@@ -172,9 +335,23 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
     maneuver = "roundabout"
 
   go_dist = _f(data, "nGoPosDist")
-  if 0.0 < go_dist <= NEAR_DEST_REMAIN_M:
+  go_time = _f(data, "nGoPosTime")
+  if 0.0 < go_dist <= ARRIVED_REMAIN_M:
+    send_turn = False
+    maneuver = "arrived"
+  elif 0.0 < go_dist <= NEAR_DEST_REMAIN_M:
     send_turn = False
     maneuver = "arrive"
+
+  # Partner maps NEXT_ROAD_NAME → szTBTMainText (enter); cur road → szPosRoadName.
+  enter_road = (_s(data, "szTBTMainText") or _s(data, "szNearDirName")).strip()
+  goal_name = _s(data, "szGoalName").strip()
+  pos_road = _s(data, "szPosRoadName").strip()
+  tbt_dist_next = _f(data, "nTBTDistNext")
+  tbt_type_next = int(_f(data, "nTBTTurnTypeNext", -1.0))
+  sdi_type = int(_f(data, "nSdiType", -1.0))
+  sdi_dist = _f(data, "nSdiDist")
+  sdi_speed = _f(data, "nSdiSpeedLimit")
 
   return NavSnapshot(
     ts=float(now),
@@ -194,7 +371,47 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
     tbt_dist=float(turn_dist),
     road_limit_kph=float(road_kph),
     send_turn=bool(send_turn),
+    enter_road=enter_road[:40],
+    go_dist_m=float(max(go_dist, 0.0)),
+    go_time_s=float(max(go_time, 0.0)),
+    goal_name=goal_name[:40],
+    pos_road_name=pos_road[:40],
+    tbt_dist_next=float(max(tbt_dist_next, 0.0)),
+    tbt_type_next=int(tbt_type_next),
+    sdi_type=int(sdi_type),
+    sdi_dist_m=float(max(sdi_dist, 0.0)),
+    sdi_speed_kph=float(max(sdi_speed, 0.0)),
+    dist_ok=bool(dist_ok),
+    light_ts=float(light_ts),
+    light_dir=light_dir[:16],
+    light_raw=int(light_raw),
   )
+
+
+def format_tbt_capsule(dist_m: float) -> tuple[str, str] | None:
+  """Distance capsule for hero: meters or km."""
+  d = float(dist_m or 0.0)
+  if d < 1.0:
+    return None
+  if d >= 1000.0:
+    return (f"{d / 1000.0:.1f}".rstrip("0").rstrip("."), KILOMETERS)
+  return (str(int(round(d))), METERS)
+
+
+def format_remain_km(dist_m: float) -> str:
+  d = float(dist_m or 0.0)
+  if d < 1.0:
+    return ""
+  if d >= 1000.0:
+    return f"{d / 1000.0:.1f}".rstrip("0").rstrip(".")
+  return f"{d / 1000.0:.2f}".rstrip("0").rstrip(".")
+
+
+def format_remain_min(time_s: float) -> str:
+  t = float(time_s or 0.0)
+  if t < 1.0:
+    return ""
+  return str(max(1, int(round(t / 60.0))))
 
 
 def lane_hint(snap: NavSnapshot) -> str:
@@ -207,4 +424,18 @@ def lane_hint(snap: NavSnapshot) -> str:
     return TURN_LEFT
   if snap.send_turn and snap.maneuver_dir == "right":
     return TURN_RIGHT
+  maneuver = (snap.maneuver or "none").lower()
+  if maneuver == "exit" and float(snap.tbt_dist or 0.0) > 0.0:
+    return EXIT_AHEAD
+  if maneuver == "arrived":
+    return ARRIVED
+  if maneuver == "arrive":
+    return ARRIVE_SOON
+  if rec == "straight":
+    return STRAIGHT_LANE if float(snap.tbt_dist or 0.0) < 1.0 else STRAIGHT_AHEAD
+  # Still driving straight toward a far TBT (turn/lc not yet in the ≤150 m
+  # send_turn window). Show 前方直行 + distance instead of an empty card.
+  if float(snap.tbt_dist or 0.0) >= 1.0 and not snap.send_turn:
+    if maneuver in ("none", "fork", "turn", "roundabout") or rec in ("none", "straight"):
+      return STRAIGHT_AHEAD
   return ""
