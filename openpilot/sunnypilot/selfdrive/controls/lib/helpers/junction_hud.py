@@ -4,11 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from openpilot.sunnypilot.nav.hud_copy import (
-  FOLLOW_LEAD, GO_AHEAD, NO_SIGNAL, STOP_AHEAD, STOP_GREEN, STOP_RED,
-  STOP_YELLOW, WAIT_DETECT, WAIT_PAIR, WATCH_AHEAD,
+  CUT_LEFT, CUT_WATCH, FOLLOW_LEAD, GO_AHEAD, NAV_EMPTY, NO_SIGNAL, STOP_AHEAD,
+  STOP_GREEN, STOP_RED, STOP_YELLOW, STRAIGHT_AHEAD, STRAIGHT_LANE, WAIT_DETECT,
+  WAIT_PAIR, WATCH_AHEAD,
 )
-from openpilot.sunnypilot.nav.protocol import lane_hint
-from openpilot.sunnypilot.nav.snapshot import NavSnapshot
+from openpilot.sunnypilot.nav.protocol import format_tbt_capsule, lane_hint
+from openpilot.sunnypilot.nav.snapshot import NavSnapshot, nav_light_dist
 
 GREEN_FLASH_S = 1.5
 _LIGHTS = ("red", "yellow", "green")
@@ -48,7 +49,10 @@ class JunctionView:
 class LaneGuideView:
   show: bool
   text: str
-  kind: str  # left | right | turn_left | turn_right | none
+  kind: str  # left | right | turn_left | turn_right | straight | exit | arrive | none
+  empty: bool = False
+  enter: str = ""
+  capsule: tuple[str, str] | None = None
 
 
 def _stop_headline(light: str) -> str:
@@ -61,7 +65,7 @@ def _stop_headline(light: str) -> str:
   return STOP_AHEAD
 
 
-def _lane_kind(snap: NavSnapshot) -> str:
+def _lane_kind(snap: NavSnapshot, text: str) -> str:
   rec = (snap.lane_recommend or "none").lower()
   if rec == "left":
     return "left"
@@ -71,22 +75,54 @@ def _lane_kind(snap: NavSnapshot) -> str:
     return "turn_left"
   if snap.send_turn and snap.maneuver_dir == "right":
     return "turn_right"
+  maneuver = (snap.maneuver or "none").lower()
+  if maneuver == "exit":
+    return "exit"
+  if maneuver in ("arrive", "arrived"):
+    return "arrive"
+  if text in (STRAIGHT_AHEAD, STRAIGHT_LANE) or rec == "straight":
+    return "straight"
   return "none"
 
 
-def build_lane_guide_view(*, engaged: bool, snap: NavSnapshot) -> LaneGuideView:
-  if not engaged:
-    return LaneGuideView(False, "", "none")
+def build_lane_guide_view(*, onroad: bool, snap: NavSnapshot) -> LaneGuideView:
+  """Persistent nav card: always shown onroad (empty → 暂无导航推送)."""
+  if not onroad:
+    return LaneGuideView(False, "", "none", True)
+
   text = lane_hint(snap)
+  kind = _lane_kind(snap, text)
+  enter = (snap.enter_road or "").strip()
+  # Avoid duplicating maneuver words as "进入 · 右转"
+  if enter in ("左转", "右转", "调头", "直行", "测试右转", "前方红灯"):
+    enter = ""
+  # Arrive card is trip-remain, not "进入 · next road".
+  if kind == "arrive":
+    enter = ""
+
+  capsule = None
+  maneuver = (snap.maneuver or "none").lower()
+  if maneuver == "arrive" and float(snap.go_dist_m or 0.0) >= 1.0:
+    # Show route remain, not sticky next-segment meters.
+    capsule = format_tbt_capsule(snap.go_dist_m)
+  elif maneuver == "arrived":
+    capsule = None
+  elif float(snap.tbt_dist or 0.0) >= 1.0 and kind not in ("none", "left", "right"):
+    capsule = format_tbt_capsule(snap.tbt_dist)
+
+  empty = not text and not enter
+  if empty:
+    return LaneGuideView(True, NAV_EMPTY, "none", True)
   if not text:
-    return LaneGuideView(False, "", "none")
-  return LaneGuideView(True, text, _lane_kind(snap))
+    text = NAV_EMPTY
+    kind = "none"
+  return LaneGuideView(True, text, kind, False, enter, capsule)
 
 
-def build_junction_view(*, engaged: bool, has_lead: bool, model_stop: bool,
+def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
                         standstill_hold: bool, snap: NavSnapshot,
                         green_flash: bool) -> JunctionView:
-  if not engaged:
+  if not onroad:
     return JunctionView(False, "none", "", "", False, False)
 
   light = snap.light_token if snap.iqlink_enabled else "none"
@@ -105,7 +141,7 @@ def build_junction_view(*, engaged: bool, has_lead: bool, model_stop: bool,
 
   if stopping:
     headline = _stop_headline(light)
-    dist = float(snap.dist_m or 0.0)
+    dist = nav_light_dist(snap)
     remain = float(snap.remain_s or 0.0)
     if light == "green":
       return JunctionView(True, light, headline, GO_AHEAD, False, False)
@@ -113,6 +149,15 @@ def build_junction_view(*, engaged: bool, has_lead: bool, model_stop: bool,
     if dist < 1.0 and remain < 1.0 and light == "none":
       detail = WATCH_AHEAD
     return JunctionView(True, light, headline, detail, False, False, dist, remain)
+
+  # Cautious unprotected left (no lead, not in a hard stop bar).
+  try:
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn import read_cut_snapshot
+    cut = read_cut_snapshot()
+    if cut.hud and not has_lead:
+      return JunctionView(True, "none", CUT_LEFT, CUT_WATCH, False, False)
+  except Exception:
+    pass
 
   if snap.iqlink_enabled and snap.link_ok:
     return JunctionView(True, "none", NO_SIGNAL, WAIT_DETECT, True, False)

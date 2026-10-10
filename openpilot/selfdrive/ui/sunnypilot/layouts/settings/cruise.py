@@ -94,17 +94,35 @@ class CruiseLayout(Widget):
 
     self.traffic_stop_offset = option_item_sp(
       title=tr("Traffic Stop Offset"),
-      description=tr("Brake this far short of the model's stop point, and of IQ-link red-light distance. Does not change follow gap. 0 disables vision offset (nav still uses 3 m)."),
+      description=tr("Meters short of the model / nav light stop. Larger = earlier. Does not change follow distance. 0 disables. Default 3 m. Cap 10 m."),
       param="TrafficStopOffset",
       min_value=0, max_value=1000, value_change_step=50,
       use_float_scaling=True,
       label_callback=lambda x: f"{x / 100:.1f} m",
       inline=True)
 
+    self.traffic_stop_lead = option_item_sp(
+      title=tr("Stop Line Extra"),
+      description=tr("Extra meters before the painted line, on top of Traffic Stop Offset. Live: about every 3 seconds, no reboot. You crossed by 1–2 m at offset 10 — start at 1.5, then 2.0 if still over. 0 disables. Does not change follow gap."),
+      param="TrafficStopLead",
+      min_value=0, max_value=500, value_change_step=50,
+      use_float_scaling=True,
+      label_callback=lambda x: f"{x / 100:.1f} m",
+      inline=True,
+      fallback=1.5)
+
     self.iqlink_toggle = toggle_item_sp(
       title=tr("IQ-link"),
-      description=tr("Phone BLE nav (amapauto / IQ-link). Pair once, PSK 999999. Green at a light waits for the lead to move when one is close."),
+      description=tr("Follow phone nav over Wi‑Fi UDP (PSK 999999). BLE is off by default. Off = do not control from nav; the car still listens for UDP. Green at a light waits for a close lead to move."),
       param="IqlinkEnabled")
+
+    self.cut_toggle = toggle_item_sp(
+      title=tr("Unprotected Turn Assist"),
+      description=tr(
+        "Cautious left: near the corner cap ~12 km/h, hold when stopped, HUD「看对向」. "
+        "Never auto-accept a gap. Gas / near lead / nav green exit. Default on."
+      ),
+      param="UnprotectedTurnAssist")
 
     self.ecoflow_toggle = toggle_item_sp(
       title=tr("EcoFlow 12V"),
@@ -128,7 +146,9 @@ class CruiseLayout(Widget):
       self.custom_acc_long_increment,
       self.gas_sync_toggle,
       self.traffic_stop_offset,
+      self.traffic_stop_lead,
       self.iqlink_toggle,
+      self.cut_toggle,
       self.ecoflow_toggle,
       self.ecoflow_recover_btn,
       self.sla_settings_button,
@@ -185,6 +205,7 @@ class CruiseLayout(Widget):
         self.scc_m_toggle.action_item.set_enabled(True)
         self.gas_sync_toggle.action_item.set_enabled(has_long and not ui_state.CP.pcmCruise)
         self.traffic_stop_offset.action_item.set_enabled(has_long)
+        self.traffic_stop_lead.action_item.set_enabled(has_long)
       else:
         ui_state.params.remove("CustomAccIncrementsEnabled")
         ui_state.params.remove("DynamicExperimentalControl")
@@ -196,6 +217,7 @@ class CruiseLayout(Widget):
         self.scc_m_toggle.action_item.set_enabled(False)
         self.gas_sync_toggle.action_item.set_enabled(False)
         self.traffic_stop_offset.action_item.set_enabled(False)
+        self.traffic_stop_lead.action_item.set_enabled(False)
 
     else:
       has_icbm = has_long = False

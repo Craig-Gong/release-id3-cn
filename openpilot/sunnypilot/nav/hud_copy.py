@@ -52,6 +52,10 @@ SOLID_LINE_BLOCK = "实线·不可变道"
 LINE_TYPE_UNKNOWN = "线型未知"
 DASHED_LINE_HINT = "虚线·缓变道"
 
+# Cautious unprotected left — driver must watch oncoming traffic.
+CUT_LEFT = "无保护左转"
+CUT_WATCH = "看对向"
+
 
 def overlay_font_chars() -> str:
   return "".join((
@@ -63,4 +67,5 @@ def overlay_font_chars() -> str:
     STRAIGHT_HINT, EXIT_HINT, ARRIVE_HINT, ENTER_PREFIX, REMAIN_DIST, REMAIN_TIME,
     NAV_GOAL, DETAIL_SEP, EGPU_HEAD, EGPU_DETAIL, EGPU_DC,
     SOLID_LINE_BLOCK, LINE_TYPE_UNKNOWN, DASHED_LINE_HINT,
+    CUT_LEFT, CUT_WATCH,
   ))
