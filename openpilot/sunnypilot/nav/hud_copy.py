@@ -52,9 +52,13 @@ SOLID_LINE_BLOCK = "实线·不可变道"
 LINE_TYPE_UNKNOWN = "线型未知"
 DASHED_LINE_HINT = "虚线·缓变道"
 
-# Cautious unprotected left — driver must watch oncoming traffic.
+# Cautious unprotected turns — never claim gap/pedestrian detection.
 CUT_LEFT = "无保护左转"
-CUT_WATCH = "看对向"
+CUT_LEFT_WATCH = "看对向"
+CUT_RIGHT = "右转让行"
+CUT_RIGHT_WATCH = "看行人"
+# Back-compat alias (older HUD readers).
+CUT_WATCH = CUT_LEFT_WATCH
 
 
 def overlay_font_chars() -> str:
@@ -67,5 +71,5 @@ def overlay_font_chars() -> str:
     STRAIGHT_HINT, EXIT_HINT, ARRIVE_HINT, ENTER_PREFIX, REMAIN_DIST, REMAIN_TIME,
     NAV_GOAL, DETAIL_SEP, EGPU_HEAD, EGPU_DETAIL, EGPU_DC,
     SOLID_LINE_BLOCK, LINE_TYPE_UNKNOWN, DASHED_LINE_HINT,
-    CUT_LEFT, CUT_WATCH,
+    CUT_LEFT, CUT_LEFT_WATCH, CUT_RIGHT, CUT_RIGHT_WATCH,
   ))

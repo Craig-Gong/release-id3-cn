@@ -119,8 +119,9 @@ class CruiseLayout(Widget):
     self.cut_toggle = toggle_item_sp(
       title=tr("Unprotected Turn Assist"),
       description=tr(
-        "Cautious left: near the corner cap ~12 km/h, hold when stopped, HUD「看对向」. "
-        "Never auto-accept a gap. Gas / near lead / nav green exit. Default on."
+        "Cautious left/right: near corner ~12 km/h, hold when stopped. "
+        "Left HUD「看对向」; right「看行人」(incl. red RTOR yield). "
+        "Never auto-accept a gap. Gas / near lead exit. Default on."
       ),
       param="UnprotectedTurnAssist")
 
