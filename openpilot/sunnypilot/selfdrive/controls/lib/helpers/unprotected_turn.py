@@ -1,10 +1,14 @@
 """Cautious Unprotected Turn (CUT): slow/hold/remind — never gap-accept.
 
-Practical refinements vs first draft:
+Covers left (oncoming) and right (pedestrians / cross traffic / RTOR yield).
+
+Practical:
   - Speed cap only near the corner (≤50 m or creep), not from 80 m.
-  - Hold only at standstill so the car can still creep to see oncoming traffic.
+  - Hold only at standstill so the car can still creep to peek.
   - Near lead ≤12 m → follow-car mode (CUT off).
-  - Gas / nav green go / right blinker / highway LC → immediate exit.
+  - Gas / opposite blinker / highway LC → immediate exit.
+  - Right + circular red (RTOR): keep hold until gas — do not treat remain_go as clear.
+  - Never re-arms nav sticky red; RTOR exemption in protocol/standstill stays.
 """
 from __future__ import annotations
 
@@ -24,15 +28,15 @@ CUT_SHM_PATH = "/dev/shm/sp_cut.json"
 
 NEAR_LEAD_M = 12.0
 NAV_ARM_M = 80.0          # arm intent / HUD
-NAV_CAP_M = 50.0          # apply 12 km/h cap
+NAV_CAP_M = 50.0          # apply 12 km/h cap (aligns with RTOR window)
 TURN_TRIGGER_MPS = 45.0 * CV.KPH_TO_MS
 WAIT_CAP_MS = 12.0 * CV.KPH_TO_MS
-CREEP_V_MPS = 3.0         # below this, cap applies even without near TBT
+CREEP_V_MPS = 3.0
 WEAK_V_MPS = 25.0 * CV.KPH_TO_MS
 HIGHWAY_LIMIT_MS = 70.0 * CV.KPH_TO_MS
 HIGHWAY_SPEED_MS = 65.0 * CV.KPH_TO_MS
 STEER_IN_DEG = 20.0
-PATH_LEFT_M = 1.8
+PATH_SIDE_M = 1.8
 PATH_RANGE_MIN_M = 10.0
 PATH_RANGE_MAX_M = 40.0
 LC_STARTING = 2
@@ -43,6 +47,7 @@ STANDSTILL_V = 0.5
 @dataclass(frozen=True)
 class CutDecision:
   active: bool = False
+  side: str = ""          # "left" | "right" | ""
   v_cap_ms: float | None = None
   hold: bool = False
   hud: bool = False
@@ -53,6 +58,7 @@ class CutDecision:
 class CutSnapshot:
   ts: float = 0.0
   active: bool = False
+  side: str = ""
   hold: bool = False
   hud: bool = False
   reason: str = ""
@@ -110,7 +116,8 @@ def read_cut_snapshot(path: str = CUT_SHM_PATH, *, now: float | None = None) -> 
   return snap
 
 
-def _path_left_m(path_x, path_y) -> float | None:
+def _path_side_m(path_x, path_y, *, left: bool) -> float | None:
+  """Peak lateral offset toward the turn side in the near path window."""
   if path_x is None or path_y is None:
     return None
   xs = list(path_x)
@@ -125,29 +132,57 @@ def _path_left_m(path_x, path_y) -> float | None:
       continue
     if PATH_RANGE_MIN_M <= xf <= PATH_RANGE_MAX_M:
       # model y: left positive in openpilot car frame
-      if best is None or yf > best:
-        best = yf
+      scored = yf if left else -yf
+      if best is None or scored > best:
+        best = scored
   return best
 
 
-def _nav_left_near(snap: NavSnapshot | None, *, max_m: float) -> bool:
+def _nav_turn_near(snap: NavSnapshot | None, *, side: str, max_m: float) -> bool:
   if snap is None:
     return False
   if not bool(getattr(snap, "send_turn", False)):
     return False
-  if str(getattr(snap, "maneuver_dir", "") or "").strip().lower() != "left":
+  if str(getattr(snap, "maneuver_dir", "") or "").strip().lower() != side:
     return False
   dist = float(getattr(snap, "tbt_dist", 0.0) or 0.0)
   return 0.0 < dist <= float(max_m)
 
 
-def _nav_go_free(snap: NavSnapshot | None) -> bool:
-  """Nav confirmed go — CUT must not pin over standstill_hold release."""
+def _nav_either_near(snap: NavSnapshot | None, *, max_m: float) -> bool:
+  return _nav_turn_near(snap, side="left", max_m=max_m) or _nav_turn_near(snap, side="right", max_m=max_m)
+
+
+def _light_token(snap: NavSnapshot | None) -> str:
   if snap is None:
+    return "none"
+  return str(getattr(snap, "traffic_light", "") or "").strip().lower()
+
+
+def _rtor_red(snap: NavSnapshot | None) -> bool:
+  """Circular/main red with a near right turn (protocol RTOR exemption window)."""
+  if not _nav_turn_near(snap, side="right", max_m=NAV_CAP_M):
+    return False
+  if _light_token(snap) != "red":
+    return False
+  # Dedicated right red arrow: not RTOR — treat as normal red (standstill owns).
+  light_dir = str(getattr(snap, "light_dir", "") or "").strip().lower()
+  return light_dir != "right"
+
+
+def _nav_go_free(snap: NavSnapshot | None, *, side: str) -> bool:
+  """Nav confirmed go — CUT must not pin over standstill_hold release.
+
+  Right + circular red (RTOR): remain_go / countdown is NOT clearance to enter
+  the crosswalk — driver still yields to pedestrians / released traffic.
+  """
+  if snap is None:
+    return False
+  light = _light_token(snap)
+  if side == "right" and light == "red":
     return False
   if bool(getattr(snap, "remain_go", False)):
     return True
-  light = str(getattr(snap, "traffic_light", "") or "").strip().lower()
   return light == "green"
 
 
@@ -155,9 +190,9 @@ def _highway_blocked(snap: NavSnapshot | None, v_ego: float, posted_limit_ms: fl
   if float(posted_limit_ms) >= HIGHWAY_LIMIT_MS:
     return True
   road = float(getattr(snap, "road_limit_kph", 0.0) or 0.0) if snap is not None else 0.0
-  if road >= 70.0 and not _nav_left_near(snap, max_m=NAV_ARM_M):
+  if road >= 70.0 and not _nav_either_near(snap, max_m=NAV_ARM_M):
     return True
-  if float(v_ego) > HIGHWAY_SPEED_MS and not _nav_left_near(snap, max_m=NAV_ARM_M):
+  if float(v_ego) > HIGHWAY_SPEED_MS and not _nav_either_near(snap, max_m=NAV_ARM_M):
     return True
   return False
 
@@ -189,7 +224,9 @@ class UnprotectedTurnAssist:
     snap: NavSnapshot | None = None,
     nav_go_latched: bool = False,
   ) -> CutDecision:
-    if not enabled or not cut_enabled(self._params) or gas or right_blinker:
+    if not enabled or not cut_enabled(self._params) or gas:
+      return self._publish(CutDecision(reason="off"))
+    if left_blinker and right_blinker:
       return self._publish(CutDecision(reason="off"))
     if near_lead:
       return self._publish(CutDecision(reason="lead"))
@@ -199,40 +236,78 @@ class UnprotectedTurnAssist:
       return self._publish(CutDecision(reason="fast"))
     if _highway_blocked(snap, v_ego, posted_limit_ms):
       return self._publish(CutDecision(reason="highway"))
-    if nav_go_latched or _nav_go_free(snap):
-      return self._publish(CutDecision(reason="nav_go"))
 
-    nav_arm = _nav_left_near(snap, max_m=NAV_ARM_M)
-    nav_cap = _nav_left_near(snap, max_m=NAV_CAP_M)
-    path_left = _path_left_m(path_x, path_y)
-    turning_in = abs(float(steering_angle_deg)) >= STEER_IN_DEG or (
-      path_left is not None and path_left >= PATH_LEFT_M
-    )
-    weak = (
-      bool(left_blinker) and not bool(right_blinker)
-      and not nav_arm
+    nav_left = _nav_turn_near(snap, side="left", max_m=NAV_ARM_M)
+    nav_right = _nav_turn_near(snap, side="right", max_m=NAV_ARM_M)
+    # Nav maneuver wins; else weak stalk+turn-in.
+    if nav_left and not nav_right:
+      side = "left"
+      nav_arm = True
+    elif nav_right and not nav_left:
+      side = "right"
+      nav_arm = True
+    else:
+      side = ""
+      nav_arm = False
+
+    steer = float(steering_angle_deg)
+    path_left = _path_side_m(path_x, path_y, left=True)
+    path_right = _path_side_m(path_x, path_y, left=False)
+    turning_left = steer >= STEER_IN_DEG or (path_left is not None and path_left >= PATH_SIDE_M)
+    turning_right = steer <= -STEER_IN_DEG or (path_right is not None and path_right >= PATH_SIDE_M)
+
+    weak_left = (
+      not nav_arm
+      and bool(left_blinker) and not bool(right_blinker)
       and float(v_ego) < WEAK_V_MPS
-      and turning_in
+      and turning_left
     )
-    if not nav_arm and not weak:
+    weak_right = (
+      not nav_arm
+      and bool(right_blinker) and not bool(left_blinker)
+      and float(v_ego) < WEAK_V_MPS
+      and turning_right
+    )
+    if not side:
+      if weak_left:
+        side = "left"
+      elif weak_right:
+        side = "right"
+
+    if not side:
       return self._publish(CutDecision(reason="no_intent"))
 
-    active = True
-    reason = "nav_left" if nav_arm else "weak_left"
+    # Opposite blinker cancels that side (LC intent / cancel).
+    if side == "left" and right_blinker:
+      return self._publish(CutDecision(reason="off"))
+    if side == "right" and left_blinker:
+      return self._publish(CutDecision(reason="off"))
+
+    if nav_go_latched or _nav_go_free(snap, side=side):
+      return self._publish(CutDecision(reason="nav_go"))
+
+    nav_cap = _nav_turn_near(snap, side=side, max_m=NAV_CAP_M)
+    weak = (side == "left" and weak_left) or (side == "right" and weak_right)
+    reason = f"nav_{side}" if nav_arm else f"weak_{side}"
     creep = bool(standstill) or float(v_ego) <= CREEP_V_MPS
-    # Cap near the corner (≤50 m) or while creeping under an armed left TBT / weak turn.
+    # Cap near corner, or creeping under arm / weak turn-in.
     apply_cap = bool(nav_cap or (weak and creep) or (creep and nav_arm))
+    # RTOR red: always allow cap/hold once armed at ≤50 m (even if still rolling > creep).
+    if side == "right" and _rtor_red(snap):
+      apply_cap = True
     v_cap = WAIT_CAP_MS if apply_cap else None
-    # Hold only when stopped under apply_cap — rolling creep stays free to peek.
     hold = bool(apply_cap and (standstill or float(v_ego) <= STANDSTILL_V))
-    hud = bool(active and (hold or nav_cap or weak))
-    return self._publish(CutDecision(active=active, v_cap_ms=v_cap, hold=hold, hud=hud, reason=reason))
+    hud = bool(hold or nav_cap or weak or (side == "right" and _rtor_red(snap)))
+    return self._publish(CutDecision(
+      active=True, side=side, v_cap_ms=v_cap, hold=hold, hud=hud, reason=reason,
+    ))
 
   def _publish(self, decision: CutDecision) -> CutDecision:
     self._last = decision
     write_cut_snapshot(CutSnapshot(
       ts=time.monotonic(),
       active=bool(decision.active),
+      side=str(decision.side or ""),
       hold=bool(decision.hold),
       hud=bool(decision.hud),
       reason=str(decision.reason or ""),

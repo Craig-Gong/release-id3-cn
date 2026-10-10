@@ -4,9 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from openpilot.sunnypilot.nav.hud_copy import (
-  CUT_LEFT, CUT_WATCH, FOLLOW_LEAD, GO_AHEAD, NAV_EMPTY, NO_SIGNAL, STOP_AHEAD,
-  STOP_GREEN, STOP_RED, STOP_YELLOW, STRAIGHT_AHEAD, STRAIGHT_LANE, WAIT_DETECT,
-  WAIT_PAIR, WATCH_AHEAD,
+  CUT_LEFT, CUT_LEFT_WATCH, CUT_RIGHT, CUT_RIGHT_WATCH, FOLLOW_LEAD, GO_AHEAD,
+  NAV_EMPTY, NO_SIGNAL, STOP_AHEAD, STOP_GREEN, STOP_RED, STOP_YELLOW,
+  STRAIGHT_AHEAD, STRAIGHT_LANE, WAIT_DETECT, WAIT_PAIR, WATCH_AHEAD,
 )
 from openpilot.sunnypilot.nav.protocol import format_tbt_capsule, lane_hint
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, nav_light_dist
@@ -150,12 +150,14 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
       detail = WATCH_AHEAD
     return JunctionView(True, light, headline, detail, False, False, dist, remain)
 
-  # Cautious unprotected left (no lead, not in a hard stop bar).
+  # Cautious unprotected left/right (no lead, not in a hard stop bar).
   try:
     from openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn import read_cut_snapshot
     cut = read_cut_snapshot()
     if cut.hud and not has_lead:
-      return JunctionView(True, "none", CUT_LEFT, CUT_WATCH, False, False)
+      if str(cut.side or "") == "right":
+        return JunctionView(True, "none", CUT_RIGHT, CUT_RIGHT_WATCH, False, False)
+      return JunctionView(True, "none", CUT_LEFT, CUT_LEFT_WATCH, False, False)
   except Exception:
     pass
 
