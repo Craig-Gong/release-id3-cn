@@ -36,6 +36,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import (
   build_junction_view,
   build_lane_guide_view,
 )
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_cruise_policy import (
+  read_policy_hud,
+)
 from openpilot.sunnypilot.system.ecoflow.status import ecoflow_dc_label, read_status
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.text_measure import measure_text_cached
@@ -110,6 +113,7 @@ class JunctionHudRenderer(Widget):
     self._lane = LaneGuideView(False, "", "none", True)
     self._egpu = HudEgpuView()
     self._flash = GreenFlashState()
+    self._policy_toast = ""
     try:
       self._font_head = gui_app.font(FontWeight.UNIFONT)
       self._font_detail = gui_app.font(FontWeight.UNIFONT)
@@ -131,9 +135,14 @@ class JunctionHudRenderer(Widget):
     if ui_state.sm.recv_frame["carState"] < ui_state.started_frame:
       self._view = JunctionView(False, "none", "", "", True, False)
       self._lane = LaneGuideView(False, "", "none", True)
+      self._policy_toast = ""
       self._egpu = self._build_egpu_view(started=started)
       return
     snap = read_snapshot()
+    try:
+      self._policy_toast, _ = read_policy_hud()
+    except Exception:
+      self._policy_toast = ""
     engaged = bool(ui_state.engaged)
     has_lead = False
     model_stop = False
@@ -284,10 +293,14 @@ class JunctionHudRenderer(Widget):
       "turn_left": TURN_HINT, "turn_right": TURN_HINT,
       "straight": STRAIGHT_HINT, "exit": EXIT_HINT, "arrive": ARRIVE_HINT,
     }
-    label = NAV_GUIDE if empty else label_map.get(lane.kind, NAV_GUIDE)
+    # Policy toast (测速 / 区间 / 接近目的地) briefly owns the kicker.
+    toast = (self._policy_toast or "").strip()
+    label = toast if toast else (NAV_GUIDE if empty else label_map.get(lane.kind, NAV_GUIDE))
     body = lane.text or NAV_EMPTY
     body_fill = _LANE_EMPTY_TEXT if empty else _LANE_TEXT
-    kick_fill = _MUTED if empty else _LANE_KICK
+    kick_fill = _LANE_ACCENT if toast else (_MUTED if empty else _LANE_KICK)
+    if toast:
+      gui_app.ensure_fallback_characters(toast)
 
     text_left = signal_x + SIGNAL_W + CONTENT_GAP
     text_right = bar.x + bar.width - CAPSULE_RIGHT_PAD

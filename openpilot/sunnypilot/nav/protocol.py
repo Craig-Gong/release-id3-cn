@@ -346,6 +346,12 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
   # Partner maps NEXT_ROAD_NAME → szTBTMainText (enter); cur road → szPosRoadName.
   enter_road = (_s(data, "szTBTMainText") or _s(data, "szNearDirName")).strip()
   goal_name = _s(data, "szGoalName").strip()
+  pos_road = _s(data, "szPosRoadName").strip()
+  tbt_dist_next = _f(data, "nTBTDistNext")
+  tbt_type_next = int(_f(data, "nTBTTurnTypeNext", -1.0))
+  sdi_type = int(_f(data, "nSdiType", -1.0))
+  sdi_dist = _f(data, "nSdiDist")
+  sdi_speed = _f(data, "nSdiSpeedLimit")
 
   return NavSnapshot(
     ts=float(now),
@@ -369,6 +375,12 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
     go_dist_m=float(max(go_dist, 0.0)),
     go_time_s=float(max(go_time, 0.0)),
     goal_name=goal_name[:40],
+    pos_road_name=pos_road[:40],
+    tbt_dist_next=float(max(tbt_dist_next, 0.0)),
+    tbt_type_next=int(tbt_type_next),
+    sdi_type=int(sdi_type),
+    sdi_dist_m=float(max(sdi_dist, 0.0)),
+    sdi_speed_kph=float(max(sdi_speed, 0.0)),
     dist_ok=bool(dist_ok),
     light_ts=float(light_ts),
     light_dir=light_dir[:16],

@@ -45,6 +45,14 @@ class NavSnapshot:
   go_dist_m: float = 0.0
   go_time_s: float = 0.0
   goal_name: str = ""
+  pos_road_name: str = ""
+  # Next TBT (partner nTBT*Next) for dual-look soft caps.
+  tbt_dist_next: float = 0.0
+  tbt_type_next: int = -1
+  # Speed / interval camera (whitelist only on the phone).
+  sdi_type: int = -1
+  sdi_dist_m: float = 0.0
+  sdi_speed_kph: float = 0.0
   # Gaode 60073 carries no distance; partner APKs used to guess one from the
   # next maneuver. Only a declared real source may drive distance braking.
   dist_ok: bool = False

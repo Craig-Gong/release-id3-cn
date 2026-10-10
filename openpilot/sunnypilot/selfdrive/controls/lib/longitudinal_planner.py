@@ -15,6 +15,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.dec.dec import DynamicExperimen
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import junction_stop_active
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_soft_curve import nav_soft_curve_ms
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_cruise_policy import (
+  NavCruisePolicy, apply_a_pos_cap,
+)
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import (
   apply_stopped_lead_gap, follow_lead_present, lead_owns_nav_stop, read_nav_queue_lead,
   read_nav_red_lead, radar_state_readable,
@@ -68,6 +71,7 @@ class LongitudinalPlannerSP:
     self.source = LongitudinalPlanSource.cruise
     self.e2e_alerts_helper = E2EAlertsHelper()
     self.turn_prep = UrbanTurnPrep()
+    self.nav_cruise = NavCruisePolicy()
     self.traffic_stop_offset = TrafficStopOffset()
     self.standstill_hold = StandstillHold()
     self.follow_launch = FollowLaunchController()
@@ -78,6 +82,7 @@ class LongitudinalPlannerSP:
     # Nav-red a_cap slew state (jerk limit across planner frames).
     self._nav_red_a_prev: float | None = None
     self._nav_red_a_t = 0.0
+    self._nav_policy_a_pos: float | None = None
 
     self.output_v_target = 0.
     self.output_a_target = 0.
@@ -207,6 +212,7 @@ class LongitudinalPlannerSP:
     if prep_v is not None:
       self.output_v_target = min(float(self.output_v_target), float(prep_v))
     snap = snap_gate
+    self._nav_policy_a_pos = None
     if snapshot_long_ok(snap, CS.gearShifter):
       curve = nav_soft_curve_ms(snap, v_ego)
       if curve is not None:
@@ -227,8 +233,26 @@ class LongitudinalPlannerSP:
         self.output_a_target = min(float(self.output_a_target), a_cap)
       else:
         self._clear_nav_red_a()
+      # Camera / dest / dual-TBT / congestion / light accel — after soft curve.
+      try:
+        queue = read_nav_queue_lead(sm)
+        near_lead = bool(queue.present and float(queue.d_rel) <= 12.0)
+      except Exception:
+        near_lead = False
+      decision = self.nav_cruise.update(
+        snap, float(v_ego),
+        gear=CS.gearShifter,
+        has_near_lead=near_lead,
+        standstill=bool(CS.standstill),
+        gas=bool(CS.gasPressed),
+        long_enabled=bool(long_enabled),
+      )
+      if decision.v_cap_ms is not None:
+        self.output_v_target = min(float(self.output_v_target), float(decision.v_cap_ms))
+      self._nav_policy_a_pos = decision.a_pos_cap
     else:
       self._clear_nav_red_a()
+      self.nav_cruise.reset()
     return self.output_v_target, self.output_a_target
 
   def _turn_prep_speed(self, sm: messaging.SubMaster, v_ego: float, enabled: bool) -> float | None:
@@ -392,6 +416,9 @@ class LongitudinalPlannerSP:
       a_target, v_ego, stop_intent=stop_intent,
       go_latched=bool(self.standstill_hold._nav_go_latched),
       gas=bool(CS.gasPressed), right_blinker=bool(CS.rightBlinker),
+    )
+    a_target = apply_a_pos_cap(
+      a_target, self._nav_policy_a_pos, gas=bool(CS.gasPressed),
     )
     approaching = junction_stop_active(
       has_lead=has_lead,
