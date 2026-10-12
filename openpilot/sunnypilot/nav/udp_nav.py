@@ -101,7 +101,9 @@ class UdpNavServer:
         try:
           self.on_datagram(data, addr)
         except Exception:
-          _log("iqlink UDP datagram handler error")
+          import traceback
+          _log("iqlink UDP datagram handler error: " +
+               traceback.format_exc().replace("\n", " | ")[:800])
     finally:
       self.running = False
       try:

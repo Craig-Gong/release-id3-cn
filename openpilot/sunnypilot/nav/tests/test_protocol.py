@@ -122,6 +122,22 @@ def test_far_turn_hud_is_straight_ahead():
   assert lane_hint(near) == TURN_LEFT
 
 
+def test_turn_icon_without_dist_still_shows_turn_hint():
+  """amap often sends ICON with remain 0 — must not stick on 暂无导航推送."""
+  from openpilot.sunnypilot.nav.hud_copy import TURN_LEFT
+  from openpilot.sunnypilot.nav.protocol import lane_hint
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_lane_guide_view
+
+  bare = _parse({"nRoadLimitSpeed": 40, "nTBTTurnType": 1, "nTBTDist": 0,
+                 "szTBTMainText": "椒山路"})
+  assert bare is not None
+  assert bare.maneuver == "turn" and bare.send_turn is False
+  assert lane_hint(bare) == TURN_LEFT
+  view = build_lane_guide_view(onroad=True, snap=bare)
+  assert view.empty is False and view.kind == "turn_left"
+  assert view.text == TURN_LEFT
+
+
 def test_red_remain_go_keeps_stop_for_light():
   """Countdown remainS==1 must not clear head-car red stop."""
   snap = _parse({

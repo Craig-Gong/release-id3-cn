@@ -438,4 +438,16 @@ def lane_hint(snap: NavSnapshot) -> str:
   if float(snap.tbt_dist or 0.0) >= 1.0 and not snap.send_turn:
     if maneuver in ("none", "fork", "turn", "roundabout") or rec in ("none", "straight"):
       return STRAIGHT_AHEAD
+  # Partner/amap sometimes labels turn/fork with icon but nTBTDist=0 (wrong
+  # remain key or explicit 0 between ticks). Still show direction, not 暂无导航.
+  if maneuver == "turn":
+    if snap.maneuver_dir == "left":
+      return TURN_LEFT
+    if snap.maneuver_dir == "right":
+      return TURN_RIGHT
+  if maneuver == "fork":
+    if snap.maneuver_dir == "left":
+      return LANE_LEFT
+    if snap.maneuver_dir == "right":
+      return LANE_RIGHT
   return ""
