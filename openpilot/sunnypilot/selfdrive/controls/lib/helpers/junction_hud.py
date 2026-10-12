@@ -4,9 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from openpilot.sunnypilot.nav.hud_copy import (
-  CUT_LEFT, CUT_LEFT_WATCH, CUT_RIGHT, CUT_RIGHT_WATCH, FOLLOW_LEAD, GO_AHEAD,
-  NAV_EMPTY, NO_SIGNAL, STOP_AHEAD, STOP_GREEN, STOP_RED, STOP_YELLOW,
-  STRAIGHT_AHEAD, STRAIGHT_LANE, WAIT_DETECT, WAIT_PAIR, WATCH_AHEAD,
+  ARRIVE_SOON, ARRIVED, CUT_LEFT, CUT_LEFT_WATCH, CUT_RIGHT, CUT_RIGHT_WATCH,
+  EXIT_AHEAD, FOLLOW_LEAD, GO_AHEAD, LANE_LEFT, LANE_RIGHT, NAV_EMPTY, NO_SIGNAL,
+  STOP_AHEAD, STOP_GREEN, STOP_RED, STOP_YELLOW, STRAIGHT_AHEAD, STRAIGHT_LANE,
+  TURN_LEFT, TURN_RIGHT, WAIT_DETECT, WAIT_PAIR, WATCH_AHEAD,
 )
 from openpilot.sunnypilot.nav.protocol import format_tbt_capsule, lane_hint
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, nav_light_dist
@@ -66,22 +67,33 @@ def _stop_headline(light: str) -> str:
 
 
 def _lane_kind(snap: NavSnapshot, text: str) -> str:
+  # Prefer lane_hint text so far-TBT「前方直行」does not get a turn badge.
+  if text == TURN_LEFT:
+    return "turn_left"
+  if text == TURN_RIGHT:
+    return "turn_right"
+  if text == LANE_LEFT:
+    return "left"
+  if text == LANE_RIGHT:
+    return "right"
+  if text in (STRAIGHT_AHEAD, STRAIGHT_LANE):
+    return "straight"
+  if text in (EXIT_AHEAD,):
+    return "exit"
+  if text in (ARRIVE_SOON, ARRIVED):
+    return "arrive"
   rec = (snap.lane_recommend or "none").lower()
   if rec == "left":
     return "left"
   if rec == "right":
     return "right"
-  if snap.send_turn and snap.maneuver_dir == "left":
-    return "turn_left"
-  if snap.send_turn and snap.maneuver_dir == "right":
-    return "turn_right"
+  if rec == "straight":
+    return "straight"
   maneuver = (snap.maneuver or "none").lower()
   if maneuver == "exit":
     return "exit"
   if maneuver in ("arrive", "arrived"):
     return "arrive"
-  if text in (STRAIGHT_AHEAD, STRAIGHT_LANE) or rec == "straight":
-    return "straight"
   return "none"
 
 
