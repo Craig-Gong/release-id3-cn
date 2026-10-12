@@ -21,11 +21,11 @@ from openpilot.sunnypilot.nav.hud_copy import (
 from openpilot.sunnypilot.nav.hud_layout import (
   CAPSULE_GAP, CAPSULE_H, CAPSULE_RIGHT_PAD, CAPSULE_W,
   CONTENT_GAP, EGPU_DC_PILL_GAP, EGPU_DC_PILL_H, EGPU_DC_UNIT, EGPU_DC_VALUE, EGPU_DETAIL_SIZE,
-  EGPU_HEAD_SIZE, EGPU_HUD_HEIGHT, EGPU_HUD_HEIGHT_COMPACT, EGPU_PAD, EGPU_RAIL_W,
+  EGPU_HEAD_SIZE, EGPU_HUD_GAP, EGPU_HUD_HEIGHT, EGPU_HUD_HEIGHT_COMPACT, EGPU_PAD, EGPU_RAIL_W,
   EGPU_RAIL_X, EGPU_TILE_GAP, EGPU_TILE_LINE_GAP, EGPU_TILE_UNIT, EGPU_TILE_VALUE,
   HUD_CN_DETAIL, HUD_CN_STOP, LANE_BADGE_W, LANE_BODY_SIZE, LANE_CAP_NUM, LANE_CAP_UNIT,
-  LANE_CAPSULE_H, LANE_CAPSULE_TEXT_GAP, LANE_CAPSULE_W, LANE_ENTER_GAP, LANE_KICKER_SIZE,
-  LANE_TEXT_SIZE, SIGNAL_PAD_X, SIGNAL_W, HudBand,
+  LANE_CAPSULE_H, LANE_CAPSULE_TEXT_GAP, LANE_CAPSULE_W, LANE_ENTER_GAP, LANE_GUIDE_HEIGHT,
+  LANE_KICKER_SIZE, LANE_TEXT_SIZE, SIGNAL_PAD_X, SIGNAL_W, HudBand,
   dc_pill_width, egpu_status_rect, junction_bar_rect, lane_guide_rect,
 )
 from openpilot.sunnypilot.nav.snapshot import read_snapshot
@@ -258,18 +258,32 @@ class JunctionHudRenderer(Widget):
       inner_w = max(48.0, text_right - text_x)
       self._draw_copy(text_x, bar.y, inner_w, bar.height, view)
 
-      if self._lane.show:
+    # Nav card is independent of the light bar. Hiding 「跟前车」used to nest
+    # this under view.show and made the whole card vanish with the lead.
+    if self._lane.show:
+      if view.show:
         lane_band = lane_guide_rect(rect.x, rect.y, metric=metric)
-        self._draw_lane_guide(rl.Rectangle(lane_band.x, lane_band.y, lane_band.w, lane_band.h), self._lane)
+      else:
+        # No light bar: park the nav card in the junction slot.
+        slot = junction_bar_rect(rect.x, rect.y, metric=metric)
+        lane_band = HudBand(slot.x, slot.y, slot.w, float(LANE_GUIDE_HEIGHT))
+      self._draw_lane_guide(rl.Rectangle(lane_band.x, lane_band.y, lane_band.w, lane_band.h), self._lane)
 
     if self._egpu.show:
-      if view.show:
+      if view.show or self._lane.show:
         egpu_band = egpu_status_rect(
           rect.x, rect.y, metric=metric, lane_guide=self._lane.show,
           compact=not bool(self._egpu.metrics),
         )
+        if not view.show and self._lane.show:
+          # Lane occupies junction slot → eGPU sits directly under that card.
+          height = EGPU_HUD_HEIGHT if self._egpu.metrics else EGPU_HUD_HEIGHT_COMPACT
+          egpu_band = HudBand(
+            lane_band.x, lane_band.y + lane_band.h + EGPU_HUD_GAP,
+            lane_band.w, float(height),
+          )
       else:
-        # No light bar: sit in the junction slot under MAX / limit chips.
+        # No light bar / nav card: sit in the junction slot under MAX / limit chips.
         slot = junction_bar_rect(rect.x, rect.y, metric=metric)
         height = EGPU_HUD_HEIGHT if self._egpu.metrics else EGPU_HUD_HEIGHT_COMPACT
         egpu_band = HudBand(slot.x, slot.y, slot.w, float(height))
