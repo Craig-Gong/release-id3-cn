@@ -1,7 +1,8 @@
-"""Lead Approach Comfort (LAC): coast-first close, lock fade-in, follow accel cap.
+"""Lead Approach Comfort (LAC): far deadband, then lift → coast → track.
 
-Mirrors nav/vision red tiers for *moving* leads so far lock and lead-pull-away
-do not stamp the pedal. Slow/stopped leads stay on lead_comfort_stop.
+Far mild closes are left to Lead MPC (no early −0.4 stamp). LAC only engages
+when gap error / TTC says a human would ease off. Slow/stopped leads stay on
+lead_comfort_stop.
 
 Priority (caller): gas > urgent > red/CUT > LAC > MPC > follow floor.
 """
@@ -17,19 +18,22 @@ T_FOLLOW = 1.45
 MIN_SLACK_M = 0.75
 CLOSING_EPS = 0.05
 
-# Soft a_req tiers (m/s² need). Below hold → lift; below coast → glide.
-HOLD_REQ = 0.25
-COAST_REQ = 0.85
-LIFT_A = -0.40
-COAST_A = -0.75
+# Engage only when closing actually needs attention (not far light creep).
+ENGAGE_REQ = 0.45
+TTC_ENGAGE_S = 8.0
+# Soft tiers once engaged: lift (0) → coast → track −a_req.
+LIFT_REQ = 0.90
+COAST_REQ = 1.40
+LIFT_A = 0.0
+COAST_A = -0.55
 
-# Rising-edge lock: start at lift, reach full profile over LOCK_FADE_S.
+# Rising-edge lock: start at lift (0), reach full profile over LOCK_FADE_S.
 LOCK_FADE_S = 2.0
 LOCK_ABSENT_S = 0.35
 
-# Follow accel cap vs speed (slightly above empty-road soft cap).
+# Follow accel cap vs speed (slightly above empty-road; allows catching lights).
 A_FOLLOW_BP = (0.0, 10.0, 25.0, 40.0)
-A_FOLLOW_VALS = (1.0, 0.75, 0.50, 0.35)
+A_FOLLOW_VALS = (1.15, 0.90, 0.65, 0.45)
 FOLLOW_LEAD_GATE_M = 50.0
 
 # Softer positive onset while the gap is opening.
@@ -70,18 +74,20 @@ def approach_a_req(v_ego: float, d_rel: float, v_lead: float) -> float:
 
 
 def approach_accel_profile(v_ego: float, d_rel: float, v_lead: float) -> float | None:
-  """Coast-first accel cap for a moving lead. None = not closing / N/A."""
+  """Accel cap for a moving lead. None = far/mild — leave to MPC."""
   closing = max(float(v_ego) - max(float(v_lead), 0.0), 0.0)
   if closing <= CLOSING_EPS:
     return None
   a_req = approach_a_req(v_ego, d_rel, v_lead)
-  if a_req <= HOLD_REQ:
+  ttc = float(d_rel) / closing
+  # Far light creep: do not pre-brake (was −0.4 with TTC 20–40 s).
+  if a_req < ENGAGE_REQ or ttc > TTC_ENGAGE_S:
+    return None
+  if a_req <= LIFT_REQ:
     return LIFT_A
   if a_req <= COAST_REQ:
-    # Blend lift → coast as need builds.
-    w = (a_req - HOLD_REQ) / max(COAST_REQ - HOLD_REQ, 1e-3)
+    w = (a_req - LIFT_REQ) / max(COAST_REQ - LIFT_REQ, 1e-3)
     return LIFT_A + w * (COAST_A - LIFT_A)
-  # Track −a_req to hard floor. Non-urgent bite is softened by lock fade / onset.
   return max(-a_req, HARD_A_FLOOR)
 
 
@@ -139,27 +145,27 @@ class LeadApproachComfort:
     fade_w = self._update_lock(True, dt)
     a_out = float(a_target)
     urgent = lead_brake_urgent(d_rel, v_lead, a_lead, v_ego)
+    profile: float | None = None
 
-    # --- Brake: coast-first profile + lock fade (moving leads) ---
-    # Slow leads already use comfort_stop in lead_stop_safety.
+    # Moving leads: optional soft profile (None → MPC owns far closes).
     if float(v_lead) >= 1.0:
       profile = approach_accel_profile(v_ego, d_rel, v_lead)
       if profile is not None:
         if urgent:
           a_cap = profile
         else:
-          # Fade from lift toward full profile after lock.
           a_cap = LIFT_A + fade_w * (profile - LIFT_A)
         a_out = min(a_out, a_cap)
 
-    # Soften an over-aggressive MPC bite that already landed in a_target:
-    # non-urgent closing never jumps past coast in the first fade half-second.
-    if not urgent and fade_w < 0.5:
+    # Soften speculative hard bites only while the physics profile is still
+    # lift/coast. If profile already asks for more than coast (or stop_safety
+    # already stamped it), do not hold the pedal at COAST for ~1 s — that
+    # delayed real cut-ins (e.g. 20→12 @25–35 m, TTC just above urgent).
+    if not urgent and fade_w < 0.5 and (profile is None or profile >= COAST_A - 1e-6):
       closing = float(v_ego) - max(float(v_lead), 0.0)
       if closing > CLOSING_EPS and a_out < COAST_A:
         a_out = max(a_out, COAST_A)
 
-    # --- Accel: follow cap + open-gap soft onset hint ---
     opening = float(v_lead) > float(v_ego) + OPENING_V_MPS
     if a_out > 0.0:
       a_out = min(a_out, follow_accel_cap(v_ego))
