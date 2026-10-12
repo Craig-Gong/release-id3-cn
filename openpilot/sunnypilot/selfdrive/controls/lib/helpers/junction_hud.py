@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from openpilot.sunnypilot.nav.hud_copy import (
   ARRIVE_SOON, ARRIVED, CUT_LEFT, CUT_LEFT_WATCH, CUT_RIGHT, CUT_RIGHT_WATCH,
-  EXIT_AHEAD, FOLLOW_LEAD, GO_AHEAD, LANE_LEFT, LANE_RIGHT, NAV_EMPTY, NO_SIGNAL,
+  EXIT_AHEAD, GO_AHEAD, LANE_LEFT, LANE_RIGHT, NAV_EMPTY, NO_SIGNAL,
   STOP_AHEAD, STOP_GREEN, STOP_RED, STOP_YELLOW, STRAIGHT_AHEAD, STRAIGHT_LANE,
   TURN_LEFT, TURN_RIGHT, WAIT_DETECT, WAIT_PAIR, WATCH_AHEAD,
 )
@@ -144,11 +144,19 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
     standstill_hold=standstill_hold, light=light,
   )
 
-  # Lane recommend lives in LaneGuideView — never as junction detail.
-  if has_lead and (nav_red or model_stop or standstill_hold):
-    return JunctionView(True, "none", FOLLOW_LEAD, "", True, True)
+  # With a lead: only show real IQ-link light color (no 「跟前车」placeholder —
+  # it flickered against red/yellow as the queue track came and went).
+  if has_lead:
+    if light in _LIGHTS:
+      headline = _stop_headline(light)
+      dist = nav_light_dist(snap)
+      remain = float(snap.remain_s or 0.0)
+      if light == "green":
+        return JunctionView(True, light, headline, GO_AHEAD, False, False)
+      return JunctionView(True, light, headline, "", False, False, dist, remain)
+    return JunctionView(False, "none", "", "", False, False)
 
-  if green_flash and not has_lead:
+  if green_flash:
     return JunctionView(True, "green", STOP_GREEN, GO_AHEAD, False, False)
 
   if stopping:
@@ -166,7 +174,7 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
   try:
     from openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn import read_cut_snapshot
     cut = read_cut_snapshot()
-    if cut.hud and not has_lead:
+    if cut.hud:
       if str(cut.side or "") == "right":
         return JunctionView(True, "none", CUT_RIGHT, CUT_RIGHT_WATCH, False, False)
       return JunctionView(True, "none", CUT_LEFT, CUT_LEFT_WATCH, False, False)
