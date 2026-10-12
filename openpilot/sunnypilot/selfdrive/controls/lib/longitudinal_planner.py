@@ -25,6 +25,9 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead impor
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_comfort_stop import (
   BrakeOnsetLimiter, lead_brake_urgent, read_lead_kinematics,
 )
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_approach_comfort import (
+  LeadApproachComfort,
+)
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_follow_comfort import (
   AccelOnsetLimiter, FollowLaunchController,
 )
@@ -79,10 +82,12 @@ class LongitudinalPlannerSP:
     self.traffic_stop_offset = TrafficStopOffset()
     self.standstill_hold = StandstillHold()
     self.follow_launch = FollowLaunchController()
+    self.lead_approach = LeadApproachComfort()
     self.accel_onset = AccelOnsetLimiter()
     self.brake_onset = BrakeOnsetLimiter()
     # Red-light stops keep their own slew (vision 0.95/3.2, nav red).
     self._light_stop_active = False
+    self._follow_open_jerk: float | None = None
     # Nav-red a_cap slew state (jerk limit across planner frames).
     self._nav_red_a_prev: float | None = None
     self._nav_red_a_t = 0.0
@@ -346,7 +351,10 @@ class LongitudinalPlannerSP:
         bypass = bool(CS.gasPressed or CS.standstill)
       except Exception:
         bypass = True
-    out = self.accel_onset.update(a_target, v_ego, dt, bypass=bypass)
+    out = self.accel_onset.update(
+      a_target, v_ego, dt, bypass=bypass, jerk=self._follow_open_jerk,
+    )
+    self._follow_open_jerk = None
     # Keep brake limiter's memory aligned so the two half-axes share one trail.
     if self.brake_onset.a_prev is None:
       self.brake_onset.a_prev = self.accel_onset.a_prev
@@ -464,6 +472,12 @@ class LongitudinalPlannerSP:
     a_target = apply_a_pos_cap(
       a_target, self._nav_policy_a_pos, gas=bool(CS.gasPressed),
     )
+    # LAC after red/nav caps, before CUT pin: coast-first close + follow accel cap.
+    a_target = self.lead_approach.apply(
+      sm, v_ego, a_target, dt=0.05, gas=bool(CS.gasPressed),
+      light_stop=bool(self._light_stop_active),
+    )
+    self._follow_open_jerk = self.lead_approach.open_jerk
     # CUT standstill pin last — blocks follow-launch / e2e creep. Gas exits in helper.
     try:
       near_cut_lead = bool(has_lead and lead_d_rel is not None and float(lead_d_rel) <= 12.0)

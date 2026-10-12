@@ -36,11 +36,13 @@ FOLLOW_CLOSING_KILL_V = 0.40
 # Accel-onset slew (positive half-axis only). Below car-side 4.0 m/s³.
 ACCEL_JERK_ONSET = 1.2
 
-# Phase 3: ease off when the lead starts braking (human coast).
+# Ease off when the lead starts braking (human coast). Mid/highway too —
+# distance gate scales with speed so far tracks do not false-trigger.
 ANTICIPATE_A_LEAD = -0.40
 ANTICIPATE_HARD_A = -0.80
-ANTICIPATE_V_MAX = 7.0   # ~25 km/h
-ANTICIPATE_D_MAX = 25.0
+ANTICIPATE_V_MAX = 25.0   # ~90 km/h
+ANTICIPATE_D_BASE_M = 25.0
+ANTICIPATE_D_PER_V = 2.0  # +2 m per m/s ego → ~65 m at 20 m/s
 ANTICIPATE_CAP_A = 0.0
 ANTICIPATE_HARD_CAP_A = -0.35
 
@@ -103,10 +105,14 @@ def compute_follow_floor(v_ego: float, d_rel: float, v_lead: float, a_lead: floa
   return _clip(a_floor, 0.0, FOLLOW_FLOOR_SOFT_A)
 
 
+def anticipate_d_max(v_ego: float) -> float:
+  return ANTICIPATE_D_BASE_M + ANTICIPATE_D_PER_V * max(float(v_ego), 0.0)
+
+
 def compute_anticipate_cap(v_ego: float, d_rel: float, v_lead: float,
                            a_lead: float) -> float | None:
-  """Upper accel cap when the lead is decelerating in congestion (coast)."""
-  if float(v_ego) > ANTICIPATE_V_MAX or float(d_rel) > ANTICIPATE_D_MAX:
+  """Upper accel cap when the lead is decelerating (coast / lift)."""
+  if float(v_ego) > ANTICIPATE_V_MAX or float(d_rel) > anticipate_d_max(v_ego):
     return None
   if float(d_rel) < 0.5:
     return None
@@ -132,7 +138,8 @@ class AccelOnsetLimiter:
   def reset(self) -> None:
     self.a_prev = None
 
-  def update(self, a_target: float, v_ego: float, dt: float, *, bypass: bool) -> float:
+  def update(self, a_target: float, v_ego: float, dt: float, *, bypass: bool,
+             jerk: float | None = None) -> float:
     a = float(a_target)
     if bypass or self.a_prev is None or float(v_ego) < SLEW_MIN_V:
       self.a_prev = a
@@ -142,7 +149,8 @@ class AccelOnsetLimiter:
       self.a_prev = a
       return a
     start = max(self.a_prev, 0.0)
-    ceil = start + ACCEL_JERK_ONSET * max(float(dt), 1e-3)
+    rate = ACCEL_JERK_ONSET if jerk is None else min(float(jerk), ACCEL_JERK_ONSET)
+    ceil = start + rate * max(float(dt), 1e-3)
     out = min(a, ceil)
     # Never hold a negative a_prev from blocking a fresh positive request past 0
     # for more than one slew step — standstill go uses bypass.
@@ -162,10 +170,6 @@ class FollowLaunchController:
     self.confirm.reset()
 
   def apply(self, sm: Any, v_ego: float, a_target: float, dt: float = 0.05) -> float:
-    if float(v_ego) > FOLLOW_LEAD_LAUNCH_V_EGO:
-      self.confirm.reset()
-      return float(a_target)
-
     lead = read_follow_lead(sm)
     if not lead.present:
       self.confirm.reset()
@@ -173,9 +177,15 @@ class FollowLaunchController:
 
     kin = read_lead_kinematics(sm)
     a_lead = float(kin[2]) if kin is not None else 0.0
-    confirmed = self.confirm.update(lead.v_lead, dt)
-
     a_out = float(a_target)
+
+    # Above congestion launch window: only anticipate (no soft floor).
+    if float(v_ego) > FOLLOW_LEAD_LAUNCH_V_EGO:
+      self.confirm.reset()
+      a_cap = compute_anticipate_cap(v_ego, lead.d_rel, lead.v_lead, a_lead)
+      return min(a_out, a_cap) if a_cap is not None else a_out
+
+    confirmed = self.confirm.update(lead.v_lead, dt)
 
     # Critically closed: never add a positive floor. Stopped lead forbids accel.
     if lead.d_rel < STOPPED_LEAD_CREEP_M:

@@ -57,8 +57,11 @@ def test_anticipate_coasts_when_lead_brakes():
   assert soft is not None and soft <= 0.0
   hard = compute_anticipate_cap(3.0, 10.0, 3.0, -1.0)
   assert hard is not None and hard <= -0.3
-  # Above congestion window: no anticipate.
-  assert compute_anticipate_cap(10.0, 10.0, 10.0, -1.0) is None
+  # Mid-speed still anticipates inside the distance gate.
+  mid = compute_anticipate_cap(15.0, 40.0, 15.0, -1.0)
+  assert mid is not None and mid <= -0.3
+  # Far beyond speed-scaled gate: no anticipate.
+  assert compute_anticipate_cap(15.0, 120.0, 15.0, -1.0) is None
 
 
 def test_apply_follow_launch_no_longer_stamps_1_2():

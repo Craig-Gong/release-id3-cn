@@ -138,10 +138,13 @@ def apply_lead_stop_safety(sm: Any, v_ego: float, a_target: float, should_stop: 
       a_out = min(a_out, settle_cap(v_ego))
     return a_out, stop
 
-  # Moving lead: still enforce a kinematic floor when closing hard.
-  t_follow = 1.45
-  slack = max(d_rel - STOP_GAP_M - t_follow * max(v_lead, 0.0), MIN_SLACK_M)
-  if closing > 0.5:
-    a_need = -(closing * closing) / (2.0 * slack)
-    a_out = min(a_out, max(a_need, HARD_A_FLOOR))
+  # Moving lead: coast-first LAC profile (not a one-frame −closing² stamp).
+  # Urgent / hard closes still reach HARD_A_FLOOR via the profile + onset bypass.
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_approach_comfort import (
+    approach_accel_profile,
+  )
+  if closing > 0.05:
+    a_cap = approach_accel_profile(v_ego, d_rel, v_lead)
+    if a_cap is not None:
+      a_out = min(a_out, a_cap)
   return a_out, stop
