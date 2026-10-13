@@ -43,8 +43,19 @@ def update_manual_button_timers(CS: car.CarState, button_timers: dict[car.CarSta
     if button_timers[k] > 0:
       button_timers[k] += 1
 
+  swallow_set = False
+  try:
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import nav_lc_swallow_set
+    swallow_set = bool(nav_lc_swallow_set())
+  except Exception:
+    swallow_set = False
+
   for b in CS.buttonEvents:
     if b.type.raw in button_timers:
+      # Nav LC Confirm owns SET while ARMED/HOLD/EXEC — do not latch cruise timers.
+      if swallow_set and b.type == ButtonType.setCruise:
+        button_timers[b.type.raw] = 0
+        continue
       # Start/end timer and store current state on change of button pressed
       button_timers[b.type.raw] = 1 if b.pressed else 0
 

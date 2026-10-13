@@ -313,6 +313,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LaneTypeOnnx", {PERSISTENT | BACKUP, BOOL, "0"}},
     // Cautious unprotected left: slow/hold/HUD — never gap-accept (default on)
     {"UnprotectedTurnAssist", {PERSISTENT | BACKUP, BOOL, "1"}},
+    // Nav LC Confirm: button-confirmed lane change from IQ-link (default off; no EA_02)
+    {"NavLcConfirm", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"NavLcConfirmUrban", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"AutoGasSyncSpeed", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"TrafficStopOffset", {PERSISTENT | BACKUP, FLOAT, "3.0"}},
     {"TrafficStopLead", {PERSISTENT | BACKUP, FLOAT, "1.5"}},

@@ -60,6 +60,16 @@ CUT_RIGHT_WATCH = "看行人"
 # Back-compat alias (older HUD readers).
 CUT_WATCH = CUT_LEFT_WATCH
 
+# Nav LC Confirm (button) — keep short; must be in unifont atlas.
+LC_LEFT = "变道 左"
+LC_RIGHT = "变道 右"
+LC_WAIT = "变道 等待"
+LC_CONFIRM = "按 SET"
+LC_SIDE = "侧方有车"
+LC_EXEC = "变道中"
+LC_EDGE_LEFT = "已在左侧"
+LC_EDGE_RIGHT = "已在右侧"
+
 
 def overlay_font_chars() -> str:
   return "".join((
@@ -72,4 +82,5 @@ def overlay_font_chars() -> str:
     NAV_GOAL, DETAIL_SEP, EGPU_HEAD, EGPU_DETAIL, EGPU_DC,
     SOLID_LINE_BLOCK, LINE_TYPE_UNKNOWN, DASHED_LINE_HINT,
     CUT_LEFT, CUT_LEFT_WATCH, CUT_RIGHT, CUT_RIGHT_WATCH,
+    LC_LEFT, LC_RIGHT, LC_WAIT, LC_CONFIRM, LC_SIDE, LC_EXEC, LC_EDGE_LEFT, LC_EDGE_RIGHT,
   ))
