@@ -5,6 +5,7 @@ Spec locks (do not re-litigate without road-test failure):
   - SATISFIED = stable road edge | laneRecommend=straight | TBT out of window.
   - No BSM hardware → feature disabled. Default params off.
   - Highway: fork/exit. Urban (second toggle): lc_* + recommend left/right.
+  - Dist: exit ≤520 m, fork ≤380 m, urban ≤120 m; LO 80/45 (see constants).
 """
 from __future__ import annotations
 
@@ -34,27 +35,34 @@ PARAM_URBAN_KEY = "NavLcConfirmUrban"
 CONFIRM_BTN_KEY = "NavLcConfirmButton"
 NAV_LC_SHM_PATH = "/dev/shm/sp_nav_lc.json"
 
-# --- locked constants ---
+# --- locked constants (distance budget for SET-confirm LC) ---
+# Highway: one LC ≈ 3–5 s; multi-lane needs earlier first prompt + shorter
+# re-arm cooldown. At 100 km/h, 520 m ≈ 19 s → ~2 solid LCs (not 4).
+# Budget MAX_CONFIRMS=4 still covers slow/congested traffic.
+# Do NOT arm at 1–2 km (guide-sign scale) — too early / noisy.
 MAX_CONFIRMS_PER_MANEUVER = 4
 
 HWY_LIMIT_MIN_KPH = 70.0
 HWY_V_MIN = 55.0 * CV.KPH_TO_MS
 HWY_V_MAX = 120.0 * CV.KPH_TO_MS
-HWY_DIST_ENTER_LO = 80.0
-HWY_DIST_ENTER_HI = 220.0
-HWY_DIST_EXIT_HI = 280.0  # exit maneuvers only (enter upper)
-HWY_DIST_HYST_M = 15.0
-HWY_ARMED_TIMEOUT_S = 8.0
+HWY_DIST_ENTER_LO = 80.0          # below → too close to gore / missed exit
+HWY_DIST_FORK_HI = 380.0          # fork / keep-side (was 220)
+HWY_DIST_EXIT_HI = 520.0          # exit: ~国内 500 m 牌 + 2×LC 时间 (was 280)
+HWY_DIST_HYST_M = 20.0
+HWY_ARMED_TIMEOUT_S = 12.0        # long approach: wait for gap / BSM without flicker
 HWY_COOLDOWN_S = 10.0
-MULTI_COOLDOWN_S = 8.0  # still NEED after one LC
+MULTI_COOLDOWN_S = 6.0            # still NEED after one LC (was 8)
 
 URBAN_V_MIN = 25.0 * CV.KPH_TO_MS
 URBAN_V_MAX = 55.0 * CV.KPH_TO_MS
-URBAN_DIST_ENTER_LO = 40.0
-URBAN_DIST_ENTER_HI = 100.0
+URBAN_DIST_ENTER_LO = 45.0        # was 40
+URBAN_DIST_ENTER_HI = 120.0       # was 100; one LC only, not multi-lane highway
 URBAN_DIST_HYST_M = 10.0
-URBAN_ARMED_TIMEOUT_S = 5.0
+URBAN_ARMED_TIMEOUT_S = 6.0       # was 5
 URBAN_COOLDOWN_S = 12.0
+
+# Back-compat aliases (tests / callers)
+HWY_DIST_ENTER_HI = HWY_DIST_FORK_HI
 
 SATISFIED_HOLD_S = 0.5
 EDGE_BLOCK_SHOW_S = 1.5
@@ -292,7 +300,7 @@ def classify_nav_lc_intent(
     elif not (HWY_V_MIN <= float(v_ego) <= HWY_V_MAX):
       pass
     else:
-      hi = HWY_DIST_EXIT_HI if man == "exit" else HWY_DIST_ENTER_HI
+      hi = HWY_DIST_EXIT_HI if man == "exit" else HWY_DIST_FORK_HI
       lo = HWY_DIST_ENTER_LO
       if in_window:
         lo = max(0.0, lo - HWY_DIST_HYST_M)

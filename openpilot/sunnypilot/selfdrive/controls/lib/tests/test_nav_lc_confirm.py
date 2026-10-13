@@ -141,9 +141,39 @@ class TestNavLcConfirm(unittest.TestCase):
 
   def test_confirm_ignored_when_idle(self):
     a = _assist()
-    d = _dec(a, snap=_hwy_snap(dist=400), buttons=[_Btn()])  # out of window
+    d = _dec(a, snap=_hwy_snap(dist=700), buttons=[_Btn()])  # beyond exit HI 520
     self.assertEqual(d.state, "idle")
     self.assertFalse(d.start_pulse)
+
+  def test_exit_arms_at_500m(self):
+    a = _assist()
+    d = _dec(a, snap=_hwy_snap(dist=500, man="exit"))
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "highway")
+
+  def test_exit_too_far_at_600m(self):
+    a = _assist()
+    d = _dec(a, snap=_hwy_snap(dist=600, man="exit"))
+    self.assertEqual(d.state, "idle")
+    self.assertEqual(d.reason, "hwy_dist")
+
+  def test_fork_arms_at_350m(self):
+    a = _assist()
+    d = _dec(a, snap=_hwy_snap(dist=350, man="fork", send_turn=False, road=100))
+    self.assertEqual(d.state, "armed")
+
+  def test_fork_too_far_at_450m(self):
+    a = _assist()
+    d = _dec(a, snap=_hwy_snap(dist=450, man="fork", send_turn=False, road=100))
+    self.assertEqual(d.state, "idle")
+    self.assertEqual(d.reason, "hwy_dist")
+
+  def test_urban_arms_at_110m(self):
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=110, rec="left", side="left")
+    d = _dec(a, v_kph=40, snap=snap)
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "urban")
 
   def test_bsm_hold_ignores_confirm(self):
     a = _assist()
