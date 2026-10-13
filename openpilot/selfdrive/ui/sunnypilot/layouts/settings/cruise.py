@@ -125,6 +125,24 @@ class CruiseLayout(Widget):
       ),
       param="UnprotectedTurnAssist")
 
+    self.nav_lc_toggle = toggle_item_sp(
+      title=tr("Nav LC Confirm"),
+      description=tr(
+        "Highway exit/fork: HUD asks for a lane change; press SET to confirm "
+        "(while the prompt is up, SET does not change MAX / SLA). "
+        "One press = one lane. Up to 4 times per exit for multi-lane. "
+        "No auto blinker. Requires BSM. Default off. RES/Cancel unchanged."
+      ),
+      param="NavLcConfirm")
+
+    self.nav_lc_urban_toggle = toggle_item_sp(
+      title=tr("Nav LC Confirm · Urban"),
+      description=tr(
+        "Stricter city lane tips (lc + left/right recommend only). "
+        "Requires Nav LC Confirm on. Default off — enable after highway road test."
+      ),
+      param="NavLcConfirmUrban")
+
     self.ecoflow_toggle = toggle_item_sp(
       title=tr("EcoFlow 12V"),
       description=tr("Delta 3 12V DC follows KL15; delayed off after lock. While parked, use Recover eGPU to pulse 12V (USB stays). Never pulses while engaged. Credentials in /data/ecoflow_params/."),
@@ -150,6 +168,8 @@ class CruiseLayout(Widget):
       self.traffic_stop_lead,
       self.iqlink_toggle,
       self.cut_toggle,
+      self.nav_lc_toggle,
+      self.nav_lc_urban_toggle,
       self.ecoflow_toggle,
       self.ecoflow_recover_btn,
       self.sla_settings_button,

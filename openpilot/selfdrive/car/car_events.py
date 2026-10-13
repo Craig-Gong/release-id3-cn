@@ -154,7 +154,25 @@ class CarEvents:
     if CS.lowSpeedAlert:
       events.add(EventName.belowSteerSpeed)
     if CS.buttonEnable:
-      events.add(EventName.buttonEnable)
+      # Nav LC Confirm owns SET while ARMED/HOLD/EXEC — do not re-fire enable.
+      swallow_set = False
+      try:
+        from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import (
+          button_event_is_set, nav_lc_swallow_set,
+        )
+        swallow_set = bool(nav_lc_swallow_set())
+        if swallow_set:
+          # Only suppress when this enable came from SET (RES still engages).
+          set_fall = any(
+            button_event_is_set(b) and not bool(getattr(b, "pressed", True))
+            for b in (CS.buttonEvents or ())
+          )
+          if not set_fall:
+            swallow_set = False
+      except Exception:
+        swallow_set = False
+      if not swallow_set:
+        events.add(EventName.buttonEnable)
 
     # Handle cancel button presses
     for b in CS.buttonEvents:

@@ -133,6 +133,8 @@ _PREBUILT_KEY_DEFAULTS = {
   "NavAutoLaneChange": False,
   "LaneTypeOnnx": False,
   "UnprotectedTurnAssist": True,
+  "NavLcConfirm": False,
+  "NavLcConfirmUrban": False,
 }
 
 # Not in the on-device libparams yet. UI and planner share this file so the
@@ -144,6 +146,8 @@ _FILE_BACKED_PARAMS = {
   "NavAutoLaneChange": False,
   "LaneTypeOnnx": False,
   "UnprotectedTurnAssist": True,
+  "NavLcConfirm": False,
+  "NavLcConfirmUrban": False,
 }
 _FILE_BACKED_DIR = "/data/openpilot_extra_params"
 

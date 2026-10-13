@@ -15,6 +15,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import (
   nav_turn_keep_pulse_s,
   snapshot_long_ok,
 )
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import NavLcConfirmAssist
 from openpilot.sunnypilot.selfdrive.controls.lib.lane_turn_desire import LaneTurnController
 from openpilot.sunnypilot.vision.lane_type.gate import lane_type_enabled, side_is_unknown
 from openpilot.sunnypilot.vision.lane_type.hysteresis import LaneTypeGate
@@ -60,6 +61,8 @@ class DesireHelper:
     self._lane_type_gate = LaneTypeGate()
     self.solid_line_blocked = False
     self.lane_type_unknown = False
+    self.nav_lc = NavLcConfirmAssist()
+    self.nav_lc_decision = None
 
   @staticmethod
   def get_lane_change_direction(CS):
@@ -116,7 +119,44 @@ class DesireHelper:
     if not turn_active:
       self._clear_turn_desire_cycle()
 
-    if not lateral_active or self.lane_change_timer > LANE_CHANGE_TIME_MAX or self.alc.lane_change_set_timer == AutoLaneChangeMode.OFF:
+    # Nav LC Confirm (button) — update before FSM so start_pulse can inject.
+    try:
+      lc_state_i = int(self.lane_change_state)
+    except Exception:
+      lc_state_i = 0
+    try:
+      self.nav_lc_decision = self.nav_lc.update(
+        snap=snap,
+        v_ego=float(v_ego),
+        lateral_active=bool(lateral_active),
+        gear=getattr(carstate, "gearShifter", None),
+        left_blinker=bool(carstate.leftBlinker),
+        right_blinker=bool(carstate.rightBlinker),
+        left_blindspot=bool(getattr(carstate, "leftBlindspot", False)),
+        right_blindspot=bool(getattr(carstate, "rightBlindspot", False)),
+        left_edge=bool(left_edge_detected),
+        right_edge=bool(right_edge_detected),
+        brake_pressed=bool(getattr(carstate, "brakePressed", False)),
+        button_events=getattr(carstate, "buttonEvents", None),
+        turn_active=bool(turn_active),
+        light_bar_busy=False,
+        lane_change_state=lc_state_i,
+      )
+    except Exception:
+      self.nav_lc_decision = None
+
+    nav_lc_exec = bool(self.nav_lc_decision and self.nav_lc_decision.execute)
+    nav_lc_dir = str(getattr(self.nav_lc_decision, "direction", "none") or "none") if self.nav_lc_decision else "none"
+    if self.nav_lc_decision and self.nav_lc_decision.start_pulse and not turn_active and lateral_active:
+      self.lane_change_state = LaneChangeState.laneChangeStarting
+      self.lane_change_direction = (
+        LaneChangeDirection.left if nav_lc_dir == "left" else LaneChangeDirection.right
+      )
+      self.lane_change_timer = 0.0
+
+    # Stock ALC "OFF" still allows Nav LC Confirm (button path, not blinker ALC).
+    alc_off = self.alc.lane_change_set_timer == AutoLaneChangeMode.OFF
+    if not lateral_active or self.lane_change_timer > LANE_CHANGE_TIME_MAX or (alc_off and not nav_lc_exec):
       self.lane_change_state = LaneChangeState.off
       self.lane_change_direction = LaneChangeDirection.none
       self.lane_change_timer = 0.0
@@ -128,8 +168,13 @@ class DesireHelper:
         self.lane_change_direction = self.get_lane_change_direction(carstate)
 
       elif self.lane_change_state == LaneChangeState.preLaneChange:
-        # Update lane change direction
-        self.lane_change_direction = self.get_lane_change_direction(carstate)
+        # Update lane change direction (nav-LC exec keeps injected side)
+        if nav_lc_exec and nav_lc_dir in ("left", "right"):
+          self.lane_change_direction = (
+            LaneChangeDirection.left if nav_lc_dir == "left" else LaneChangeDirection.right
+          )
+        else:
+          self.lane_change_direction = self.get_lane_change_direction(carstate)
 
         torque_applied = carstate.steeringPressed and \
                          ((carstate.steeringTorque > 0 and self.lane_change_direction == LaneChangeDirection.left) or
@@ -142,30 +187,34 @@ class DesireHelper:
         going_left = self.lane_change_direction == LaneChangeDirection.left
         solid_line_blocked = self._lane_type_gate.blocks(going_left)
         self.solid_line_blocked = solid_line_blocked
-        snap = self._lane_type_gate._last_snap
+        lane_snap = self._lane_type_gate._last_snap
         self.lane_type_unknown = (
           self._lane_type_gate.enabled
           and not solid_line_blocked
-          and side_is_unknown(snap, going_left)
+          and side_is_unknown(lane_snap, going_left)
         )
 
         self.alc.update_lane_change(blindspot_detected, carstate.brakePressed)
 
         auto_lc = self.alc.auto_lane_change_allowed
-        if not one_blinker or turn_active:
+        if (not one_blinker and not nav_lc_exec) or turn_active:
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
           self.lane_change_timer = 0.0
-        elif (torque_applied or auto_lc) and not blindspot_detected and not solid_line_blocked:
+        elif (torque_applied or auto_lc or nav_lc_exec) and not blindspot_detected and not solid_line_blocked:
           self.lane_change_state = LaneChangeState.laneChangeStarting
           self.lane_change_timer = 0.0
 
       elif self.lane_change_state == LaneChangeState.laneChangeStarting:
         self.lane_change_timer += DT_MDL
+        if nav_lc_exec and nav_lc_dir in ("left", "right"):
+          self.lane_change_direction = (
+            LaneChangeDirection.left if nav_lc_dir == "left" else LaneChangeDirection.right
+          )
 
         if lane_change_prob < 0.02 and self.lane_change_timer >= LANE_CHANGE_START_TIME:
           self.lane_change_timer = 0.0
-          if one_blinker:
+          if one_blinker and not nav_lc_exec:
             self.lane_change_state = LaneChangeState.preLaneChange
             self.lane_change_direction = self.get_lane_change_direction(carstate)
           else:

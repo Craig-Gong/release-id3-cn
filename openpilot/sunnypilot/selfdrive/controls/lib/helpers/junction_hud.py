@@ -181,6 +181,15 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
   except Exception:
     pass
 
+  # Nav LC Confirm (button) — defer when stop/CUT bar owns the slot.
+  try:
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import read_nav_lc_snapshot
+    nlc = read_nav_lc_snapshot()
+    if nlc.show and nlc.head:
+      return JunctionView(True, "none", str(nlc.head), str(nlc.detail or ""), False, False)
+  except Exception:
+    pass
+
   if snap.iqlink_enabled and snap.link_ok:
     return JunctionView(True, "none", NO_SIGNAL, WAIT_DETECT, True, False)
   if snap.iqlink_enabled:

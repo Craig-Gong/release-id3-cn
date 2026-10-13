@@ -4,6 +4,10 @@ Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
+from __future__ import annotations
+
+import time
+
 import numpy as np
 
 from openpilot.cereal import custom
@@ -25,6 +29,12 @@ CRUISE_BUTTON_TIMER = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0,
 V_CRUISE_MIN = 8
 V_CRUISE_MAX = 145
 V_CRUISE_UNSET = 255
+# Human-like raise toward nav road limit; lowers stay instant for safety.
+NAV_MAX_RAISE_KPH_S = 8.0
+# After this long without an executable snapshot, hand MAX back to SLA/map.
+IQLINK_GAP_CLEAR_S = 15.0
+# Ignore sub-kph Gaode flutter when deciding a "real" posted-limit drop.
+IQLINK_LIMIT_DROP_MIN_KPH = 1.0
 
 
 def update_manual_button_timers(CS: car.CarState, button_timers: dict[car.CarState.ButtonEvent.Type, int]) -> None:
@@ -33,8 +43,19 @@ def update_manual_button_timers(CS: car.CarState, button_timers: dict[car.CarSta
     if button_timers[k] > 0:
       button_timers[k] += 1
 
+  swallow_set = False
+  try:
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import nav_lc_swallow_set
+    swallow_set = bool(nav_lc_swallow_set())
+  except Exception:
+    swallow_set = False
+
   for b in CS.buttonEvents:
     if b.type.raw in button_timers:
+      # Nav LC Confirm owns SET while ARMED/HOLD/EXEC — do not latch cruise timers.
+      if swallow_set and b.type == ButtonType.setCruise:
+        button_timers[b.type.raw] = 0
+        continue
       # Start/end timer and store current state on change of button pressed
       button_timers[b.type.raw] = 1 if b.pressed else 0
 
@@ -64,8 +85,11 @@ class VCruiseHelperSP:
     self.prev_speed_limit_final_last_kph = 0.
     self.req_plus = False
     self.req_minus = False
-    # IQ-link nav road limit → MAX (only on change so gas-sync above limit can stick)
+    # IQ-link nav road limit → MAX (gas/button override sticks until limit drops)
     self.prev_iqlink_road_limit_kph = -1.0
+    self._iqlink_max_t = 0.0
+    self._iqlink_none_since: float | None = None
+    self._iqlink_max_override = False
 
   def read_custom_set_speed_params(self) -> None:
     self.custom_acc_enabled = self.params.get_bool("CustomAccIncrementsEnabled")
@@ -132,6 +156,10 @@ class VCruiseHelperSP:
 
     return False
 
+  def mark_iqlink_cruise_override(self) -> None:
+    """Steering-wheel SET/+/- under IQ-link: do not auto-slew MAX back to nav."""
+    self._iqlink_max_override = True
+
   def _iqlink_nav_limit_kph(self) -> float | None:
     """Live IQ-link road limit (km/h), or None if link/nav not executable."""
     try:
@@ -152,14 +180,75 @@ class VCruiseHelperSP:
     return round(limit, 1)
 
   def _apply_iqlink_nav_to_max(self) -> bool:
-    """IQ-link ON: MAX follows nav road limit on change. Gas sync may raise above until next change."""
+    """IQ-link ON: MAX tracks nav road limit.
+
+    - Limit drop → set MAX immediately (safety); clears user override.
+    - Limit raise / MAX below limit → slew ~8 km/h/s unless user overrode
+      (gas above, or SET/+/-).
+    - MAX above limit (gas sync) → leave; brief executable gaps keep ownership.
+    - Unset (first engage) → snap to limit.
+    - Executable gap > IQLINK_GAP_CLEAR_S → release ownership to SLA/map.
+    """
     limit_kph = self._iqlink_nav_limit_kph()
+    now = time.monotonic()
     if limit_kph is None:
-      self.prev_iqlink_road_limit_kph = -1.0
+      self._iqlink_max_t = 0.0
+      try:
+        iqlink_on = bool(self.params.get_bool("IqlinkEnabled"))
+      except UnknownKeyName:
+        iqlink_on = False
+      if not iqlink_on:
+        self.prev_iqlink_road_limit_kph = -1.0
+        self._iqlink_none_since = None
+        # Do not clear _iqlink_max_override: Gas Sync uses the same latch under
+        # SLA (IQ-link off). Clearing here made Assist yank MAX every frame.
+        return False
+      if self.prev_iqlink_road_limit_kph >= 20.0:
+        if self._iqlink_none_since is None:
+          self._iqlink_none_since = now
+        elif (now - self._iqlink_none_since) >= IQLINK_GAP_CLEAR_S:
+          self.prev_iqlink_road_limit_kph = -1.0
+          self._iqlink_none_since = None
+          # Keep gas/button override across long BLE gaps — handing MAX to
+          # SLA/map must not yank a user-raised set speed back to the limit.
+          return False
+        return True
       return False
-    if limit_kph != self.prev_iqlink_road_limit_kph:
+
+    self._iqlink_none_since = None
+    dt = 0.05 if self._iqlink_max_t <= 0.0 else min(0.2, max(0.0, now - self._iqlink_max_t))
+    self._iqlink_max_t = now
+
+    prev = self.prev_iqlink_road_limit_kph
+    limit_changed = limit_kph != prev
+    limit_drop = bool(
+      limit_changed and prev >= 20.0 and (prev - limit_kph) >= IQLINK_LIMIT_DROP_MIN_KPH
+    )
+    unset = self.v_cruise_kph >= V_CRUISE_UNSET or self.v_cruise_kph <= 0
+    below_limit = (not unset) and self.v_cruise_kph < limit_kph
+
+    if unset:
       self.v_cruise_kph = float(np.clip(limit_kph, self.v_cruise_min, V_CRUISE_MAX))
       self.prev_iqlink_road_limit_kph = limit_kph
+      self._iqlink_max_override = False
+      return True
+
+    if limit_drop:
+      # Posted limit fell — always follow for safety (clears gas/button override).
+      self.v_cruise_kph = float(np.clip(limit_kph, self.v_cruise_min, V_CRUISE_MAX))
+      self.prev_iqlink_road_limit_kph = limit_kph
+      self._iqlink_max_override = False
+      return True
+
+    if limit_changed:
+      self.prev_iqlink_road_limit_kph = limit_kph
+
+    if below_limit and not self._iqlink_max_override:
+      step = NAV_MAX_RAISE_KPH_S * dt
+      self.v_cruise_kph = float(np.clip(
+        min(limit_kph, self.v_cruise_kph + step),
+        self.v_cruise_min, V_CRUISE_MAX,
+      ))
     return True
 
   def update_speed_limit_assist_v_cruise_non_pcm(self) -> None:
@@ -170,7 +259,16 @@ class VCruiseHelperSP:
       return
     if self.sla_state in SLA_ACTIVE_STATES and (self.prev_sla_state not in SLA_ACTIVE_STATES or
                                                 self.update_speed_limit_final_last_changed):
-      self.v_cruise_kph = np.clip(round(self.speed_limit_final_last_kph, 1), self.v_cruise_min, V_CRUISE_MAX)
+      new_kph = float(np.clip(round(self.speed_limit_final_last_kph, 1), self.v_cruise_min, V_CRUISE_MAX))
+      # Gas/button-raised MAX must stick above posted limit. Real Assist limit
+      # drops still apply (and clear the override latch).
+      if self._iqlink_max_override and self.v_cruise_kph > new_kph + 0.5:
+        prev_lim = float(self.prev_speed_limit_final_last_kph)
+        if prev_lim >= 20.0 and (prev_lim - new_kph) >= IQLINK_LIMIT_DROP_MIN_KPH:
+          self.v_cruise_kph = new_kph
+          self._iqlink_max_override = False
+      else:
+        self.v_cruise_kph = new_kph
 
     self.prev_sla_state = self.sla_state
     self.prev_speed_limit_final_last_kph = self.speed_limit_final_last_kph
