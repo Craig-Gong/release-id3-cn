@@ -128,8 +128,9 @@ class CruiseLayout(Widget):
     self.nav_lc_toggle = toggle_item_sp(
       title=tr("Nav LC Confirm"),
       description=tr(
-        "Highway exit (~80–520 m) / fork (~80–380 m): HUD asks for a lane change; "
-        "press SET to confirm (while prompt is up, SET does not change MAX / SLA). "
+        "Highway exit (~80–520 m, ≥45 km/h) / fork (~80–380 m, ≥55 km/h): "
+        "HUD asks for a lane change; press SET to confirm (while prompt is up, "
+        "SET does not change MAX / SLA). Solid line (if Lane Type on) blocks SET. "
         "One press = one lane; multi-lane re-prompts after cooldown (up to 4). "
         "No auto blinker. Requires BSM. Default off. RES/Cancel unchanged."
       ),

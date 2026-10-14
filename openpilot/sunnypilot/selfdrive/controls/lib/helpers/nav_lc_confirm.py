@@ -6,6 +6,8 @@ Spec locks (do not re-litigate without road-test failure):
   - No BSM hardware → feature disabled. Default params off.
   - Highway: fork/exit. Urban (second toggle): lc_* + recommend left/right.
   - Dist: exit ≤520 m, fork ≤380 m, urban ≤120 m; LO 80/45 (see constants).
+  - Exit v≥45 (fork≥55); exit posted limit floor 50 (fork 70) for ramp drops.
+  - Solid line: ignore SET + DesireHelper enters preLaneChange (not Starting).
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ from openpilot.common.file_params import read_file_param
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.sunnypilot.nav.hud_copy import (
   LC_CONFIRM, LC_EDGE_LEFT, LC_EDGE_RIGHT, LC_EXEC, LC_LEFT, LC_RIGHT, LC_SIDE, LC_WAIT,
+  SOLID_LINE_BLOCK,
 )
 from openpilot.sunnypilot.nav.snapshot import (
   NavSnapshot, light_executable, snapshot_executable,
@@ -42,16 +45,23 @@ NAV_LC_SHM_PATH = "/dev/shm/sp_nav_lc.json"
 # Do NOT arm at 1–2 km (guide-sign scale) — too early / noisy.
 MAX_CONFIRMS_PER_MANEUVER = 4
 
-HWY_LIMIT_MIN_KPH = 70.0
-HWY_V_MIN = 55.0 * CV.KPH_TO_MS
+HWY_LIMIT_MIN_KPH = 70.0          # fork: below → not highway band
+# Exit: Gaode often drops posted limit 100→60 near ramp; 50 keeps city
+# false "exit" out while allowing real decelerating approaches.
+HWY_EXIT_LIMIT_MIN_KPH = 50.0
+HWY_V_MIN = 55.0 * CV.KPH_TO_MS   # fork / keep-side cruise band
+# Exit: align DesireHelper LANE_CHANGE_SPEED_MIN (45). Covers decelerating
+# to ramp without arming crawl (<45) or urban false exits (road floor).
+HWY_EXIT_V_MIN = 45.0 * CV.KPH_TO_MS
 HWY_V_MAX = 120.0 * CV.KPH_TO_MS
+HWY_V_HYST_KPH = 3.0              # in-window speed hysteresis (anti flicker)
 HWY_DIST_ENTER_LO = 80.0          # below → too close to gore / missed exit
-HWY_DIST_FORK_HI = 380.0          # fork / keep-side (was 220)
-HWY_DIST_EXIT_HI = 520.0          # exit: ~国内 500 m 牌 + 2×LC 时间 (was 280)
+HWY_DIST_FORK_HI = 380.0          # fork / keep-side
+HWY_DIST_EXIT_HI = 520.0          # exit: ~国内 500 m 牌 + 2×LC 时间
 HWY_DIST_HYST_M = 20.0
 HWY_ARMED_TIMEOUT_S = 12.0        # long approach: wait for gap / BSM without flicker
 HWY_COOLDOWN_S = 10.0
-MULTI_COOLDOWN_S = 6.0            # still NEED after one LC (was 8)
+MULTI_COOLDOWN_S = 6.0            # still NEED after one LC
 
 URBAN_V_MIN = 25.0 * CV.KPH_TO_MS
 URBAN_V_MAX = 55.0 * CV.KPH_TO_MS
@@ -294,13 +304,21 @@ def classify_nav_lc_intent(
   # --- Highway: exit always; fork only when NOT urban-promoted ---
   hwy_candidate = man == "exit" or (man == "fork" and not send_turn)
   if hwy_candidate:
-    if road > 0.0 and road < HWY_LIMIT_MIN_KPH:
+    is_exit = man == "exit"
+    limit_floor = HWY_EXIT_LIMIT_MIN_KPH if is_exit else HWY_LIMIT_MIN_KPH
+    v_min = HWY_EXIT_V_MIN if is_exit else HWY_V_MIN
+    v_max = HWY_V_MAX
+    if in_window:
+      # Stay armed while easing for the ramp / brief speed noise.
+      v_min = max(0.0, v_min - HWY_V_HYST_KPH * CV.KPH_TO_MS)
+      v_max = v_max + HWY_V_HYST_KPH * CV.KPH_TO_MS
+    if road > 0.0 and road < limit_floor:
       # Low posted limit → not highway band (may still be urban below).
       pass
-    elif not (HWY_V_MIN <= float(v_ego) <= HWY_V_MAX):
+    elif not (v_min <= float(v_ego) <= v_max):
       pass
     else:
-      hi = HWY_DIST_EXIT_HI if man == "exit" else HWY_DIST_FORK_HI
+      hi = HWY_DIST_EXIT_HI if is_exit else HWY_DIST_FORK_HI
       lo = HWY_DIST_ENTER_LO
       if in_window:
         lo = max(0.0, lo - HWY_DIST_HYST_M)
@@ -308,7 +326,7 @@ def classify_nav_lc_intent(
       if lo < dist <= hi:
         return d, "highway", "ok"
       return "none", "", "hwy_dist"
-    if man == "exit":
+    if is_exit:
       # Exit failed hwy gates — do not fall through as urban lc.
       return "none", "", "hwy_gate"
 
@@ -333,14 +351,18 @@ def classify_nav_lc_intent(
   return d, "urban", "ok"
 
 
-def _hud_for(state: NavLcState, direction: str) -> NavLcHud:
+def _hud_for(state: NavLcState, direction: str, *, solid: bool = False) -> NavLcHud:
   d = _dir(direction)
   if state == NavLcState.ARMED:
     head = LC_LEFT if d == "left" else LC_RIGHT if d == "right" else ""
-    return NavLcHud(True, head, LC_CONFIRM, state.value, d)
+    detail = SOLID_LINE_BLOCK if solid else LC_CONFIRM
+    return NavLcHud(True, head, detail, state.value, d)
   if state == NavLcState.HOLD:
     return NavLcHud(True, LC_WAIT, LC_SIDE, state.value, d)
   if state == NavLcState.EXECUTING:
+    if solid:
+      head = LC_LEFT if d == "left" else LC_RIGHT if d == "right" else LC_EXEC
+      return NavLcHud(True, head, SOLID_LINE_BLOCK, state.value, d)
     return NavLcHud(True, LC_EXEC, "", state.value, d)
   if state == NavLcState.EDGE_BLOCK:
     head = LC_EDGE_LEFT if d == "left" else LC_EDGE_RIGHT if d == "right" else ""
@@ -407,10 +429,12 @@ class NavLcConfirmAssist:
     turn_active: bool = False,
     light_bar_busy: bool = False,
     lane_change_state: int = 0,
+    solid_line_blocked: bool = False,
     now: float | None = None,
   ) -> NavLcDecision:
     clock = time.monotonic() if now is None else float(now)
     start_pulse = False
+    solid = bool(solid_line_blocked)
 
     if clock - self._bsm_checked_at > 5.0 or self._enable_bsm is None:
       self._enable_bsm = _read_enable_bsm(self._params)
@@ -436,6 +460,8 @@ class NavLcConfirmAssist:
         self._budget_exhausted_key = ""
 
     # EXECUTING: drive / abort / evaluate
+    # DesireHelper: start_pulse → preLaneChange (1); promotes to Starting (2)
+    # when BSM/edge/solid clear. Stay execute=True while waiting on solid.
     if self._state == NavLcState.EXECUTING:
       d = _dir(self._direction)
       opposite = (d == "left" and right_blinker and not left_blinker) or (
@@ -455,15 +481,20 @@ class NavLcConfirmAssist:
       self._prev_lc_state = lc
       # Finished: left starting/finishing back to off, or finishing→off.
       finished = prev in (2, 3) and lc == 0
-      # Never engaged starting (inject failed) after grace → treat as done/fail.
-      never_started = prev == 0 and lc == 0 and (clock - self._exec_since) > 1.0
+      # Inject failed only if we never reached pre/starting (solid wait uses lc=1).
+      never_started = (
+        prev == 0 and lc == 0 and (clock - self._exec_since) > 1.0 and not solid
+      )
       if finished or never_started:
         self._confirms_used = min(MAX_CONFIRMS_PER_MANEUVER, self._confirms_used + 1)
         return self._after_exec(snap, left_edge, right_edge, now=clock, timed_out=False)
 
-      hud = _hud_for(NavLcState.EXECUTING, d)
+      # Waiting in preLaneChange on solid — keep execute, show solid HUD.
+      waiting_solid = solid and lc in (0, 1)
+      hud = _hud_for(NavLcState.EXECUTING, d, solid=waiting_solid)
+      reason = "solid_wait" if waiting_solid else "exec"
       return self._publish(
-        NavLcState.EXECUTING, d, execute=True, reason="exec", now=clock, hud=hud,
+        NavLcState.EXECUTING, d, execute=True, reason=reason, now=clock, hud=hud,
       )
 
     # EDGE_BLOCK toast window
@@ -534,7 +565,7 @@ class NavLcConfirmAssist:
       direction == "right" and right_blindspot
     )
 
-    # HOLD
+    # HOLD — BSM wins over solid (side traffic is harder than line paint).
     if same_bsm:
       if self._state not in (NavLcState.ARMED, NavLcState.HOLD):
         self._armed_since = clock
@@ -552,6 +583,14 @@ class NavLcConfirmAssist:
     timeout = HWY_ARMED_TIMEOUT_S if mode == "highway" else URBAN_ARMED_TIMEOUT_S
     if (clock - self._armed_since) > timeout:
       return self._enter_idle(reason="armed_timeout", now=clock)
+
+    # Solid (LaneTypeOnnx): ignore SET; DesireHelper also holds preLaneChange.
+    # Unknown/dashed/feature-off → solid=False (fail-open, same as blinker ALC).
+    if solid:
+      return self._publish(
+        NavLcState.ARMED, direction, reason="solid", now=clock,
+        hud=_hud_for(NavLcState.ARMED, direction, solid=True),
+      )
 
     if confirm_rising_edge(button_events):
       start_pulse = True

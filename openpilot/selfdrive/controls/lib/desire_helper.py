@@ -15,7 +15,11 @@ from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import (
   nav_turn_keep_pulse_s,
   snapshot_long_ok,
 )
-from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import NavLcConfirmAssist
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import (
+  NavLcConfirmAssist,
+  classify_nav_lc_intent,
+  nav_lc_urban_enabled,
+)
 from openpilot.sunnypilot.selfdrive.controls.lib.lane_turn_desire import LaneTurnController
 from openpilot.sunnypilot.vision.lane_type.gate import lane_type_enabled, side_is_unknown
 from openpilot.sunnypilot.vision.lane_type.hysteresis import LaneTypeGate
@@ -119,11 +123,29 @@ class DesireHelper:
     if not turn_active:
       self._clear_turn_desire_cycle()
 
-    # Nav LC Confirm (button) — update before FSM so start_pulse can inject.
+    # Nav LC Confirm (button) — lane-type gate first so solid blocks SET / inject.
     try:
       lc_state_i = int(self.lane_change_state)
     except Exception:
       lc_state_i = 0
+    self._update_lane_type_gate()
+    solid_for_nav = False
+    try:
+      peek_dir = "none"
+      prev_dec = self.nav_lc_decision
+      if prev_dec and str(getattr(prev_dec, "direction", "") or "") in ("left", "right"):
+        peek_dir = str(prev_dec.direction)
+      elif snap is not None:
+        peek_dir, _, _ = classify_nav_lc_intent(
+          snap,
+          v_ego=float(v_ego),
+          urban_ok=nav_lc_urban_enabled(),
+          in_window=bool(getattr(self.nav_lc, "_in_window", False)),
+        )
+      if peek_dir in ("left", "right"):
+        solid_for_nav = bool(self._lane_type_gate.blocks(peek_dir == "left"))
+    except Exception:
+      solid_for_nav = False
     try:
       self.nav_lc_decision = self.nav_lc.update(
         snap=snap,
@@ -141,14 +163,16 @@ class DesireHelper:
         turn_active=bool(turn_active),
         light_bar_busy=False,
         lane_change_state=lc_state_i,
+        solid_line_blocked=solid_for_nav,
       )
     except Exception:
       self.nav_lc_decision = None
 
     nav_lc_exec = bool(self.nav_lc_decision and self.nav_lc_decision.execute)
     nav_lc_dir = str(getattr(self.nav_lc_decision, "direction", "none") or "none") if self.nav_lc_decision else "none"
+    # Enter preLaneChange (not Starting): solid/BSM/edge re-checked in FSM below.
     if self.nav_lc_decision and self.nav_lc_decision.start_pulse and not turn_active and lateral_active:
-      self.lane_change_state = LaneChangeState.laneChangeStarting
+      self.lane_change_state = LaneChangeState.preLaneChange
       self.lane_change_direction = (
         LaneChangeDirection.left if nav_lc_dir == "left" else LaneChangeDirection.right
       )
