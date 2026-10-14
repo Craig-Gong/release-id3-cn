@@ -4,9 +4,10 @@ Spec locks (do not re-litigate without road-test failure):
   - One confirm = one LC FSM pass; multi-lane = re-arm up to MAX_CONFIRMS=4.
   - SATISFIED = stable road edge | laneRecommend=straight | TBT out of window.
   - No BSM hardware → feature disabled. Default params off.
-  - Highway: fork/exit. Urban (second toggle): lc_* + recommend left/right.
-  - Dist: exit ≤520 m, fork ≤380 m, urban ≤120 m; LO 80/45 (see constants).
-  - Exit v≥45 (fork≥55); exit posted limit floor 50 (fork 70) for ramp drops.
+  - Highway: fork/exit. Urban (second toggle): lc_* fork; dir = recommend else maneuver_dir.
+  - Dist: exit ≤520 m, fork ≤380 m, urban ≤200 m; LO 80 / urban 35 (see constants).
+  - Exit v≥45 (fork≥55); urban v≤60; exit posted limit floor 50 (fork 70).
+  - Urban fork: ignore turn_active (send_turn promote must not clear Nav LC).
   - Solid line: ignore SET + DesireHelper enters preLaneChange (not Starting).
 """
 from __future__ import annotations
@@ -64,12 +65,15 @@ HWY_COOLDOWN_S = 10.0
 MULTI_COOLDOWN_S = 6.0            # still NEED after one LC
 
 URBAN_V_MIN = 25.0 * CV.KPH_TO_MS
-URBAN_V_MAX = 55.0 * CV.KPH_TO_MS
-URBAN_DIST_ENTER_LO = 45.0        # was 40
-URBAN_DIST_ENTER_HI = 120.0       # was 100; one LC only, not multi-lane highway
-URBAN_DIST_HYST_M = 10.0
-URBAN_ARMED_TIMEOUT_S = 6.0       # was 5
-URBAN_COOLDOWN_S = 12.0
+# City express often sits 56–65; 55 blanked the whole approach. Cap 60 keeps
+# road≥70 on the highway classifier.
+URBAN_V_MAX = 60.0 * CV.KPH_TO_MS
+# ~12–18 s at 40–50 km/h to see HUD + SET; Gaode lane preview ~300 m is noisier.
+URBAN_DIST_ENTER_LO = 35.0
+URBAN_DIST_ENTER_HI = 200.0
+URBAN_DIST_HYST_M = 15.0
+URBAN_ARMED_TIMEOUT_S = 10.0
+URBAN_COOLDOWN_S = 10.0
 
 # Back-compat aliases (tests / callers)
 HWY_DIST_ENTER_HI = HWY_DIST_FORK_HI
@@ -256,7 +260,7 @@ def _maneuver_key(snap: NavSnapshot | None) -> str:
 
 
 def _read_enable_bsm(params: Params) -> bool | None:
-  """None = unknown (do not enable). True/False from CarParams."""
+  """None = unknown (do not enable). True/False from CarParams (opendbc structs)."""
   try:
     raw = params.get("CarParams")
   except Exception:
@@ -264,8 +268,9 @@ def _read_enable_bsm(params: Params) -> bool | None:
   if not raw:
     return None
   try:
-    from cereal import car
-    import cereal.messaging as messaging
+    # Same import path as controlsd — cereal.car is not available in this tree.
+    from opendbc.car.structs import car
+    import openpilot.cereal.messaging as messaging
     cp = messaging.log_from_bytes(raw, car.CarParams)
     return bool(getattr(cp, "enableBsm", False))
   except Exception:
@@ -287,16 +292,17 @@ def classify_nav_lc_intent(
     return "none", "", "link"
   man = str(getattr(snap, "maneuver", "") or "none").strip().lower()
   d = _dir(getattr(snap, "maneuver_dir", None))
+  rec = str(getattr(snap, "lane_recommend", "") or "none").strip().lower()
   if man in ("arrive", "arrived"):
     return "none", "", "arrive"
   if man == "turn":
     return "none", "", "turn"
-  if d == "none":
+  # Fork may resolve dir from laneRecommend below; exit still needs maneuver_dir.
+  if d == "none" and man != "fork":
     return "none", "", "no_dir"
 
   dist = float(getattr(snap, "tbt_dist", 0.0) or 0.0)
   road = float(getattr(snap, "road_limit_kph", 0.0) or 0.0)
-  rec = str(getattr(snap, "lane_recommend", "") or "none").strip().lower()
   send_turn = bool(getattr(snap, "send_turn", False))
   # protocol: lc_* → maneuver=fork; urban promote sets send_turn. Highway
   # fork/exit keep send_turn False. Never arm pure intersection turns here.
@@ -305,6 +311,8 @@ def classify_nav_lc_intent(
   hwy_candidate = man == "exit" or (man == "fork" and not send_turn)
   if hwy_candidate:
     is_exit = man == "exit"
+    if d == "none":
+      return "none", "", "no_dir"
     limit_floor = HWY_EXIT_LIMIT_MIN_KPH if is_exit else HWY_LIMIT_MIN_KPH
     v_min = HWY_EXIT_V_MIN if is_exit else HWY_V_MIN
     v_max = HWY_V_MAX
@@ -330,14 +338,19 @@ def classify_nav_lc_intent(
       # Exit failed hwy gates — do not fall through as urban lc.
       return "none", "", "hwy_gate"
 
-  # --- Urban: fork (often lc_*) + recommend left/right; second toggle ---
+  # --- Urban: fork (often lc_*) ; second toggle ---
+  # Dir: laneRecommend L/R wins; else maneuver_dir (Gaode often omits recommend).
+  # straight → not needed; pure turn never reaches here.
   if not urban_ok:
     return "none", "", "urban_off"
   if man != "fork":
     return "none", "", "urban_man"
-  if rec not in ("left", "right"):
+  if rec == "straight":
     return "none", "", "urban_rec"
-  d = rec  # recommend is the urban side of truth
+  if rec in ("left", "right"):
+    d = rec
+  elif d not in ("left", "right"):
+    return "none", "", "urban_rec"
   if road >= HWY_LIMIT_MIN_KPH:
     return "none", "", "urban_limit"
   if not (URBAN_V_MIN <= float(v_ego) <= URBAN_V_MAX):
@@ -467,7 +480,8 @@ class NavLcConfirmAssist:
       opposite = (d == "left" and right_blinker and not left_blinker) or (
         d == "right" and left_blinker and not right_blinker
       )
-      if brake_pressed or opposite or turn_active:
+      # Urban fork often has send_turn → nav turn desire; that must not abort LC.
+      if brake_pressed or opposite or (turn_active and self._mode != "urban"):
         self._prev_lc_state = int(lane_change_state)
         return self._enter_idle(reason="abort", now=clock)
       if (clock - self._exec_since) > EXEC_TIMEOUT_S:
@@ -512,8 +526,12 @@ class NavLcConfirmAssist:
         return self._publish(NavLcState.COOLDOWN, "none", reason="cooldown", now=clock)
       self._state = NavLcState.IDLE
 
+    # Urban lc_* is promoted to send_turn for toast/turn_prep; DesireHelper then
+    # sets turn_active. That must not clear Nav LC — only real turn maneuvers.
     if turn_active:
-      return self._enter_idle(reason="turn", now=clock)
+      man = str(getattr(snap, "maneuver", "") or "").strip().lower() if snap else ""
+      if not (urban_ok and man == "fork"):
+        return self._enter_idle(reason="turn", now=clock)
 
     cut = read_cut_snapshot(now=clock)
     if cut.hold:

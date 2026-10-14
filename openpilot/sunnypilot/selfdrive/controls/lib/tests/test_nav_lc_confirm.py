@@ -170,12 +170,25 @@ class TestNavLcConfirm(unittest.TestCase):
     self.assertEqual(d.state, "idle")
     self.assertEqual(d.reason, "hwy_dist")
 
-  def test_urban_arms_at_110m(self):
+  def test_urban_arms_at_180m(self):
     a = _assist(urban=True)
-    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=110, rec="left", side="left")
+    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=180, rec="left", side="left")
     d = _dec(a, v_kph=40, snap=snap)
     self.assertEqual(d.state, "armed")
     self.assertEqual(d.mode, "urban")
+
+  def test_urban_arms_at_200m(self):
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=200, rec="left", side="left")
+    d = _dec(a, v_kph=40, snap=snap)
+    self.assertEqual(d.state, "armed")
+
+  def test_urban_too_far_at_220m(self):
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=220, rec="left", side="left")
+    d = _dec(a, v_kph=40, snap=snap)
+    self.assertEqual(d.state, "idle")
+    self.assertEqual(d.reason, "urban_dist")
 
   def test_exit_arms_while_decelerating_50(self):
     """Exit must stay armed at 50 km/h (old HWY_V_MIN=55 gap)."""
@@ -281,6 +294,39 @@ class TestNavLcConfirm(unittest.TestCase):
     snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=60, rec="straight", side="left")
     d = _dec(a, v_kph=40, snap=snap)
     self.assertEqual(d.state, "idle")
+    self.assertEqual(d.reason, "urban_rec")
+
+  def test_urban_dir_fallback_maneuver_dir(self):
+    """Gaode often omits laneRecommend on lc_* — use maneuver_dir."""
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=120, rec="none", side="right")
+    d = _dec(a, v_kph=40, snap=snap)
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "urban")
+    self.assertEqual(d.direction, "right")
+
+  def test_urban_arms_at_58_kph(self):
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=120, rec="left", side="left")
+    d = _dec(a, v_kph=58, snap=snap)
+    self.assertEqual(d.state, "armed")
+
+  def test_urban_rejects_61_kph(self):
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=120, rec="left", side="left")
+    d = _dec(a, v_kph=61, snap=snap)
+    self.assertEqual(d.state, "idle")
+    self.assertEqual(d.reason, "urban_speed")
+
+  def test_urban_turn_active_does_not_clear(self):
+    """send_turn promote → turn_active must not kill urban Nav LC."""
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=120, rec="left", side="left")
+    d = _dec(a, v_kph=40, snap=snap, now=100.0)
+    self.assertEqual(d.state, "armed")
+    d = _dec(a, v_kph=40, snap=snap, now=100.1, turn=True)
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "urban")
 
   def test_turn_maneuver_never(self):
     a = _assist(urban=True)
@@ -293,6 +339,19 @@ class TestNavLcConfirm(unittest.TestCase):
     a._enable_bsm = False
     d = _dec(a)
     self.assertEqual(d.reason, "no_bsm")
+
+  def test_read_enable_bsm_opendbc_path(self):
+    # Regression: `from cereal import car` fails on this tree → permanent no_bsm.
+    import inspect
+    src = inspect.getsource(nlc._read_enable_bsm)
+    self.assertIn("opendbc.car.structs", src)
+    self.assertNotIn("from cereal import car", src)
+
+    class _P:
+      def get(self, _key):
+        return None
+
+    self.assertIsNone(nlc._read_enable_bsm(_P()))
 
   def test_light_bar_defers(self):
     a = _assist()
