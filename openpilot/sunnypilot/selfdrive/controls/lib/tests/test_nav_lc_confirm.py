@@ -98,7 +98,8 @@ def _hwy_snap(*, dist=150.0, side="right", man="exit", road=80.0, send_turn=Fals
 
 def _dec(a, *, now=100.0, v_kph=80.0, snap=None, lat=True, left_bsm=False, right_bsm=False,
          left_edge=False, right_edge=False, brake=False, buttons=None, turn=False,
-         light_bar=False, lc_state=0, left_blink=False, right_blink=False):
+         light_bar=False, lc_state=0, left_blink=False, right_blink=False,
+         solid=False):
   with mock.patch.object(nlc, "write_nav_lc_snapshot", lambda *args, **kwargs: None), \
        mock.patch.object(nlc, "read_cut_snapshot", lambda **kwargs: types.SimpleNamespace(hold=False, hud=False, active=False)):
     return a.update(
@@ -117,6 +118,7 @@ def _dec(a, *, now=100.0, v_kph=80.0, snap=None, lat=True, left_bsm=False, right
       turn_active=turn,
       light_bar_busy=light_bar,
       lane_change_state=lc_state,
+      solid_line_blocked=solid,
       now=now,
     )
 
@@ -174,6 +176,65 @@ class TestNavLcConfirm(unittest.TestCase):
     d = _dec(a, v_kph=40, snap=snap)
     self.assertEqual(d.state, "armed")
     self.assertEqual(d.mode, "urban")
+
+  def test_exit_arms_while_decelerating_50(self):
+    """Exit must stay armed at 50 km/h (old HWY_V_MIN=55 gap)."""
+    a = _assist()
+    d = _dec(a, v_kph=50, snap=_hwy_snap(dist=200, man="exit", road=80))
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "highway")
+
+  def test_exit_arms_with_ramp_limit_60(self):
+    """Gaode often drops posted limit near ramp — exit floor is 50."""
+    a = _assist()
+    d = _dec(a, v_kph=55, snap=_hwy_snap(dist=200, man="exit", road=60))
+    self.assertEqual(d.state, "armed")
+
+  def test_exit_rejects_city_limit_40(self):
+    a = _assist()
+    d = _dec(a, v_kph=50, snap=_hwy_snap(dist=200, man="exit", road=40))
+    self.assertEqual(d.state, "idle")
+    self.assertEqual(d.reason, "hwy_gate")
+
+  def test_exit_rejects_below_45(self):
+    a = _assist()
+    d = _dec(a, v_kph=44, snap=_hwy_snap(dist=200, man="exit", road=80))
+    self.assertEqual(d.state, "idle")
+    self.assertEqual(d.reason, "hwy_gate")
+
+  def test_fork_still_requires_55(self):
+    a = _assist()
+    d = _dec(a, v_kph=50, snap=_hwy_snap(dist=200, man="fork", send_turn=False, road=100))
+    self.assertEqual(d.state, "idle")
+    # Fork fails hwy speed → falls through (not exit); urban off by default.
+    self.assertEqual(d.reason, "urban_off")
+
+  def test_solid_blocks_confirm(self):
+    a = _assist()
+    _dec(a, now=100.0)
+    d = _dec(a, now=100.1, solid=True, buttons=[_Btn()])
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.reason, "solid")
+    self.assertFalse(d.start_pulse)
+    self.assertIn("实线", d.hud.detail)
+
+  def test_bsm_priority_over_solid(self):
+    a = _assist()
+    d = _dec(a, now=100.0, right_bsm=True, solid=True)
+    self.assertEqual(d.state, "hold")
+    self.assertEqual(d.reason, "bsm")
+
+  def test_exec_waits_on_solid_prelane(self):
+    a = _assist()
+    _dec(a, now=100.0)
+    d = _dec(a, now=100.1, buttons=[_Btn()])
+    self.assertTrue(d.start_pulse)
+    # DesireHelper parks in preLaneChange (1) while solid
+    d = _dec(a, now=100.2, lc_state=1, solid=True)
+    self.assertEqual(d.state, "executing")
+    self.assertTrue(d.execute)
+    self.assertEqual(d.reason, "solid_wait")
+    self.assertIn("实线", d.hud.detail)
 
   def test_bsm_hold_ignores_confirm(self):
     a = _assist()
