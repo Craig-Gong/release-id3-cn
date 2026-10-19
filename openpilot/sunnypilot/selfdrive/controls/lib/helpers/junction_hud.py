@@ -144,6 +144,29 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
     standstill_hold=standstill_hold, light=light,
   )
 
+  # Unprotected-turn reminder beats green-flash and the generic stop/idle bar —
+  # except a hard red the car must obey (left red / right-arrow red). RTOR
+  # circular red has stop_for_light=False, so CUT「看行人」is the product tip.
+  try:
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn import read_cut_snapshot
+    cut = read_cut_snapshot()
+    side = str(cut.side or "").strip().lower()
+    if cut.hud and side in ("left", "right"):
+      light_dir = str(getattr(snap, "light_dir", "") or "").strip().lower()
+      hard_red_stop = bool(
+        stopping and light == "red" and (
+          side == "left" or (side == "right" and light_dir == "right")
+        )
+      )
+      if not hard_red_stop:
+        head, detail = (CUT_RIGHT, CUT_RIGHT_WATCH) if side == "right" else (CUT_LEFT, CUT_LEFT_WATCH)
+        dist = nav_light_dist(snap) if (stopping or light in _LIGHTS) else 0.0
+        remain = float(snap.remain_s or 0.0) if (stopping or light in _LIGHTS) else 0.0
+        light_out = light if light in _LIGHTS else "none"
+        return JunctionView(True, light_out, head, detail, False, False, dist, remain)
+  except Exception:
+    pass
+
   if green_flash:
     return JunctionView(True, "green", STOP_GREEN, GO_AHEAD, False, False)
 
@@ -157,17 +180,6 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
     if dist < 1.0 and remain < 1.0 and light == "none":
       detail = WATCH_AHEAD
     return JunctionView(True, light, headline, detail, False, False, dist, remain)
-
-  # Cautious unprotected left/right (no lead, not in a hard stop bar).
-  try:
-    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn import read_cut_snapshot
-    cut = read_cut_snapshot()
-    if cut.hud:
-      if str(cut.side or "") == "right":
-        return JunctionView(True, "none", CUT_RIGHT, CUT_RIGHT_WATCH, False, False)
-      return JunctionView(True, "none", CUT_LEFT, CUT_LEFT_WATCH, False, False)
-  except Exception:
-    pass
 
   # Nav LC Confirm — must show with a lead. Highway/city cruise almost always
   # has leadOne; the old early return hid 「变道 · 按 SET」forever while the

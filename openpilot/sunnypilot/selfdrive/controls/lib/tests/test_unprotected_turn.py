@@ -56,9 +56,10 @@ def _assist(on=True) -> ut.UnprotectedTurnAssist:
 
 
 def _turn_snap(dist_m: float, *, side="left", remain_go=False, light="none",
-               light_dir="none") -> NavSnapshot:
+               light_dir="none", maneuver="turn") -> NavSnapshot:
   return NavSnapshot(
     send_turn=True,
+    maneuver=str(maneuver),
     maneuver_dir=str(side),
     tbt_dist=float(dist_m),
     remain_go=bool(remain_go),
@@ -142,17 +143,40 @@ class TestUnprotectedTurn(unittest.TestCase):
     d = _dec(a, snap=_turn_snap(35.0, side="right"), gas=True, standstill=True)
     self.assertFalse(d.active)
 
-  def test_left_green_exits(self):
+  def test_left_green_reminds_without_hold(self):
+    """Green disc is still unprotected: remind, but do not pin the car."""
     a = _assist()
     d = _dec(a, snap=_turn_snap(35.0, side="left", light="green"), standstill=True)
-    self.assertFalse(d.active)
-    self.assertEqual(d.reason, "nav_go")
+    self.assertTrue(d.active)
+    self.assertTrue(d.hud)
+    self.assertFalse(d.hold)
+    self.assertIsNone(d.v_cap_ms)
+    self.assertEqual(d.reason, "remind_left")
 
-  def test_right_green_exits(self):
+  def test_right_green_reminds_without_hold(self):
     a = _assist()
     d = _dec(a, snap=_turn_snap(35.0, side="right", light="green"), standstill=True)
+    self.assertTrue(d.active)
+    self.assertTrue(d.hud)
+    self.assertFalse(d.hold)
+    self.assertEqual(d.reason, "remind_right")
+
+  def test_fork_is_not_an_unprotected_turn(self):
+    a = _assist()
+    d = _dec(a, snap=_turn_snap(40.0, side="left", maneuver="fork"))
     self.assertFalse(d.active)
-    self.assertEqual(d.reason, "nav_go")
+
+  def test_maneuver_none_is_not_nav_arm(self):
+    """send_turn alone without maneuver=turn must not arm (stale / lc promote)."""
+    a = _assist()
+    d = _dec(a, snap=_turn_snap(40.0, side="left", maneuver="none"))
+    self.assertFalse(d.active)
+
+  def test_far_arm_still_shows_hud(self):
+    a = _assist()
+    d = _dec(a, v_kph=30.0, snap=_turn_snap(70.0, side="left"))
+    self.assertTrue(d.hud)
+    self.assertIsNone(d.v_cap_ms)
 
   def test_rtor_red_hold_ignores_remain_go(self):
     """Red RTOR: remain_go must NOT clear CUT — yield to pedestrians."""
@@ -237,6 +261,63 @@ class TestUnprotectedTurn(unittest.TestCase):
       snap = ut.read_cut_snapshot(path, now=100.5)
       self.assertTrue(snap.active)
       self.assertEqual(snap.side, "right")
+
+  def test_hud_green_shows_cut_not_flash(self):
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_junction_view
+    from openpilot.sunnypilot.nav.hud_copy import CUT_LEFT, CUT_LEFT_WATCH
+    snap = _turn_snap(40.0, side="left", light="green")
+    snap.iqlink_enabled = True
+    snap.link_ok = True
+    cut = types.SimpleNamespace(hud=True, hold=False, side="left")
+    with mock.patch(
+      "openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn.read_cut_snapshot",
+      return_value=cut,
+    ):
+      view = build_junction_view(
+        onroad=True, has_lead=False, model_stop=False, standstill_hold=False,
+        snap=snap, green_flash=True,
+      )
+    self.assertEqual(view.headline, CUT_LEFT)
+    self.assertEqual(view.detail, CUT_LEFT_WATCH)
+
+  def test_hud_left_red_keeps_stop_bar(self):
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_junction_view
+    from openpilot.sunnypilot.nav.hud_copy import STOP_RED, CUT_LEFT
+    snap = _turn_snap(40.0, side="left", light="red")
+    snap.iqlink_enabled = True
+    snap.link_ok = True
+    snap.stop_for_light = True
+    snap.dist_m = 25.0
+    cut = types.SimpleNamespace(hud=True, hold=True, side="left")
+    with mock.patch(
+      "openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn.read_cut_snapshot",
+      return_value=cut,
+    ):
+      view = build_junction_view(
+        onroad=True, has_lead=False, model_stop=False, standstill_hold=True,
+        snap=snap, green_flash=False,
+      )
+    self.assertEqual(view.headline, STOP_RED)
+    self.assertNotEqual(view.headline, CUT_LEFT)
+
+  def test_hud_rtor_right_shows_yield(self):
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_junction_view
+    from openpilot.sunnypilot.nav.hud_copy import CUT_RIGHT, CUT_RIGHT_WATCH
+    snap = _turn_snap(35.0, side="right", light="red")
+    snap.iqlink_enabled = True
+    snap.link_ok = True
+    snap.stop_for_light = False  # protocol RTOR exemption
+    cut = types.SimpleNamespace(hud=True, hold=True, side="right")
+    with mock.patch(
+      "openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn.read_cut_snapshot",
+      return_value=cut,
+    ):
+      view = build_junction_view(
+        onroad=True, has_lead=False, model_stop=False, standstill_hold=False,
+        snap=snap, green_flash=False,
+      )
+    self.assertEqual(view.headline, CUT_RIGHT)
+    self.assertEqual(view.detail, CUT_RIGHT_WATCH)
 
 
 if __name__ == "__main__":

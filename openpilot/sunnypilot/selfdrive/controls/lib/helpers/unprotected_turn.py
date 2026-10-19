@@ -3,11 +3,14 @@
 Covers left (oncoming) and right (pedestrians / cross traffic / RTOR yield).
 
 Practical:
-  - Speed cap only near the corner (≤50 m or creep), not from 80 m.
+  - Nav arm only when maneuver=turn + send_turn (not fork/exit/lc).
+  - HUD from ≤80 m; speed cap only near the corner (≤50 m or creep).
+  - Green / remain_go: release cap+hold, keep HUD until the turn window ends.
   - Hold only at standstill so the car can still creep to peek.
   - Near lead ≤12 m → follow-car mode (CUT off).
   - Gas / opposite blinker / highway LC → immediate exit.
   - Right + circular red (RTOR): keep hold until gas — do not treat remain_go as clear.
+  - HUD: CUT over green-flash / idle stop; left red / right-arrow red keep stop bar.
   - Never re-arms nav sticky red; RTOR exemption in protocol/standstill stays.
 """
 from __future__ import annotations
@@ -142,6 +145,10 @@ def _nav_turn_near(snap: NavSnapshot | None, *, side: str, max_m: float) -> bool
   if snap is None:
     return False
   if not bool(getattr(snap, "send_turn", False)):
+    return False
+  # Only pure intersection turns. Fork/exit/lc promote stay with Nav LC Confirm.
+  man = str(getattr(snap, "maneuver", "") or "").strip().lower()
+  if man != "turn":
     return False
   if str(getattr(snap, "maneuver_dir", "") or "").strip().lower() != side:
     return False
@@ -283,21 +290,23 @@ class UnprotectedTurnAssist:
     if side == "right" and left_blinker:
       return self._publish(CutDecision(reason="off"))
 
-    if nav_go_latched or _nav_go_free(snap, side=side):
-      return self._publish(CutDecision(reason="nav_go"))
-
     nav_cap = _nav_turn_near(snap, side=side, max_m=NAV_CAP_M)
     weak = (side == "left" and weak_left) or (side == "right" and weak_right)
+    # Green / remain_go releases the cap and standstill pin, but the reminder
+    # stays until the turn window ends. A green disc is still unprotected.
+    nav_go = bool(nav_go_latched or _nav_go_free(snap, side=side))
     reason = f"nav_{side}" if nav_arm else f"weak_{side}"
     creep = bool(standstill) or float(v_ego) <= CREEP_V_MPS
-    # Cap near corner, or creeping under arm / weak turn-in.
     apply_cap = bool(nav_cap or (weak and creep) or (creep and nav_arm))
-    # RTOR red: always allow cap/hold once armed at ≤50 m (even if still rolling > creep).
     if side == "right" and _rtor_red(snap):
       apply_cap = True
+    if nav_go:
+      apply_cap = False
+      reason = f"remind_{side}"
     v_cap = WAIT_CAP_MS if apply_cap else None
     hold = bool(apply_cap and (standstill or float(v_ego) <= STANDSTILL_V))
-    hud = bool(hold or nav_cap or weak or (side == "right" and _rtor_red(snap)))
+    # Show from the arm window (≤80 m), not only the last 50 m.
+    hud = bool(nav_arm or weak or hold or (side == "right" and _rtor_red(snap)))
     return self._publish(CutDecision(
       active=True, side=side, v_cap_ms=v_cap, hold=hold, hud=hud, reason=reason,
     ))
