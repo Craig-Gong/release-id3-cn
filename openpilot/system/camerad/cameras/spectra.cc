@@ -14,6 +14,7 @@
 
 #include "common/util.h"
 #include "common/swaglog.h"
+#include "sunnypilot/hardware/profile.h"
 #include "system/camerad/cameras/ife.h"
 #include "system/camerad/cameras/nv12_info.h"
 #include "system/camerad/cameras/spectra.h"
@@ -283,10 +284,14 @@ void SpectraCamera::camera_open(VisionIpcServer *v) {
   buf.out_img_width = sensor->frame_width / sensor->out_scale;
   buf.out_img_height = (sensor->hdr_offset > 0 ? (sensor->frame_height - sensor->hdr_offset) / 2 : sensor->frame_height) / sensor->out_scale;
 
-  // Explicit experimental opt-in; do not touch the sensor mode or cabin stream.
+  // C3XL IFE 1344x760 when env is set. Accept compile-time C3XL (onemiless
+  // 73c008bc3) OR runtime /data/hardware_profile so a missing file after
+  // reboot cannot leave camerad on 1928 while modeld expects 1344.
   const char *road_size = getenv("C3XL_IFE_ROAD_SIZE");
+  const bool c3xl_hw = sunnypilot::hardware::is_c3xl() ||
+                       util::strip(util::read_file("/data/hardware_profile")) == "c3xl";
   ife_road_resize = road_size && std::string(road_size) == "1344x760" &&
-                    util::strip(util::read_file("/data/hardware_profile")) == "c3xl" &&
+                    c3xl_hw &&
                     cc.output_type == ISP_IFE_PROCESSED && cc.camera_num < 2 &&
                     sensor->image_sensor == cereal::FrameData::ImageSensor::OX03C10 &&
                     sensor->frame_width == 1928 && sensor->frame_height == 1208;
