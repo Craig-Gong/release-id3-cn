@@ -1,13 +1,21 @@
 """Nav LC Confirm: button-confirmed lane change from IQ-link — no EA_02 / stalk.
 
+Gaode reality (amapauto ManeuverIconID → Partner remap → carrot wire):
+  - Slight L/R (4/5) and MERGE 65/66 → carrot lc → maneuver=fork (main path).
+  - Hard L/R / U-turn → turn (Nav LC ignores). Ring → roundabout (ignore).
+  - Pure left/right turn icons stay turn — never auto-LC at intersections.
+  - Highway ramp: often slight→fork while posted limit drops 100→60.
+
 Spec locks (do not re-litigate without road-test failure):
   - One confirm = one LC FSM pass; multi-lane = re-arm up to MAX_CONFIRMS=4.
   - SATISFIED = stable road edge | laneRecommend=straight | TBT out of window.
   - No BSM hardware → feature disabled. Default params off.
-  - Highway: fork/exit. Urban (second toggle): lc_* fork; dir = recommend else maneuver_dir.
-  - Dist: exit ≤520 m, fork ≤380 m, urban ≤200 m; LO 80 / urban 35 (see constants).
-  - Exit v≥45 (fork≥55); urban v≤60; exit posted limit floor 50 (fork 70).
+  - Highway: exit + fork (incl. decelerating fork band). Urban toggle: fork;
+    far turn + laneRecommend L/R = prep into turn lane; dir = recommend else dir.
+  - Dist: exit/decel-fork ≤520 m, cruise fork ≤380 m, urban ≤200 m; LO 80 / 35.
+  - Exit/decel v≥45; cruise fork v≥55; urban 25–60; exit/decel road floor 50.
   - Urban fork: ignore turn_active (send_turn promote must not clear Nav LC).
+  - Light: only stop_for_light clears (not yellow tip / non-braking red HUD).
   - Solid line: ignore SET + DesireHelper enters preLaneChange (not Starting).
 """
 from __future__ import annotations
@@ -26,9 +34,7 @@ from openpilot.sunnypilot.nav.hud_copy import (
   LC_CONFIRM, LC_EDGE_LEFT, LC_EDGE_RIGHT, LC_EXEC, LC_LEFT, LC_RIGHT, LC_SIDE, LC_WAIT,
   SOLID_LINE_BLOCK,
 )
-from openpilot.sunnypilot.nav.snapshot import (
-  NavSnapshot, light_executable, snapshot_executable,
-)
+from openpilot.sunnypilot.nav.snapshot import NavSnapshot, snapshot_executable
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import nav_long_blocked
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn import (
   read_cut_snapshot,
@@ -74,6 +80,9 @@ URBAN_DIST_ENTER_HI = 200.0
 URBAN_DIST_HYST_M = 15.0
 URBAN_ARMED_TIMEOUT_S = 10.0
 URBAN_COOLDOWN_S = 10.0
+# Pure intersection turn + laneRecommend: only prep-LC while still far from
+# the turn (nav lateral owns ≤50 m; toast/send_turn ≤150). Below this → turn.
+URBAN_TURN_PREP_LC_M = 100.0
 
 # Back-compat aliases (tests / callers)
 HWY_DIST_ENTER_HI = HWY_DIST_FORK_HI
@@ -293,40 +302,68 @@ def classify_nav_lc_intent(
   man = str(getattr(snap, "maneuver", "") or "none").strip().lower()
   d = _dir(getattr(snap, "maneuver_dir", None))
   rec = str(getattr(snap, "lane_recommend", "") or "none").strip().lower()
-  if man in ("arrive", "arrived"):
-    return "none", "", "arrive"
-  if man == "turn":
-    return "none", "", "turn"
-  # Fork may resolve dir from laneRecommend below; exit still needs maneuver_dir.
-  if d == "none" and man != "fork":
-    return "none", "", "no_dir"
-
   dist = float(getattr(snap, "tbt_dist", 0.0) or 0.0)
   road = float(getattr(snap, "road_limit_kph", 0.0) or 0.0)
   send_turn = bool(getattr(snap, "send_turn", False))
-  # protocol: lc_* → maneuver=fork; urban promote sets send_turn. Highway
-  # fork/exit keep send_turn False. Never arm pure intersection turns here.
 
-  # --- Highway: exit always; fork only when NOT urban-promoted ---
+  if man in ("arrive", "arrived"):
+    return "none", "", "arrive"
+  if man in ("roundabout", "none"):
+    return "none", "", "urban_man" if man == "roundabout" else "no_man"
+
+  # Intersection turn: never highway LC. Urban may prep-LC via laneRecommend
+  # while still far from the turn (get into the turn lane).
+  turn_prep_lc = (
+    man == "turn"
+    and urban_ok
+    and rec in ("left", "right")
+    and dist > URBAN_TURN_PREP_LC_M
+  )
+  if man == "turn" and not turn_prep_lc:
+    return "none", "", "turn"
+
+  # Fork/exit may resolve dir from laneRecommend below; exit needs a side.
+  if d == "none" and man == "exit":
+    return "none", "", "no_dir"
+  if d == "none" and man == "fork" and rec not in ("left", "right"):
+    return "none", "", "no_dir"
+  if turn_prep_lc:
+    d = rec
+
+  # --- Highway: exit; cruise fork; decelerating fork (Gaode slight near ramp) ---
+  # protocol: lc_* → fork; urban promote sets send_turn (not a hwy candidate).
   hwy_candidate = man == "exit" or (man == "fork" and not send_turn)
   if hwy_candidate:
     is_exit = man == "exit"
     if d == "none":
-      return "none", "", "no_dir"
-    limit_floor = HWY_EXIT_LIMIT_MIN_KPH if is_exit else HWY_LIMIT_MIN_KPH
-    v_min = HWY_EXIT_V_MIN if is_exit else HWY_V_MIN
+      if rec in ("left", "right"):
+        d = rec
+      else:
+        return "none", "", "no_dir"
+    # Decel band uses exit floors, but only with highway evidence:
+    # slowing while the posted limit is still ≥70, or limit already 50–69
+    # while speed is still ≥55. City 50 km/h on a 60 limit must not arm.
+    decel_band = (not is_exit) and (
+      (float(v_ego) < HWY_V_MIN and road >= HWY_LIMIT_MIN_KPH)
+      or (
+        HWY_EXIT_LIMIT_MIN_KPH <= road < HWY_LIMIT_MIN_KPH
+        and float(v_ego) >= HWY_V_MIN
+      )
+    )
+    use_exit_gates = is_exit or decel_band
+    limit_floor = HWY_EXIT_LIMIT_MIN_KPH if use_exit_gates else HWY_LIMIT_MIN_KPH
+    v_min = HWY_EXIT_V_MIN if use_exit_gates else HWY_V_MIN
     v_max = HWY_V_MAX
     if in_window:
-      # Stay armed while easing for the ramp / brief speed noise.
       v_min = max(0.0, v_min - HWY_V_HYST_KPH * CV.KPH_TO_MS)
       v_max = v_max + HWY_V_HYST_KPH * CV.KPH_TO_MS
-    if road > 0.0 and road < limit_floor:
-      # Low posted limit → not highway band (may still be urban below).
-      pass
-    elif not (v_min <= float(v_ego) <= v_max):
-      pass
-    else:
-      hi = HWY_DIST_EXIT_HI if is_exit else HWY_DIST_FORK_HI
+    # Decel fork with city-low limit (<50) is not highway — fall through urban.
+    road_ok = not (road > 0.0 and road < limit_floor)
+    # Cruise fork still requires road≥70 when not in decel band.
+    if not use_exit_gates and road > 0.0 and road < HWY_LIMIT_MIN_KPH:
+      road_ok = False
+    if road_ok and (v_min <= float(v_ego) <= v_max):
+      hi = HWY_DIST_EXIT_HI if use_exit_gates else HWY_DIST_FORK_HI
       lo = HWY_DIST_ENTER_LO
       if in_window:
         lo = max(0.0, lo - HWY_DIST_HYST_M)
@@ -337,15 +374,14 @@ def classify_nav_lc_intent(
     if is_exit:
       # Exit failed hwy gates — do not fall through as urban lc.
       return "none", "", "hwy_gate"
+    # Fork failed hwy (too slow / city limit) → urban path below.
 
-  # --- Urban: fork (often lc_*) ; second toggle ---
-  # Dir: laneRecommend L/R wins; else maneuver_dir (Gaode often omits recommend).
-  # straight → not needed; pure turn never reaches here.
+  # --- Urban: fork / far turn+recommend ; second toggle ---
   if not urban_ok:
     return "none", "", "urban_off"
-  if man != "fork":
+  if man not in ("fork", "turn"):
     return "none", "", "urban_man"
-  if rec == "straight":
+  if rec in ("straight", "mixed"):
     return "none", "", "urban_rec"
   if rec in ("left", "right"):
     d = rec
@@ -481,7 +517,11 @@ class NavLcConfirmAssist:
         d == "right" and left_blinker and not right_blinker
       )
       # Urban fork often has send_turn → nav turn desire; that must not abort LC.
-      if brake_pressed or opposite or (turn_active and self._mode != "urban"):
+      man_now = str(getattr(snap, "maneuver", "") or "").lower() if snap else ""
+      dist_now = float(getattr(snap, "tbt_dist", 0.0) or 0.0) if snap else 0.0
+      # Prep-LC must stop once the intersection turn is close.
+      near_turn = man_now == "turn" and dist_now <= URBAN_TURN_PREP_LC_M
+      if brake_pressed or opposite or near_turn or (turn_active and self._mode != "urban"):
         self._prev_lc_state = int(lane_change_state)
         return self._enter_idle(reason="abort", now=clock)
       if (clock - self._exec_since) > EXEC_TIMEOUT_S:
@@ -526,17 +566,19 @@ class NavLcConfirmAssist:
         return self._publish(NavLcState.COOLDOWN, "none", reason="cooldown", now=clock)
       self._state = NavLcState.IDLE
 
-    # Urban lc_* is promoted to send_turn for toast/turn_prep; DesireHelper then
-    # sets turn_active. That must not clear Nav LC — only real turn maneuvers.
+    # Urban lc_* / far turn+recommend promote send_turn → turn_active.
+    # That must not clear Nav LC; highway exit/fork still abort on turn_active.
     if turn_active:
       man = str(getattr(snap, "maneuver", "") or "").strip().lower() if snap else ""
-      if not (urban_ok and man == "fork"):
+      if not (urban_ok and man in ("fork", "turn")):
         return self._enter_idle(reason="turn", now=clock)
 
     cut = read_cut_snapshot(now=clock)
     if cut.hold:
       return self._enter_idle(reason="cut", now=clock)
 
+    # Only hard nav red-stop (or caller junction bar). Yellow tip / red HUD
+    # without stop_for_light must not silence urban keep-side prompts.
     if light_bar_busy or _light_bar_busy(snap, now=clock):
       if self._state in (NavLcState.ARMED, NavLcState.HOLD):
         return self._enter_idle(reason="light_bar", now=clock)
@@ -655,12 +697,12 @@ class NavLcConfirmAssist:
       return True
     if self._stable_recommend(snap, clock):
       return True
-    # TBT / intent gone — classify already failed, but double-check dist floor
+    # TBT / intent gone — use resolved direction (urban may arm from
+    # laneRecommend while maneuver_dir is still none).
     if snap is not None:
       dist = float(getattr(snap, "tbt_dist", 0.0) or 0.0)
       man = str(getattr(snap, "maneuver", "") or "").lower()
-      d = _dir(getattr(snap, "maneuver_dir", None))
-      if man in ("none", "arrive", "arrived") or d not in ("left", "right"):
+      if man in ("none", "arrive", "arrived") or _dir(direction) not in ("left", "right"):
         return True
       if dist <= 0.0:
         return True
@@ -740,11 +782,8 @@ class NavLcConfirmAssist:
 
 
 def _light_bar_busy(snap: NavSnapshot | None, *, now: float | None = None) -> bool:
+  """True only when nav is actively braking for a light (not tip-only HUD)."""
+  del now  # API compat; stop_for_light already gated in protocol
   if snap is None:
     return False
-  if bool(getattr(snap, "stop_for_light", False)):
-    return True
-  token = str(getattr(snap, "traffic_light", "") or "").strip().lower()
-  if token in ("red", "yellow") and light_executable(snap, now=now):
-    return True
-  return False
+  return bool(getattr(snap, "stop_for_light", False))

@@ -139,8 +139,8 @@ class CruiseLayout(Widget):
     self.nav_lc_urban_toggle = toggle_item_sp(
       title=tr("Nav LC Confirm · Urban"),
       description=tr(
-        "Stricter city lane tips (lc + left/right recommend only). "
-        "Requires Nav LC Confirm on. Default off — enable after highway road test."
+        "City fork/lc (≈35–200 m, ≤60 km/h): same SET confirm as highway. "
+        "Dir from laneRecommend or TBT. Requires Nav LC Confirm on. Default off."
       ),
       param="NavLcConfirmUrban")
 

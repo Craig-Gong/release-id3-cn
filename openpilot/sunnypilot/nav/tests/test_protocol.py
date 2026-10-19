@@ -59,6 +59,19 @@ def test_exit_is_not_send_turn():
   assert snap.send_turn is False
 
 
+def test_amap_merge_icons_become_fork():
+  """Raw amap MERGE_LEFT/RIGHT (65/66) → lc → fork (APK + protocol normalize)."""
+  from openpilot.sunnypilot.nav.protocol import normalize_turn_type, _turn_bucket
+  assert normalize_turn_type(65) == 3
+  assert normalize_turn_type(66) == 4
+  assert _turn_bucket(65) == "lc_left"
+  assert _turn_bucket(66) == "lc_right"
+  left = _parse({"nRoadLimitSpeed": 80, "nTBTTurnType": 65, "nTBTDist": 200})
+  right = _parse({"nRoadLimitSpeed": 80, "nTBTTurnType": 66, "nTBTDist": 200})
+  assert left is not None and left.maneuver == "fork" and left.maneuver_dir == "left"
+  assert right is not None and right.maneuver == "fork" and right.maneuver_dir == "right"
+
+
 def test_arrive_drops_send_turn():
   snap = _parse({
     "nRoadLimitSpeed": 40, "nTBTTurnType": 1, "nTBTDist": 40, "nGoPosDist": 80,

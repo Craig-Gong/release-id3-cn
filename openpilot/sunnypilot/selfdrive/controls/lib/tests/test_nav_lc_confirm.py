@@ -215,11 +215,37 @@ class TestNavLcConfirm(unittest.TestCase):
     self.assertEqual(d.state, "idle")
     self.assertEqual(d.reason, "hwy_gate")
 
-  def test_fork_still_requires_55(self):
+  def test_fork_decel_band_arms_at_50(self):
+    """Gaode slight→fork near ramp: allow exit-like floors (v≥45, road drop)."""
     a = _assist()
     d = _dec(a, v_kph=50, snap=_hwy_snap(dist=200, man="fork", send_turn=False, road=100))
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "highway")
+
+  def test_fork_decel_with_ramp_limit_60(self):
+    a = _assist()
+    d = _dec(a, v_kph=55, snap=_hwy_snap(dist=300, man="fork", send_turn=False, road=60))
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "highway")
+
+  def test_city_slight_does_not_use_highway_band(self):
+    """60 limit + 50 km/h + far fork is city, not a ramp decel."""
+    a = _assist(urban=False)
+    d = _dec(a, v_kph=50, snap=_hwy_snap(dist=200, man="fork", send_turn=False, road=60))
     self.assertEqual(d.state, "idle")
-    # Fork fails hwy speed → falls through (not exit); urban off by default.
+    self.assertEqual(d.reason, "urban_off")
+
+  def test_urban_rejects_mixed_recommend(self):
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=80, rec="mixed", side="left")
+    d = _dec(a, v_kph=40, snap=snap)
+    self.assertEqual(d.reason, "urban_rec")
+
+  def test_fork_rejects_below_45(self):
+    a = _assist()
+    d = _dec(a, v_kph=44, snap=_hwy_snap(dist=200, man="fork", send_turn=False, road=100))
+    self.assertEqual(d.state, "idle")
+    # Too slow for hwy decel → urban off (default).
     self.assertEqual(d.reason, "urban_off")
 
   def test_solid_blocks_confirm(self):
@@ -328,11 +354,26 @@ class TestNavLcConfirm(unittest.TestCase):
     self.assertEqual(d.state, "armed")
     self.assertEqual(d.mode, "urban")
 
-  def test_turn_maneuver_never(self):
+  def test_turn_maneuver_never_when_near(self):
     a = _assist(urban=True)
     snap = _hwy_snap(man="turn", send_turn=True, road=40, dist=50, rec="left", side="left")
     d = _dec(a, v_kph=35, snap=snap)
     self.assertEqual(d.reason, "turn")
+
+  def test_turn_prep_lc_via_recommend_when_far(self):
+    """Far intersection turn + laneRecommend → prep into turn lane."""
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="turn", send_turn=True, road=40, dist=150, rec="left", side="left")
+    d = _dec(a, v_kph=40, snap=snap)
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "urban")
+    self.assertEqual(d.direction, "left")
+
+  def test_yellow_tip_does_not_block(self):
+    """Tip-only yellow must not silence Nav LC (only stop_for_light)."""
+    a = _assist()
+    d = _dec(a, snap=_hwy_snap(light="yellow", stop=False))
+    self.assertEqual(d.state, "armed")
 
   def test_no_bsm_disables(self):
     a = _assist()
@@ -455,6 +496,38 @@ class TestNavLcConfirm(unittest.TestCase):
     )
     self.assertEqual(d, "none")
     self.assertEqual(why, "urban_off")
+
+  def test_satisfied_uses_resolved_dir_not_maneuver_dir(self):
+    """Urban may arm from laneRecommend while maneuver_dir is still none."""
+    a = _assist(urban=True)
+    snap = _hwy_snap(man="fork", side="none", dist=80, road=50, send_turn=True, rec="left")
+    # Resolved direction left — must NOT treat as satisfied just because
+    # maneuver_dir is none.
+    self.assertFalse(a._satisfied(snap, "left", False, False, 100.0))
+
+  def test_junction_hud_shows_nav_lc_with_lead(self):
+    """Regression: has_lead used to early-return and hide 「按 SET」 forever."""
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import (
+      build_junction_view,
+    )
+    snap = _hwy_snap(man="exit", dist=200, road=100)
+    fake = nlc.NavLcSnapshot(
+      ts=100.0, show=True, head="变道 右", detail="按 SET", state="armed", direction="right",
+    )
+    with mock.patch(
+      "openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm.read_nav_lc_snapshot",
+      return_value=fake,
+    ), mock.patch(
+      "openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn.read_cut_snapshot",
+      return_value=types.SimpleNamespace(hud=False, hold=False, side=""),
+    ):
+      view = build_junction_view(
+        onroad=True, has_lead=True, model_stop=False, standstill_hold=False,
+        snap=snap, green_flash=False,
+      )
+    self.assertTrue(view.show)
+    self.assertEqual(view.headline, "变道 右")
+    self.assertEqual(view.detail, "按 SET")
 
 
 if __name__ == "__main__":

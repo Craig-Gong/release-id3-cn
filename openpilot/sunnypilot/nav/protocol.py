@@ -16,6 +16,9 @@ _LC_LEFT = {3, 7, 9, 22, 23}
 _LC_RIGHT = {4, 8, 10, 24, 25}
 _ROUNDABOUT = {5, 14, 15}
 _EXIT = {6, 11}
+# Raw amap IconType MERGE_* (never collide with carrot 1–25). Partner APK
+# should remap; keep here so old APK / inject still become fork.
+_AMAP_MERGE_TO_CARROT = {65: 3, 66: 4}
 
 _RED_LIGHT_ACCEL = -2.0
 _RED_LIGHT_DECEL = 2.0
@@ -91,7 +94,14 @@ def flatten_payload(payload: dict[str, Any]) -> dict[str, Any]:
   return dict(payload)
 
 
+def normalize_turn_type(turn_type: int) -> int:
+  """Carrot wire id; remap amap MERGE_LEFT/RIGHT if they slip through."""
+  t = int(turn_type)
+  return int(_AMAP_MERGE_TO_CARROT.get(t, t))
+
+
 def _turn_bucket(turn_type: int) -> str:
+  turn_type = normalize_turn_type(turn_type)
   if turn_type in _TURN_LEFT:
     return "turn_left"
   if turn_type in _TURN_RIGHT:

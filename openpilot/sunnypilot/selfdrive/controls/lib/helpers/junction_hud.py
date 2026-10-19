@@ -144,18 +144,6 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
     standstill_hold=standstill_hold, light=light,
   )
 
-  # With a lead: only show real IQ-link light color (no 「跟前车」placeholder —
-  # it flickered against red/yellow as the queue track came and went).
-  if has_lead:
-    if light in _LIGHTS:
-      headline = _stop_headline(light)
-      dist = nav_light_dist(snap)
-      remain = float(snap.remain_s or 0.0)
-      if light == "green":
-        return JunctionView(True, light, headline, GO_AHEAD, False, False)
-      return JunctionView(True, light, headline, "", False, False, dist, remain)
-    return JunctionView(False, "none", "", "", False, False)
-
   if green_flash:
     return JunctionView(True, "green", STOP_GREEN, GO_AHEAD, False, False)
 
@@ -181,7 +169,9 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
   except Exception:
     pass
 
-  # Nav LC Confirm (button) — defer when stop/CUT bar owns the slot.
+  # Nav LC Confirm — must show with a lead. Highway/city cruise almost always
+  # has leadOne; the old early return hid 「变道 · 按 SET」forever while the
+  # assist was still armed in shm.
   try:
     from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import read_nav_lc_snapshot
     nlc = read_nav_lc_snapshot()
@@ -189,6 +179,18 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
       return JunctionView(True, "none", str(nlc.head), str(nlc.detail or ""), False, False)
   except Exception:
     pass
+
+  # With a lead: only show real IQ-link light color (no 「跟前车」placeholder —
+  # it flickered against red/yellow as the queue track came and went).
+  if has_lead:
+    if light in _LIGHTS:
+      headline = _stop_headline(light)
+      dist = nav_light_dist(snap)
+      remain = float(snap.remain_s or 0.0)
+      if light == "green":
+        return JunctionView(True, light, headline, GO_AHEAD, False, False)
+      return JunctionView(True, light, headline, "", False, False, dist, remain)
+    return JunctionView(False, "none", "", "", False, False)
 
   if snap.iqlink_enabled and snap.link_ok:
     return JunctionView(True, "none", NO_SIGNAL, WAIT_DETECT, True, False)
