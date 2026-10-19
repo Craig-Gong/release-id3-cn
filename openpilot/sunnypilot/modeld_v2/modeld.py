@@ -498,9 +498,12 @@ def main(demo=False):
     cloudlog.warning(f"connected extra cam with buffer size: {vipc_client_extra.buffer_len} ({vipc_client_extra.width} x {vipc_client_extra.height})")
 
   if os.getenv('C3XL_IFE_ROAD_SIZE') == '1344x760':
+    # Align with camerad: C3XL by Python profile (dt / file / env) is enough.
+    # Requiring only /data/hardware_profile crashed modeld when the file was
+    # missing while camerad already resized via compile-time is_c3xl().
     from openpilot.sunnypilot.hardware.profile import c3xl_ife_profile_file_ready
-    if not c3xl_ife_profile_file_ready():
-      raise RuntimeError('IFE road resize requested but /data/hardware_profile is not c3xl')
+    if not (IS_C3XL or c3xl_ife_profile_file_ready()):
+      raise RuntimeError('IFE road resize requested but this device is not C3XL')
     if ((vipc_client_main.width, vipc_client_main.height) != (1344, 760) or
         (use_extra_client and (vipc_client_extra.width, vipc_client_extra.height) != (1344, 760))):
       raise RuntimeError('IFE road resize requested but actual camera dimensions do not match '
