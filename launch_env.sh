@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 
-# C3XL IFE 1344x760 for CTM (device-local; keep across AGNOS target bumps)
-export C3XL_IFE_ROAD_SIZE=1344x760
-
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
@@ -36,6 +33,8 @@ if [ "$SP_PROFILE_VALUE" = "c3xl" ]; then
   # Stay on 19.6 until zipapp updater has cffi (19.7 bump left logo crash-loop).
   [ -z "$AGNOS_VERSION" ] && export AGNOS_VERSION="19.6"
   [ -z "$AGNOS_MANIFEST_FILE" ] && export AGNOS_MANIFEST_FILE="openpilot/system/hardware/comma/agnos-c3xl.json"
+  # C3XL IFE 1344x760 for CTM (device-local; keep across AGNOS target bumps)
+  [ -z "$C3XL_IFE_ROAD_SIZE" ] && export C3XL_IFE_ROAD_SIZE="1344x760"
 else
   [ -z "$AGNOS_VERSION" ] && export AGNOS_VERSION="19.6"
   [ -z "$AGNOS_MANIFEST_FILE" ] && export AGNOS_MANIFEST_FILE="openpilot/system/hardware/comma/agnos.json"
