@@ -113,7 +113,7 @@ class CruiseLayout(Widget):
 
     self.iqlink_toggle = toggle_item_sp(
       title=tr("IQ-link"),
-      description=tr("Follow phone nav over Wi‑Fi UDP (PSK 999999). BLE is off by default. Off = do not control from nav; the car still listens for UDP. Green at a light waits for a close lead to move."),
+      description=tr("Follow phone nav over Wi‑Fi UDP :17710 (PSK 999999; EcoFlow hotspot). No Bluetooth. Off = do not control from nav; the car still listens for UDP. Green at a light waits for a close lead to move."),
       param="IqlinkEnabled")
 
     self.cut_toggle = toggle_item_sp(

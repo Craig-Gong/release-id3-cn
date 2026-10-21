@@ -314,8 +314,16 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
   light_ts = float(now) - light_age_s if light != "none" else 0.0
   remain_s = int(_f(data, "trafficLightRemainS"))
   remain_go = "trafficLightRemainS" in data and remain_s == 1
-  right_turn_pending = (bucket == "turn_right" and 0.0 < turn_dist <= RTOR_TURN_WINDOW_M
-                        and light_dir != "right")
+  # Gaode urban RTOR is often slight/merge → lc_right, not hard turn_right.
+  # Keep highway lc (road ≥70) as normal red; right-arrow red is never RTOR.
+  right_turn_pending = (
+    0.0 < turn_dist <= RTOR_TURN_WINDOW_M
+    and light_dir != "right"
+    and (
+      bucket == "turn_right"
+      or (bucket == "lc_right" and road_kph < NAV_LC_PROMOTE_MAX_KPH)
+    )
+  )
 
   stop_for_light = False
   speed_target = road_ms

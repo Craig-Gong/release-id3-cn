@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""IQ-link daemon: LAN UDP HMAC (+ optional BLE) → /dev/shm/sp_nav.json.
+"""IQ-link daemon: LAN UDP HMAC → /dev/shm/sp_nav.json.
 
-Primary transport is Wi‑Fi UDP (:17710). BLE GATT is off by default
-(IqlinkBleEnabled=0) — AGNOS rarely has a working HCI advertiser.
+Wi‑Fi UDP (:17710) only — AGNOS C3XL has no usable BLE HCI for phone nav.
+Optional inject: /dev/shm/sp_nav_inject.json (must include nRoadLimitSpeed).
 """
 from __future__ import annotations
 
@@ -13,9 +13,7 @@ import time
 from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import Ratekeeper
 from openpilot.common.swaglog import cloudlog
-from openpilot.sunnypilot.nav.ble_gatt import BleGattServer
 from openpilot.sunnypilot.nav.envelope import FIXED_BLE_PSK, EnvelopeVerifier
-from openpilot.sunnypilot.nav.gatt_json import MAX_GATT_BUF, pop_complete_json
 from openpilot.sunnypilot.nav.protocol import flatten_payload, parse_carrot
 from openpilot.sunnypilot.nav.road_limit_hold import IqlinkRoadLimitHold
 from openpilot.sunnypilot.nav.snapshot import (
@@ -29,7 +27,6 @@ from openpilot.sunnypilot.nav.udp_nav import UdpNavServer
 LINK_OFF = 0
 LINK_CONNECTING = 1
 LINK_CONNECTED = 2
-BLE_RETRY_S = 5.0
 UDP_RETRY_S = 5.0
 LIGHT_LOG_PATH = "/data/iqlink_light_log.csv"
 LIGHT_LOG_MAX_BYTES = 2 * 1024 * 1024
@@ -77,10 +74,9 @@ class IqlinkDaemon:
     self._last_snap = NavSnapshot()
     self._last_hmac_ts = 0.0
     self._was_hmac_fresh = False
-    self._buf = bytearray()
     self._road_limit_hold = IqlinkRoadLimitHold()
     self._light_log_key: tuple | None = None
-    self.ble = BleGattServer(self._on_gatt_write)
+    self._inject_mtime = 0.0
     self.udp = UdpNavServer(self._on_udp_datagram)
 
   def _log_light(self, snap: NavSnapshot, data: dict, now: float) -> None:
@@ -114,7 +110,6 @@ class IqlinkDaemon:
       return snap
     snap.road_limit_kph = held
     if not snap.stop_for_light and float(snap.speed_target or 0.0) > 0.0:
-      # Cruise target was derived from the raw posted limit — keep it aligned.
       snap.speed_target = held / 3.6
     return snap
 
@@ -130,29 +125,13 @@ class IqlinkDaemon:
     return True
 
   def _on_udp_datagram(self, raw: bytes, addr: tuple[str, int]) -> None:
-    """One UDP datagram = one complete HMAC envelope (no GATT fragmentation)."""
+    """One UDP datagram = one complete HMAC envelope."""
     if not raw:
       return
     if self._handle_envelope(raw):
-      # ACK only accepted envelopes so the phone can distinguish RX vs local send.
       self.udp.reply(addr)
 
-  def _on_gatt_write(self, raw: bytes) -> None:
-    if not raw:
-      return
-    self._buf.extend(raw)
-    if len(self._buf) > MAX_GATT_BUF:
-      self._buf.clear()
-      return
-    while True:
-      blob = pop_complete_json(self._buf)
-      if blob is None:
-        return
-      self._handle_envelope(blob)
-
   def _ingest(self, data: dict, *, hmac_ok: bool) -> None:
-    # Toggle gates execution via iqlink_enabled on the snapshot; still ingest so
-    # shm stays fresh and re-enable does not wait for the next phone packet.
     enabled = _param_bool(self.params, "IqlinkEnabled", True)
     now = time.monotonic()
     snap = parse_carrot(
@@ -168,34 +147,28 @@ class IqlinkDaemon:
         self._last_snap.ts = now
         write_snapshot(self._last_snap)
       return
+    flat = flatten_payload(data)
     snap = self._apply_road_limit_hold(snap, now)
-    self._log_light(snap, flatten_payload(data), now)
-    self._last_snap = snap
     if hmac_ok:
       self._last_hmac_ts = now
+    self._last_snap = snap
     write_snapshot(snap)
-    _param_put(self.params, "IqlinkBleLinkState", LINK_CONNECTED if hmac_ok else LINK_OFF)
-    _param_put(self.params, "IqlinkBleConnected", bool(hmac_ok))
+    self._log_light(snap, flat, now)
 
   def _heartbeat_only(self) -> None:
-    """Valid HMAC, same seq: refresh link, keep last TBT / lights / limit."""
     now = time.monotonic()
-    enabled = _param_bool(self.params, "IqlinkEnabled", True)
     self._last_hmac_ts = now
     self._last_snap.link_ok = True
     self._last_snap.link_state = LINK_CONNECTED
-    self._last_snap.iqlink_enabled = enabled
     self._last_snap.ts = now
     write_snapshot(self._last_snap)
-    _param_put(self.params, "IqlinkBleLinkState", LINK_CONNECTED)
-    _param_put(self.params, "IqlinkBleConnected", True)
 
   def _poll_inject(self) -> None:
     try:
       st = os.stat(INJECT_SHM_PATH)
     except OSError:
       return
-    if st.st_mtime <= getattr(self, "_inject_mtime", 0):
+    if st.st_mtime == self._inject_mtime:
       return
     self._inject_mtime = st.st_mtime
     try:
@@ -210,14 +183,11 @@ class IqlinkDaemon:
     now = time.monotonic()
     hmac_fresh = bool(self._last_hmac_ts) and (now - self._last_hmac_ts) < HMAC_FRESH_S
     if self._was_hmac_fresh and not hmac_fresh:
-      # Phone may restart seq after a drop; do not seq-replay the next session forever.
       self.verifier = EnvelopeVerifier(_psk(self.params))
     self._was_hmac_fresh = hmac_fresh
     if not enabled and self._last_snap.iqlink_enabled:
       self._road_limit_hold.reset()
-    transport_up = bool(self.ble.running or self.udp.running)
-    # Link truth is independent of IqlinkEnabled. Toggle only sets iqlink_enabled;
-    # snapshot_executable still requires both enabled and link_ok.
+    transport_up = bool(self.udp.running)
     if hmac_fresh:
       state = LINK_CONNECTED
       ok = True
@@ -230,6 +200,7 @@ class IqlinkDaemon:
     if self._last_snap.ts <= 0.0:
       self._last_snap.ts = now
     write_snapshot(self._last_snap)
+    # Legacy param names kept for UI; values are UDP link truth.
     _param_put(self.params, "IqlinkBleLinkState", state)
     _param_put(self.params, "IqlinkBleConnected", ok)
 
@@ -238,41 +209,22 @@ class IqlinkDaemon:
       return last_udp_try
     if (now - last_udp_try) < UDP_RETRY_S:
       return last_udp_try
-    if not self.ble.running:
-      self.verifier = EnvelopeVerifier(_psk(self.params))
+    self.verifier = EnvelopeVerifier(_psk(self.params))
     udp_ok = self.udp.start()
     cloudlog.info(f"iqlinkd UDP start ok={udp_ok}")
     return now
 
-  def _ensure_ble(self, now: float, last_ble_try: float, *, want: bool) -> float:
-    """BLE off unless IqlinkBleEnabled — AGNOS HCI/GATT usually fails anyway."""
-    if not want:
-      if self.ble.running:
-        self.ble.stop()
-        cloudlog.info("iqlinkd BLE stopped (disabled)")
-      return 0.0
-    if self.ble.running:
-      return last_ble_try
-    if (now - last_ble_try) < BLE_RETRY_S:
-      return last_ble_try
-    if not self.udp.running:
-      self.verifier = EnvelopeVerifier(_psk(self.params))
-    started = self.ble.start()
-    cloudlog.info(f"iqlinkd BLE start ok={started}")
-    return now
-
   def run(self) -> None:
     rk = Ratekeeper(5)
-    last_ble_try = 0.0
     last_udp_try = 0.0
+    # Never start BLE — AGNOS C3XL product path is UDP only.
+    if _param_bool(self.params, "IqlinkBleEnabled", False):
+      cloudlog.warning("iqlinkd: IqlinkBleEnabled ignored (UDP-only build)")
+      _param_put(self.params, "IqlinkBleEnabled", False)
     while True:
       enabled = _param_bool(self.params, "IqlinkEnabled", True)
-      # Wi‑Fi UDP only by default. Opt-in BLE via IqlinkBleEnabled=1.
-      ble_want = enabled and _param_bool(self.params, "IqlinkBleEnabled", False)
       now = time.monotonic()
-      # UDP always on — do not stop when the Cruise toggle is off.
       last_udp_try = self._ensure_udp(now, last_udp_try)
-      last_ble_try = self._ensure_ble(now, last_ble_try, want=ble_want)
       self._poll_inject()
       self._publish_link(enabled)
       rk.keep_time()

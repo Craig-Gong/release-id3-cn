@@ -200,3 +200,17 @@ def test_rtor_only_near_and_not_right_arrow():
   arrow = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 2, "nTBTDist": 40,
                   "trafficLightDir": "right"})
   assert arrow.stop_for_light is True
+
+
+def test_rtor_urban_lc_right_slight_merge():
+  """Gaode slight/merge right → carrot 4 (lc); urban RTOR must skip circular red."""
+  urban = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 4, "nTBTDist": 35})
+  assert urban is not None
+  assert urban.maneuver == "fork"
+  assert urban.maneuver_dir == "right"
+  assert urban.stop_for_light is False
+  hwy = _parse({"nRoadLimitSpeed": 80, "trafficLight": "red", "nTBTTurnType": 4, "nTBTDist": 35})
+  assert hwy is not None and hwy.stop_for_light is True
+  arrow = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 4, "nTBTDist": 35,
+                  "trafficLightDir": "right"})
+  assert arrow is not None and arrow.stop_for_light is True

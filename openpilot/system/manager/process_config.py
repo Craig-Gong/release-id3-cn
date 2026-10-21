@@ -102,9 +102,9 @@ def _param_flag(params: Params, key: str, default: bool = False) -> bool:
 
 def iqlink_needed(started, params: Params, CP: car.CarParams) -> bool:
   # Always run iqlinkd so UDP :17710 keeps listening. IqlinkEnabled only gates
-  # nav *execution*; IqlinkBleEnabled (default off) gates optional BLE GATT.
-  # Tying the process to the toggle caused silent "nobody listening" when the
-  # param was 0 while the phone still looked connected.
+  # nav *execution*. BLE GATT removed (AGNOS C3XL has no HCI); IqlinkBle* params
+  # are legacy link-status names only. Tying the process to the toggle caused
+  # silent "nobody listening" when the param was 0 while the phone still sent UDP.
   return True
 
 def ecoflow_needed(started, params: Params, CP: car.CarParams) -> bool:

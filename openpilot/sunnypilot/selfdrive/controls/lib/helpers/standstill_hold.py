@@ -83,13 +83,19 @@ def left_arrow_red(snap: NavSnapshot) -> bool:
 
 
 def _right_turn_pending(snap: NavSnapshot) -> bool:
-  # Match protocol RTOR: near right turn must not sticky-arm a red pin.
-  return (
-    str(snap.maneuver or "") == "turn"
-    and str(snap.maneuver_dir or "") == "right"
-    and 0.0 < float(snap.tbt_dist or 0.0) <= _RTOR_TURN_WINDOW_M
-    and str(snap.light_dir or "") != "right"
-  )
+  # Match protocol RTOR (turn_right or urban lc_right); never right-arrow red.
+  if str(snap.maneuver_dir or "") != "right":
+    return False
+  if not (0.0 < float(snap.tbt_dist or 0.0) <= _RTOR_TURN_WINDOW_M):
+    return False
+  if str(snap.light_dir or "") == "right":
+    return False
+  man = str(snap.maneuver or "")
+  if man == "turn":
+    return True
+  # Urban slight/merge → fork + lc_right (protocol NAV_LC_PROMOTE_MAX_KPH).
+  road = float(getattr(snap, "road_limit_kph", 0.0) or 0.0)
+  return man == "fork" and road < 70.0
 
 
 def nav_light_live(snap: NavSnapshot, gear=None, *, now: float | None = None) -> bool:
