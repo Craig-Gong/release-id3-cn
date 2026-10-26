@@ -3,7 +3,8 @@
 Covers left (oncoming) and right (pedestrians / cross traffic / RTOR yield).
 
 Practical:
-  - Nav arm only when maneuver=turn + send_turn (not fork/exit/lc).
+  - Nav arm: maneuver=turn + send_turn, OR urban fork (send_turn + road&lt;70) —
+    Gaode slight/merge is fork on the wire; exit stays with Nav LC Confirm.
   - HUD from ≤80 m; speed cap only near the corner (≤50 m or creep).
   - Green / remain_go: release cap+hold, keep HUD until the turn window ends.
   - Hold only at standstill so the car can still creep to peek.
@@ -141,14 +142,28 @@ def _path_side_m(path_x, path_y, *, left: bool) -> float | None:
   return best
 
 
+def _nav_cut_maneuver_ok(snap: NavSnapshot) -> bool:
+  """True when nav intent is an unprotected turn window for CUT.
+
+  Hard `turn` always qualifies (with send_turn). Urban `fork` + send_turn
+  (Gaode slight/merge / lc promote, road &lt;70) also qualifies so RTOR
+  「看行人」matches protocol. Highway fork/exit stay with Nav LC Confirm.
+  """
+  if not bool(getattr(snap, "send_turn", False)):
+    return False
+  man = str(getattr(snap, "maneuver", "") or "").strip().lower()
+  if man == "turn":
+    return True
+  if man == "fork":
+    road = float(getattr(snap, "road_limit_kph", 0.0) or 0.0)
+    return road < 70.0
+  return False
+
+
 def _nav_turn_near(snap: NavSnapshot | None, *, side: str, max_m: float) -> bool:
   if snap is None:
     return False
-  if not bool(getattr(snap, "send_turn", False)):
-    return False
-  # Only pure intersection turns. Fork/exit/lc promote stay with Nav LC Confirm.
-  man = str(getattr(snap, "maneuver", "") or "").strip().lower()
-  if man != "turn":
+  if not _nav_cut_maneuver_ok(snap):
     return False
   if str(getattr(snap, "maneuver_dir", "") or "").strip().lower() != side:
     return False

@@ -128,19 +128,18 @@ class CruiseLayout(Widget):
     self.nav_lc_toggle = toggle_item_sp(
       title=tr("Nav LC Confirm"),
       description=tr(
-        "Highway exit (~80–520 m, ≥45 km/h) / fork (~80–380 m, ≥55 km/h): "
-        "HUD asks for a lane change; press SET to confirm (while prompt is up, "
-        "SET does not change MAX / SLA). Solid line (if Lane Type on) blocks SET. "
-        "One press = one lane; multi-lane re-prompts after cooldown (up to 4). "
-        "No auto blinker. Requires BSM. Default off. RES/Cancel unchanged."
+        "IQ-link SET-confirm lane change (no auto blinker). Highway exit/fork "
+        "(~80–520 m): HUD「变道 · 按 SET」. One SET = one lane (up to 4). "
+        "Solid line (Lane Type on) blocks SET. Needs BSM + engaged. "
+        "City roads need the Urban toggle below too. Default off."
       ),
       param="NavLcConfirm")
 
     self.nav_lc_urban_toggle = toggle_item_sp(
       title=tr("Nav LC Confirm · Urban"),
       description=tr(
-        "City fork/lc (≈35–200 m, ≤60 km/h): same SET confirm as highway. "
-        "Dir from laneRecommend or TBT. Requires Nav LC Confirm on. Default off."
+        "City fork/lc (≈35–200 m, ≤60 km/h): same SET confirm. "
+        "Must also turn on Nav LC Confirm above. Default off."
       ),
       param="NavLcConfirmUrban")
 

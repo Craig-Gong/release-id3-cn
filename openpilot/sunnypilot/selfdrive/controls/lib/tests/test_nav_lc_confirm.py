@@ -410,11 +410,30 @@ class TestNavLcConfirm(unittest.TestCase):
     d = _dec(a, now=100.1, left_blink=True, right_blink=True)
     self.assertEqual(d.reason, "hazard")
 
-  def test_turn_active_clears(self):
+  def test_turn_active_clears_intersection_turn(self):
+    """Pure intersection turn + turn_active → abort (not fork/exit)."""
     a = _assist()
-    _dec(a, now=100.0)
-    d = _dec(a, now=100.1, turn=True)
+    # First arm on exit, then switch snap to near turn with turn_active.
+    _dec(a, now=100.0, snap=_hwy_snap(man="exit", dist=150))
+    snap = _hwy_snap(man="turn", send_turn=True, road=40, dist=50, rec="left", side="left")
+    d = _dec(a, now=100.1, snap=snap, turn=True, v_kph=40)
     self.assertEqual(d.reason, "turn")
+
+  def test_turn_active_does_not_clear_highway_fork(self):
+    """Gaode slight→fork + send_turn promote must still arm on highway."""
+    a = _assist()
+    snap = _hwy_snap(man="fork", send_turn=True, road=100, dist=200, rec="right", side="right")
+    d = _dec(a, now=100.0, snap=snap, turn=True, v_kph=90)
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "highway")
+
+  def test_highway_fork_arms_with_send_turn_and_ramp_limit(self):
+    """Limit drop near ramp used to set send_turn and kill hwy forever."""
+    a = _assist()
+    snap = _hwy_snap(man="fork", send_turn=True, road=60, dist=250, rec="right", side="right")
+    d = _dec(a, v_kph=70, snap=snap)
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "highway")
 
   def test_multi_lane_budget_four(self):
     a = _assist()

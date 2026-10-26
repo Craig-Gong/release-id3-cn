@@ -171,12 +171,18 @@ class DesireHelper:
     nav_lc_exec = bool(self.nav_lc_decision and self.nav_lc_decision.execute)
     nav_lc_dir = str(getattr(self.nav_lc_decision, "direction", "none") or "none") if self.nav_lc_decision else "none"
     # Enter preLaneChange (not Starting): solid/BSM/edge re-checked in FSM below.
-    if self.nav_lc_decision and self.nav_lc_decision.start_pulse and not turn_active and lateral_active:
+    # Urban fork often has send_turn → turn_active; that must not block Nav LC SET.
+    if self.nav_lc_decision and self.nav_lc_decision.start_pulse and lateral_active:
       self.lane_change_state = LaneChangeState.preLaneChange
       self.lane_change_direction = (
         LaneChangeDirection.left if nav_lc_dir == "left" else LaneChangeDirection.right
       )
       self.lane_change_timer = 0.0
+      # Prefer LC over intersection-turn desire while Nav LC is injecting.
+      if turn_active:
+        self.lane_turn_direction = TurnDirection.none
+        turn_active = False
+        self._clear_turn_desire_cycle()
 
     # Stock ALC "OFF" still allows Nav LC Confirm (button path, not blinker ALC).
     alc_off = self.alc.lane_change_set_timer == AutoLaneChangeMode.OFF
@@ -221,7 +227,8 @@ class DesireHelper:
         self.alc.update_lane_change(blindspot_detected, carstate.brakePressed)
 
         auto_lc = self.alc.auto_lane_change_allowed
-        if (not one_blinker and not nav_lc_exec) or turn_active:
+        # nav_lc_exec must survive turn_active (urban send_turn promote).
+        if (not one_blinker and not nav_lc_exec) or (turn_active and not nav_lc_exec):
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
           self.lane_change_timer = 0.0

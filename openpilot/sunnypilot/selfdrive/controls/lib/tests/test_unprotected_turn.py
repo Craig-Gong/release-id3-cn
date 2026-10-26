@@ -56,15 +56,17 @@ def _assist(on=True) -> ut.UnprotectedTurnAssist:
 
 
 def _turn_snap(dist_m: float, *, side="left", remain_go=False, light="none",
-               light_dir="none", maneuver="turn") -> NavSnapshot:
+               light_dir="none", maneuver="turn", send_turn=True,
+               road_kph=50.0) -> NavSnapshot:
   return NavSnapshot(
-    send_turn=True,
+    send_turn=bool(send_turn),
     maneuver=str(maneuver),
     maneuver_dir=str(side),
     tbt_dist=float(dist_m),
     remain_go=bool(remain_go),
     traffic_light=str(light),
     light_dir=str(light_dir),
+    road_limit_kph=float(road_kph),
   )
 
 
@@ -161,13 +163,38 @@ class TestUnprotectedTurn(unittest.TestCase):
     self.assertFalse(d.hold)
     self.assertEqual(d.reason, "remind_right")
 
-  def test_fork_is_not_an_unprotected_turn(self):
+  def test_highway_fork_is_not_an_unprotected_turn(self):
+    """Highway fork (road≥70, typically no send_turn) stays with Nav LC."""
     a = _assist()
-    d = _dec(a, snap=_turn_snap(40.0, side="left", maneuver="fork"))
+    d = _dec(a, snap=_turn_snap(40.0, side="left", maneuver="fork",
+                                  send_turn=False, road_kph=80.0))
     self.assertFalse(d.active)
 
+  def test_urban_fork_right_arms_cut(self):
+    """Gaode slight/merge → fork + send_turn + urban road → CUT (RTOR path)."""
+    a = _assist()
+    d = _dec(a, v_kph=30.0, snap=_turn_snap(
+      40.0, side="right", maneuver="fork", send_turn=True, road_kph=50.0,
+    ))
+    self.assertTrue(d.active)
+    self.assertEqual(d.side, "right")
+    self.assertTrue(d.hud)
+
+  def test_urban_fork_rtor_red_hold(self):
+    a = _assist()
+    d = _dec(
+      a, standstill=True,
+      snap=_turn_snap(
+        35.0, side="right", maneuver="fork", send_turn=True, road_kph=50.0,
+        light="red", remain_go=True, light_dir="none",
+      ),
+    )
+    self.assertTrue(d.active)
+    self.assertTrue(d.hold)
+    self.assertEqual(d.side, "right")
+
   def test_maneuver_none_is_not_nav_arm(self):
-    """send_turn alone without maneuver=turn must not arm (stale / lc promote)."""
+    """send_turn alone without maneuver=turn/urban-fork must not arm."""
     a = _assist()
     d = _dec(a, snap=_turn_snap(40.0, side="left", maneuver="none"))
     self.assertFalse(d.active)

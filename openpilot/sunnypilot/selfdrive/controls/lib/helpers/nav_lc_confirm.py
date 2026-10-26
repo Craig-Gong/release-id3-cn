@@ -331,8 +331,11 @@ def classify_nav_lc_intent(
     d = rec
 
   # --- Highway: exit; cruise fork; decelerating fork (Gaode slight near ramp) ---
-  # protocol: lc_* → fork; urban promote sets send_turn (not a hwy candidate).
-  hwy_candidate = man == "exit" or (man == "fork" and not send_turn)
+  # protocol: lc_* → fork. send_turn is only toast/desire promote (road <70) —
+  # it must NOT disqualify highway Nav LC. Old `not send_turn` made every
+  # decelerating ramp (limit drop → promote) fall through to urban_off and
+  # never arm when Urban toggle was off (user report: never saw a prompt).
+  hwy_candidate = man in ("exit", "fork")
   if hwy_candidate:
     is_exit = man == "exit"
     if d == "none":
@@ -491,7 +494,9 @@ class NavLcConfirmAssist:
 
     if not nav_lc_enabled(self._params):
       return self._publish(NavLcState.IDLE, "none", reason="off", now=clock)
-    if self._enable_bsm is not True:
+    # Explicit False = no BSM hardware. None = CarParams parse miss → fail-open
+    # (hard-blocking on None made the feature dead forever on bad CP bytes).
+    if self._enable_bsm is False:
       return self._publish(NavLcState.IDLE, "none", reason="no_bsm", now=clock)
     if not lateral_active:
       return self._publish(NavLcState.IDLE, "none", reason="lat", now=clock)
@@ -566,11 +571,16 @@ class NavLcConfirmAssist:
         return self._publish(NavLcState.COOLDOWN, "none", reason="cooldown", now=clock)
       self._state = NavLcState.IDLE
 
-    # Urban lc_* / far turn+recommend promote send_turn → turn_active.
-    # That must not clear Nav LC; highway exit/fork still abort on turn_active.
+    # send_turn → DesireHelper turn_active. Fork/exit are still LC candidates
+    # (highway or urban). Only a pure intersection `turn` without urban prep
+    # should abort — otherwise highway ramps with limit-drop promote never arm.
     if turn_active:
       man = str(getattr(snap, "maneuver", "") or "").strip().lower() if snap else ""
-      if not (urban_ok and man in ("fork", "turn")):
+      if man in ("fork", "exit"):
+        pass  # keep going — classify owns the gates
+      elif man == "turn" and urban_ok:
+        pass  # urban turn-prep LC may still arm when far
+      else:
         return self._enter_idle(reason="turn", now=clock)
 
     cut = read_cut_snapshot(now=clock)
