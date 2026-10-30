@@ -144,6 +144,19 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
     standstill_hold=standstill_hold, light=light,
   )
 
+  # Nav LC Confirm — actionable 「按 SET」. Must beat CUT remind: urban fork +
+  # send_turn arms both (Nav LC 35–200 m, CUT ≤80 m); old CUT-first priority
+  # hid the SET prompt for the whole overlap. cut.hold still clears the assist
+  # (nav_lc_confirm → idle), so standstill RTOR keeps CUT below.
+  # Also must show with a lead (highway cruise almost always has leadOne).
+  try:
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import read_nav_lc_snapshot
+    nlc = read_nav_lc_snapshot()
+    if nlc.show and nlc.head:
+      return JunctionView(True, "none", str(nlc.head), str(nlc.detail or ""), False, False)
+  except Exception:
+    pass
+
   # Unprotected-turn reminder beats green-flash and the generic stop/idle bar —
   # except a hard red the car must obey (left red / right-arrow red). RTOR
   # circular red has stop_for_light=False, so CUT「看行人」is the product tip.
@@ -180,17 +193,6 @@ def build_junction_view(*, onroad: bool, has_lead: bool, model_stop: bool,
     if dist < 1.0 and remain < 1.0 and light == "none":
       detail = WATCH_AHEAD
     return JunctionView(True, light, headline, detail, False, False, dist, remain)
-
-  # Nav LC Confirm — must show with a lead. Highway/city cruise almost always
-  # has leadOne; the old early return hid 「变道 · 按 SET」forever while the
-  # assist was still armed in shm.
-  try:
-    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm import read_nav_lc_snapshot
-    nlc = read_nav_lc_snapshot()
-    if nlc.show and nlc.head:
-      return JunctionView(True, "none", str(nlc.head), str(nlc.detail or ""), False, False)
-  except Exception:
-    pass
 
   # With a lead: only show real IQ-link light color (no 「跟前车」placeholder —
   # it flickered against red/yellow as the queue track came and went).

@@ -548,6 +548,30 @@ class TestNavLcConfirm(unittest.TestCase):
     self.assertEqual(view.headline, "变道 右")
     self.assertEqual(view.detail, "按 SET")
 
+  def test_junction_hud_nav_lc_beats_cut(self):
+    """Urban fork overlap: CUT remind must not hide armed Nav LC SET prompt."""
+    from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import (
+      build_junction_view,
+    )
+    snap = _hwy_snap(man="fork", dist=60, road=50, send_turn=True)
+    fake = nlc.NavLcSnapshot(
+      ts=100.0, show=True, head="变道 右", detail="按 SET", state="armed", direction="right",
+    )
+    cut = types.SimpleNamespace(hud=True, hold=False, side="right")
+    with mock.patch(
+      "openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_lc_confirm.read_nav_lc_snapshot",
+      return_value=fake,
+    ), mock.patch(
+      "openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn.read_cut_snapshot",
+      return_value=cut,
+    ):
+      view = build_junction_view(
+        onroad=True, has_lead=False, model_stop=False, standstill_hold=False,
+        snap=snap, green_flash=False,
+      )
+    self.assertEqual(view.headline, "变道 右")
+    self.assertEqual(view.detail, "按 SET")
+
 
 if __name__ == "__main__":
   unittest.main()

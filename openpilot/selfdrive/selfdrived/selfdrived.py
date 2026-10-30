@@ -145,6 +145,8 @@ class SelfdriveD(CruiseHelper):
     self.active = False
     self.mismatch_counter = 0
     self.cruise_mismatch_counter = 0
+    # Swallow sub-second deviceMotion.inputsOK blips (UI toast) without delaying real faults much.
+    self.locationd_temp_error_count = 0
     self.last_steering_pressed_frame = 0
     self.distance_traveled = 0
     self.last_functional_fan_frame = 0
@@ -497,7 +499,12 @@ class SelfdriveD(CruiseHelper):
       if not self.sm['deviceMotion'].posenetOK:
         self.events.add(EventName.posenetInvalid)
       if not self.sm['deviceMotion'].inputsOK:
-        self.events.add(EventName.locationdTemporaryError)
+        self.locationd_temp_error_count += 1
+        # ~1 s hold: brief cameraOdometry/calib glitches were toasting without lasting fault.
+        if self.locationd_temp_error_count > int(1.0 / DT_CTRL):
+          self.events.add(EventName.locationdTemporaryError)
+      else:
+        self.locationd_temp_error_count = 0
       if (not self.sm['vehicleParameters'].valid and cal_status == log.ExtrinsicsCalibration.Status.calibrated and
           not TESTING_CLOSET and (not SIMULATION or REPLAY)):
         self.events.add(EventName.paramsdTemporaryError)
