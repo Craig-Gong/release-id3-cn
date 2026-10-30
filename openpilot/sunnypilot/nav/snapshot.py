@@ -46,6 +46,12 @@ class NavSnapshot:
   go_time_s: float = 0.0
   goal_name: str = ""
   pos_road_name: str = ""
+  # Partner P1: exitNameInfo / exitDirectionInfo (HUD; exit card prefers these).
+  exit_name: str = ""
+  exit_direction: str = ""
+  # Partner P1: Gaode ROADCATE / ROAD_TYPE (soft motorway vs urban aid).
+  roadcate: int = -1
+  road_type: int = -1
   # Next TBT (partner nTBT*Next) for dual-look soft caps.
   tbt_dist_next: float = 0.0
   tbt_type_next: int = -1

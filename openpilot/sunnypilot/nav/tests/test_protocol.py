@@ -214,3 +214,49 @@ def test_rtor_urban_lc_right_slight_merge():
   arrow = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 4, "nTBTDist": 35,
                   "trafficLightDir": "right"})
   assert arrow is not None and arrow.stop_for_light is True
+
+
+def test_motorway_roadcate_blocks_urban_lc_promote():
+  """Ramp limit drop 100→60 with ROADCATE=0 must stay fork (no send_turn / no RTOR)."""
+  snap = _parse({
+    "nRoadLimitSpeed": 60, "nTBTTurnType": 3, "nTBTDist": 80, "roadcate": 0,
+  })
+  assert snap is not None
+  assert snap.maneuver == "fork"
+  assert snap.send_turn is False
+  assert snap.roadcate == 0
+  red = _parse({
+    "nRoadLimitSpeed": 60, "trafficLight": "red", "nTBTTurnType": 4, "nTBTDist": 35,
+    "roadcate": 0,
+  })
+  assert red is not None and red.stop_for_light is True
+
+
+def test_exit_name_prefers_over_next_road_on_hud():
+  from openpilot.sunnypilot.nav.hud_copy import EXIT_AHEAD, LANE_RIGHT
+  from openpilot.sunnypilot.nav.protocol import lane_hint
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_lane_guide_view
+
+  snap = _parse({
+    "nRoadLimitSpeed": 100, "nTBTTurnType": 6, "nTBTDist": 300,
+    "szTBTMainText": "G2京沪高速",
+    "exitNameInfo": "马群收费站",
+  })
+  assert snap is not None
+  assert snap.maneuver == "exit"
+  assert snap.exit_name == "马群收费站"
+  assert lane_hint(snap) == EXIT_AHEAD
+  view = build_lane_guide_view(onroad=True, snap=snap)
+  assert view.kind == "exit"
+  assert view.enter == "马群收费站"
+
+  # Live Gaode ramp: slight→fork; still prefer exitNameInfo for the enter line.
+  fork = _parse({
+    "nRoadLimitSpeed": 100, "nTBTTurnType": 4, "nTBTDist": 300,
+    "szTBTMainText": "G2京沪高速",
+    "exitNameInfo": "马群出口",
+  })
+  assert fork is not None and fork.maneuver == "fork"
+  fview = build_lane_guide_view(onroad=True, snap=fork)
+  assert fview.enter == "马群出口"
+  assert lane_hint(fork) in (LANE_RIGHT, "") or fview.kind in ("right", "exit", "straight", "none")

@@ -8,6 +8,7 @@ from openpilot.sunnypilot.nav.hud_copy import (
   ARRIVED, ARRIVE_SOON, EXIT_AHEAD, KILOMETERS, LANE_LEFT, LANE_RIGHT, METERS,
   STRAIGHT_AHEAD, STRAIGHT_LANE, TURN_LEFT, TURN_RIGHT,
 )
+from openpilot.sunnypilot.nav.road_class import urban_nav_band
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot
 
 _TURN_LEFT = {1, 12, 16, 17, 18}
@@ -295,11 +296,21 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
   near_turn = 0.0 < turn_dist <= TURN_DESIRE_WINDOW_M
   lane_rec = _s(data, "laneRecommend", "none").strip().lower() or "none"
 
+  roadcate = int(_f(data, "roadcate", -1.0))
+  road_type = int(_f(data, "roadType", -1.0))
+  if "road_type" in data and road_type < 0:
+    road_type = int(_f(data, "road_type", -1.0))
+  # Urban band: limit <70, unless ROADCATE says motorway (ramp limit drop).
+  urban_band = urban_nav_band(
+    road_kph, roadcate=roadcate, road_type=road_type,
+    promote_max_kph=NAV_LC_PROMOTE_MAX_KPH,
+  )
+
   send_turn = bool(is_turn and near_turn)
   # Urban: Gaode often labels intersections as lc_*. Promote toast / desire
   # when near; maneuver stays fork so HUD / soft-curve still know it is LC.
-  # Highway/fast roads: keep fork as LC — do not inject turn desire.
-  if is_lc and near_turn and lane_rec != "straight" and road_kph < NAV_LC_PROMOTE_MAX_KPH:
+  # Highway/fast roads (and motorway cate with dropped limit): keep fork as LC.
+  if is_lc and near_turn and lane_rec != "straight" and urban_band:
     send_turn = True
 
   light = _s(data, "trafficLight", "none").strip().lower() or "none"
@@ -315,13 +326,13 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
   remain_s = int(_f(data, "trafficLightRemainS"))
   remain_go = "trafficLightRemainS" in data and remain_s == 1
   # Gaode urban RTOR is often slight/merge → lc_right, not hard turn_right.
-  # Keep highway lc (road ≥70) as normal red; right-arrow red is never RTOR.
+  # Keep highway lc (road ≥70 / motorway cate) as normal red; right-arrow never RTOR.
   right_turn_pending = (
     0.0 < turn_dist <= RTOR_TURN_WINDOW_M
     and light_dir != "right"
     and (
       bucket == "turn_right"
-      or (bucket == "lc_right" and road_kph < NAV_LC_PROMOTE_MAX_KPH)
+      or (bucket == "lc_right" and urban_band)
     )
   )
 
@@ -365,6 +376,8 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
   enter_road = (_s(data, "szTBTMainText") or _s(data, "szNearDirName")).strip()
   goal_name = _s(data, "szGoalName").strip()
   pos_road = _s(data, "szPosRoadName").strip()
+  exit_name = (_s(data, "exitNameInfo") or _s(data, "EXIT_NAME_INFO")).strip()
+  exit_direction = (_s(data, "exitDirectionInfo") or _s(data, "EXIT_DIRECTION_INFO")).strip()
   tbt_dist_next = _f(data, "nTBTDistNext")
   tbt_type_next = int(_f(data, "nTBTTurnTypeNext", -1.0))
   sdi_type = int(_f(data, "nSdiType", -1.0))
@@ -394,6 +407,10 @@ def parse_carrot(payload: dict[str, Any], *, now: float, link_ok: bool,
     go_time_s=float(max(go_time, 0.0)),
     goal_name=goal_name[:40],
     pos_road_name=pos_road[:40],
+    exit_name=exit_name[:48],
+    exit_direction=exit_direction[:48],
+    roadcate=int(roadcate),
+    road_type=int(road_type),
     tbt_dist_next=float(max(tbt_dist_next, 0.0)),
     tbt_type_next=int(tbt_type_next),
     sdi_type=int(sdi_type),

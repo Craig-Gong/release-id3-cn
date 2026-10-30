@@ -34,6 +34,7 @@ from openpilot.sunnypilot.nav.hud_copy import (
   LC_CONFIRM, LC_EDGE_LEFT, LC_EDGE_RIGHT, LC_EXEC, LC_LEFT, LC_RIGHT, LC_SIDE, LC_WAIT,
   SOLID_LINE_BLOCK,
 )
+from openpilot.sunnypilot.nav.road_class import motorway_context
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, snapshot_executable
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import nav_long_blocked
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.unprotected_turn import (
@@ -305,6 +306,16 @@ def classify_nav_lc_intent(
   dist = float(getattr(snap, "tbt_dist", 0.0) or 0.0)
   road = float(getattr(snap, "road_limit_kph", 0.0) or 0.0)
   send_turn = bool(getattr(snap, "send_turn", False))
+  # roadcate 0 is valid (高速公路) — do not use `or -1` (0 is falsy).
+  try:
+    _cate = int(getattr(snap, "roadcate", -1))
+  except (TypeError, ValueError):
+    _cate = -1
+  try:
+    _rtype = int(getattr(snap, "road_type", -1))
+  except (TypeError, ValueError):
+    _rtype = -1
+  hwy_class = motorway_context(_cate, _rtype)
 
   if man in ("arrive", "arrived"):
     return "none", "", "arrive"
@@ -344,13 +355,21 @@ def classify_nav_lc_intent(
       else:
         return "none", "", "no_dir"
     # Decel band uses exit floors, but only with highway evidence:
-    # slowing while the posted limit is still ≥70, or limit already 50–69
-    # while speed is still ≥55. City 50 km/h on a 60 limit must not arm.
+    # slowing while the posted limit is still ≥70, or limit already 51–69
+    # while speed is still ≥55. Exact posted 50 is city-common — do not steal
+    # urban Nav LC (use is_exit / ROADCATE=0 salvage instead).
+    # Partner ROADCATE=0 (freeway): also allow exit floors when limit dropped
+    # and v≥45 (covers 60@50 that used to fall through as city).
     decel_band = (not is_exit) and (
       (float(v_ego) < HWY_V_MIN and road >= HWY_LIMIT_MIN_KPH)
       or (
-        HWY_EXIT_LIMIT_MIN_KPH <= road < HWY_LIMIT_MIN_KPH
+        HWY_EXIT_LIMIT_MIN_KPH < road < HWY_LIMIT_MIN_KPH
         and float(v_ego) >= HWY_V_MIN
+      )
+      or (
+        hwy_class is True
+        and HWY_EXIT_LIMIT_MIN_KPH <= road < HWY_LIMIT_MIN_KPH
+        and float(v_ego) >= HWY_EXIT_V_MIN
       )
     )
     use_exit_gates = is_exit or decel_band
@@ -362,7 +381,8 @@ def classify_nav_lc_intent(
       v_max = v_max + HWY_V_HYST_KPH * CV.KPH_TO_MS
     # Decel fork with city-low limit (<50) is not highway — fall through urban.
     road_ok = not (road > 0.0 and road < limit_floor)
-    # Cruise fork still requires road≥70 when not in decel band.
+    # Cruise fork still requires road≥70 when not in decel band — unless
+    # ROADCATE already says motorway (then exit floors apply via decel_band).
     if not use_exit_gates and road > 0.0 and road < HWY_LIMIT_MIN_KPH:
       road_ok = False
     if road_ok and (v_min <= float(v_ego) <= v_max):

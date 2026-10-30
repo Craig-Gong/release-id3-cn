@@ -155,8 +155,17 @@ def _nav_cut_maneuver_ok(snap: NavSnapshot) -> bool:
   if man == "turn":
     return True
   if man == "fork":
+    from openpilot.sunnypilot.nav.road_class import urban_nav_band
     road = float(getattr(snap, "road_limit_kph", 0.0) or 0.0)
-    return road < 70.0
+    try:
+      cate = int(getattr(snap, "roadcate", -1))
+    except (TypeError, ValueError):
+      cate = -1
+    try:
+      rtype = int(getattr(snap, "road_type", -1))
+    except (TypeError, ValueError):
+      rtype = -1
+    return urban_nav_band(road, roadcate=cate, road_type=rtype)
   return False
 
 

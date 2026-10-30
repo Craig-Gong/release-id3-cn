@@ -93,9 +93,20 @@ def _right_turn_pending(snap: NavSnapshot) -> bool:
   man = str(snap.maneuver or "")
   if man == "turn":
     return True
-  # Urban slight/merge → fork + lc_right (protocol NAV_LC_PROMOTE_MAX_KPH).
+  # Urban slight/merge → fork + lc_right (same urban_nav_band as protocol).
+  if man != "fork":
+    return False
+  from openpilot.sunnypilot.nav.road_class import urban_nav_band
   road = float(getattr(snap, "road_limit_kph", 0.0) or 0.0)
-  return man == "fork" and road < 70.0
+  try:
+    cate = int(getattr(snap, "roadcate", -1))
+  except (TypeError, ValueError):
+    cate = -1
+  try:
+    rtype = int(getattr(snap, "road_type", -1))
+  except (TypeError, ValueError):
+    rtype = -1
+  return urban_nav_band(road, roadcate=cate, road_type=rtype)
 
 
 def nav_light_live(snap: NavSnapshot, gear=None, *, now: float | None = None) -> bool:

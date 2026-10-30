@@ -78,7 +78,8 @@ def _assist(*, master=True, urban=False) -> nlc.NavLcConfirmAssist:
 
 
 def _hwy_snap(*, dist=150.0, side="right", man="exit", road=80.0, send_turn=False,
-              rec="none", light="none", stop=False, link=True) -> NavSnapshot:
+              rec="none", light="none", stop=False, link=True,
+              roadcate=-1, road_type=-1) -> NavSnapshot:
   return NavSnapshot(
     ts=100.0,
     link_ok=link,
@@ -93,6 +94,8 @@ def _hwy_snap(*, dist=150.0, side="right", man="exit", road=80.0, send_turn=Fals
     traffic_light=light,
     stop_for_light=bool(stop),
     light_ts=100.0 if light != "none" else 0.0,
+    roadcate=int(roadcate),
+    road_type=int(road_type),
   )
 
 
@@ -235,6 +238,26 @@ class TestNavLcConfirm(unittest.TestCase):
     self.assertEqual(d.state, "idle")
     self.assertEqual(d.reason, "urban_off")
 
+  def test_motorway_roadcate_salvages_fork_at_50(self):
+    """ROADCATE=0 + dropped limit 60 @ 50 km/h → highway exit floors (not city)."""
+    a = _assist(urban=False)
+    d = _dec(
+      a, v_kph=50,
+      snap=_hwy_snap(dist=200, man="fork", send_turn=False, road=60, roadcate=0),
+    )
+    self.assertEqual(d.state, "armed")
+    self.assertEqual(d.mode, "highway")
+
+  def test_city_roadcate_does_not_salvage_fork(self):
+    """ROADCATE=8 (次要道路) must not turn city 60@50 into highway Nav LC."""
+    a = _assist(urban=False)
+    d = _dec(
+      a, v_kph=50,
+      snap=_hwy_snap(dist=200, man="fork", send_turn=False, road=60, roadcate=8),
+    )
+    self.assertEqual(d.state, "idle")
+    self.assertEqual(d.reason, "urban_off")
+
   def test_urban_rejects_mixed_recommend(self):
     a = _assist(urban=True)
     snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=80, rec="mixed", side="left")
@@ -338,6 +361,7 @@ class TestNavLcConfirm(unittest.TestCase):
     self.assertEqual(d.state, "armed")
 
   def test_urban_rejects_61_kph(self):
+    # Posted 50 is city-common; decel band requires road >50 (or ROADCATE=0).
     a = _assist(urban=True)
     snap = _hwy_snap(man="fork", send_turn=True, road=50, dist=120, rec="left", side="left")
     d = _dec(a, v_kph=61, snap=snap)
@@ -508,13 +532,13 @@ class TestNavLcConfirm(unittest.TestCase):
     )
     self.assertEqual((d, mode, why), ("right", "highway", "ok"))
 
-  def test_classify_promoted_fork_not_highway(self):
+  def test_classify_promoted_fork_still_highway(self):
+    """send_turn (urban promote) must NOT disqualify highway Nav LC on road≥70."""
     snap = _hwy_snap(man="fork", send_turn=True, dist=120, road=100, rec="right")
     d, mode, why = nlc.classify_nav_lc_intent(
       snap, v_ego=90 * _KPH_TO_MS, urban_ok=False, in_window=False, now=100.0,
     )
-    self.assertEqual(d, "none")
-    self.assertEqual(why, "urban_off")
+    self.assertEqual((d, mode, why), ("right", "highway", "ok"))
 
   def test_satisfied_uses_resolved_dir_not_maneuver_dir(self):
     """Urban may arm from laneRecommend while maneuver_dir is still none."""

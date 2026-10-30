@@ -105,6 +105,12 @@ def build_lane_guide_view(*, onroad: bool, snap: NavSnapshot) -> LaneGuideView:
   text = lane_hint(snap)
   kind = _lane_kind(snap, text)
   enter = (snap.enter_road or "").strip()
+  maneuver = (snap.maneuver or "none").lower()
+  # Gaode often labels ramp exits as slight→fork (not carrot exit 6/11). Prefer
+  # exitNameInfo / exitDirectionInfo on exit *or* fork over NEXT_ROAD.
+  exit_label = (snap.exit_name or "").strip() or (snap.exit_direction or "").strip()
+  if exit_label and (kind == "exit" or maneuver in ("exit", "fork")):
+    enter = exit_label
   # Avoid duplicating maneuver words as "进入 · 右转"
   if enter in ("左转", "右转", "调头", "直行", "测试右转", "前方红灯"):
     enter = ""
@@ -113,7 +119,6 @@ def build_lane_guide_view(*, onroad: bool, snap: NavSnapshot) -> LaneGuideView:
     enter = ""
 
   capsule = None
-  maneuver = (snap.maneuver or "none").lower()
   if maneuver == "arrive" and float(snap.go_dist_m or 0.0) >= 1.0:
     # Show route remain, not sticky next-segment meters.
     capsule = format_tbt_capsule(snap.go_dist_m)
