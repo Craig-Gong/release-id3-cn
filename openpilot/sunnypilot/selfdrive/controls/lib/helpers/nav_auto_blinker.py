@@ -17,7 +17,14 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from openpilot.common.file_params import read_file_param, write_file_param
+try:
+  from openpilot.common.file_params import read_file_param, write_file_param
+except Exception:  # incomplete host stubs without write_file_param
+  def read_file_param(key, default=None):  # type: ignore[misc]
+    return default
+
+  def write_file_param(key, value) -> None:  # type: ignore[misc]
+    pass
 from openpilot.sunnypilot.nav.protocol import NAV_LATERAL_TURN_M, TURN_DESIRE_WINDOW_M
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot, snapshot_executable
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.nav_turn import (

@@ -35,6 +35,7 @@ if "openpilot.common.params" not in sys.modules:
 if "openpilot.common.file_params" not in sys.modules:
   _fp = types.ModuleType("openpilot.common.file_params")
   _fp.read_file_param = lambda key, default=None: default
+  _fp.write_file_param = lambda key, value: None
   sys.modules["openpilot.common.file_params"] = _fp
 
 from openpilot.sunnypilot.nav.snapshot import NavSnapshot  # noqa: E402

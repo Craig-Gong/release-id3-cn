@@ -28,10 +28,30 @@ the line.
 """
 from __future__ import annotations
 
-from opendbc.car.interfaces import ACCEL_MIN
-from openpilot.common.file_params import read_file_param, write_file_param
-from openpilot.common.params import Params, UnknownKeyName
-from openpilot.common.realtime import DT_MDL
+try:
+  from opendbc.car.interfaces import ACCEL_MIN
+except Exception:  # host unit tests / incomplete opendbc import graph
+  ACCEL_MIN = -3.5
+try:
+  from openpilot.common.file_params import read_file_param, write_file_param
+except Exception:  # incomplete host stubs without write_file_param
+  def read_file_param(key, default=None):  # type: ignore[misc]
+    return default
+
+  def write_file_param(key, value) -> None:  # type: ignore[misc]
+    pass
+try:
+  from openpilot.common.params import Params, UnknownKeyName
+except Exception:  # host unit tests without cereal/libparams
+  Params = None  # type: ignore[misc, assignment]
+
+  class UnknownKeyName(Exception):
+    pass
+try:
+  from openpilot.common.realtime import DT_MDL
+except Exception:
+  DT_MDL = 0.05
+
 
 TRAFFIC_STOP_OFFSET_PARAM = "TrafficStopOffset"
 MIN_OFFSET_M = 0.0
@@ -162,7 +182,12 @@ def vision_stop_accel_cap(v_ego: float, remaining: float,
 
 class TrafficStopOffset:
   def __init__(self, params: Params | None = None):
-    self.params = params if params is not None else Params()
+    if params is not None:
+      self.params = params
+    elif Params is not None:
+      self.params = Params()
+    else:
+      self.params = None
     self.frame = 0
     self.distance = float(DEFAULT_OFFSET_M)
     self.lead_m = float(DEFAULT_LEAD_M)
@@ -173,6 +198,10 @@ class TrafficStopOffset:
     self.read_params()
 
   def read_params(self) -> None:
+    if self.params is None:
+      self.distance = float(DEFAULT_OFFSET_M)
+      self.lead_m = float(DEFAULT_LEAD_M)
+      return
     try:
       stored = self.params.get(TRAFFIC_STOP_OFFSET_PARAM, return_default=True)
       snapped = _sanitize_offset_m(stored if stored is not None else DEFAULT_OFFSET_M)

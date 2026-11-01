@@ -69,8 +69,8 @@
 
 ```
 python3 tools/id3_preflight_audit.py   # PREFLIGHT OK
-# ecoflow venv + PYTHONPATH=.:opendbc_repo；跳过需整机 cereal/zstandard 的 DesireHelper 门闩 2 例
-**305 passed, 2 skipped**（含 Official latch、IQ-link MAX、NavLC、CUT/CTM/Lead*…）
+# ecoflow venv + PYTHONPATH=.:opendbc_repo；含 traffic_stop_offset / nav_auto_blinker；跳过需整机 cereal 的 DesireHelper 等
+**336 passed, 3 skipped**（含 Official latch、IQ-link MAX、NavLC、CUT/CTM/Lead*…）
 ```
 
 覆盖：CUT / CTM / NavLC / Lead* / standstill / nav_cruise / turn_prep / ecoflow / lane_type / hud_layout / egpu_hud / session Official latch / **IQ-link MAX**。

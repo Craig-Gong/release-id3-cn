@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 
-from opendbc.car.interfaces import ACCEL_MIN
+try:
+  from opendbc.car.interfaces import ACCEL_MIN
+except Exception:  # host without full opendbc/cereal stack
+  ACCEL_MIN = -3.5
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.sunnypilot.selfdrive.controls.lib.helpers.traffic_stop_offset import (
   TrafficStopOffset,
