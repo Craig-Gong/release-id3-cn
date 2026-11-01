@@ -205,25 +205,41 @@ class SelfdriveD(CruiseHelper):
       self.startup_event = None
 
     loading = self.params.get_bool("ChestnutLoading")
+    big_active = self.params.get("ChestnutActive")
     if self.big_model_loading and not loading:
       self.big_model_ready_t = time.monotonic()
-      self.events_sp.add(custom.OnroadEventSP.EventName.bigModelReady)
+      if big_active is True:
+        self.events_sp.add(custom.OnroadEventSP.EventName.bigModelReady)
     self.big_model_loading = loading
     if self.big_model_loading:
       self.events.add(EventName.bigModelLoading)
 
-    big_active = self.params.get("ChestnutActive")
+    # modeld can drop modelV2 briefly after chestnut load / fallback — settle 15 s.
+    warmup_sec = 15.
+    big_model_settling = self.big_model_loading or (
+      self.big_model_ready_t > 0. and time.monotonic() < self.big_model_ready_t + warmup_sec
+    )
+
     chestnut_present = self.sm['deviceState'].chestnutPresent
-    model_unavailable = big_active is True and self.sm.seen['modelV2'] and not self.sm.alive['modelV2']
+    model_unavailable = (
+      big_active is True
+      and self.sm.seen['modelV2']
+      and not self.sm.alive['modelV2']
+      and not big_model_settling
+    )
     big_failed = big_active is False or model_unavailable or (self.big_model_active and not chestnut_present)
     if big_failed and not self.big_model_failed:
+      # Toast only — do not soft-disable; small-model fallback stays engaged.
       self.events.add(EventName.bigModelFailed)
-      self.big_model_ready_t = time.monotonic()
+      if self.big_model_active:
+        self.big_model_ready_t = time.monotonic()
+        big_model_settling = True
     self.big_model_failed = big_failed
 
-    # soft disable if the big model fails
     if big_active:
       self.big_model_active = True
+    elif self.sm.alive.get('modelV2') and not model_unavailable:
+      self.big_model_active = False
     if not self.enabled and not model_unavailable:
       self.big_model_active = False
 
@@ -412,8 +428,7 @@ class SelfdriveD(CruiseHelper):
     # All events here should at least have NO_ENTRY and SOFT_DISABLE.
     num_events = len(self.events)
 
-    if self.big_model_active and big_failed:
-      self.events.add(EventName.bigModelFailed)
+    # bigModelFailed is toast-only (raised once on edge above); do not re-add here.
 
     not_running = {p.name for p in self.sm['managerState'].processes if not p.running and p.shouldBeRunning}
     if self.sm.recv_frame['managerState'] and len(not_running):

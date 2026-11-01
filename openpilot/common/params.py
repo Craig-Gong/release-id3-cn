@@ -1,4 +1,5 @@
 import sys
+import os
 import json
 import ctypes
 import weakref
@@ -114,6 +115,66 @@ class UnknownKeyName(Exception):
   pass
 
 
+# Keys added in params_keys.h that a prebuilt libparams.so may not know yet.
+# Used only when check_key raises UnknownKeyName (rsync without rebuilding).
+_PREBUILT_KEY_DEFAULTS = {
+  "TrafficStopOffset": 3.0,
+  "AutoGasSyncSpeed": True,
+  "IqlinkEnabled": True,
+  "EcoflowEnabled": False,
+  "EcoflowGpuRecover": False,
+  "TrafficStopLead": 1.5,
+  "LaneTypeOnnx": False,
+  "UnprotectedTurnAssist": True,
+  "NavLcConfirm": False,
+  "NavLcConfirmUrban": False,
+  "LongitudinalPlannerMode": 0,
+}
+
+# Not in the on-device libparams yet. UI and planner share this file so the
+# slider works without rebuilding params (rsync-only).
+_FILE_BACKED_PARAMS = {
+  "TrafficStopLead": 1.5,
+  "LaneTypeOnnx": False,
+  "UnprotectedTurnAssist": True,
+  "NavLcConfirm": False,
+  "NavLcConfirmUrban": False,
+}
+_FILE_BACKED_DIR = "/data/openpilot_extra_params"
+
+
+def _file_backed_path(key: str) -> str:
+  return os.path.join(_FILE_BACKED_DIR, key)
+
+
+def _read_file_backed(key: str):
+  try:
+    with open(_file_backed_path(key)) as f:
+      raw = f.read().strip()
+  except OSError:
+    return None
+  default = _FILE_BACKED_PARAMS[key]
+  if isinstance(default, bool):
+    return raw in ("1", "True", "true")
+  if isinstance(default, int) and not isinstance(default, bool):
+    try:
+      return int(raw)
+    except ValueError:
+      return default
+  if isinstance(default, float):
+    try:
+      return float(raw)
+    except ValueError:
+      return default
+  return raw
+
+
+def _write_file_backed(key: str, dat) -> None:
+  os.makedirs(_FILE_BACKED_DIR, exist_ok=True)
+  with open(_file_backed_path(key), "w") as f:
+    f.write(str(dat))
+
+
 class Params:
   def __init__(self, d=""):
     path = ensure_bytes(d)
@@ -153,7 +214,18 @@ class Params:
     return _copy_string(params_get_default(self.p, key))
 
   def get(self, key, block=False, return_default=False):
-    k = self.check_key(key)
+    try:
+      k = self.check_key(key)
+    except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        stored = _read_file_backed(key)
+        if stored is not None:
+          return stored
+        if return_default:
+          return _FILE_BACKED_PARAMS[key]
+      if return_default:
+        return _PREBUILT_KEY_DEFAULTS.get(key)
+      return None
     t = self.get_type(k)
     default = self._default(k) if return_default else None
     value = _copy_string(params_get(self.p, k, block))
@@ -164,22 +236,45 @@ class Params:
     return self._cpp2python(t, value, default, key)
 
   def get_bool(self, key, block=False):
-    return bool(params_get_bool(self.p, self.check_key(key), block))
+    try:
+      return bool(params_get_bool(self.p, self.check_key(key), block))
+    except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        stored = _read_file_backed(key)
+        if stored is not None:
+          return bool(stored)
+      return bool(_PREBUILT_KEY_DEFAULTS.get(key, False))
 
   def _put_cast(self, key, dat):
     return ensure_bytes(self.python2cpp(type(dat), self.get_type(key), dat, key))
 
   def put(self, key, dat, block=False):
     """Write a parameter. block=True waits until it is persisted to disk."""
-    k = self.check_key(key)
+    try:
+      k = self.check_key(key)
+    except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        _write_file_backed(key, dat)
+        return
+      cloudlog.warning(f"skip unknown param {key}")
+      return
     value = self._put_cast(k, dat)
     params_put(self.p, k, value, len(value), block)
 
   def put_bool(self, key, val, block=False):
-    params_put_bool(self.p, self.check_key(key), val, block)
+    try:
+      params_put_bool(self.p, self.check_key(key), val, block)
+    except UnknownKeyName:
+      if key in _FILE_BACKED_PARAMS:
+        _write_file_backed(key, bool(val))
+        return
+      cloudlog.warning(f"skip unknown param {key}")
 
   def remove(self, key):
-    params_remove(self.p, self.check_key(key))
+    try:
+      params_remove(self.p, self.check_key(key))
+    except UnknownKeyName:
+      cloudlog.warning(f"skip unknown param {key}")
 
   def get_param_path(self, key=""):
     key = ensure_bytes(key)

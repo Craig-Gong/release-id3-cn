@@ -88,6 +88,31 @@ def livestream(started: bool, params: Params, CP: car.CarParams) -> bool:
 def use_copyparty(started, params, CP: car.CarParams) -> bool:
   return bool(params.get_bool("EnableCopyparty"))
 
+def _param_flag(params: Params, key: str, default: bool = False) -> bool:
+  try:
+    return bool(params.get_bool(key))
+  except Exception:
+    return default
+
+def iqlink_needed(started, params: Params, CP: car.CarParams) -> bool:
+  # Always run iqlinkd so UDP :17710 keeps listening. IqlinkEnabled only gates nav execution.
+  return True
+
+def ecoflow_needed(started, params: Params, CP: car.CarParams) -> bool:
+  return _param_flag(params, "EcoflowEnabled", False)
+
+def lane_type_needed(started, params: Params, CP: car.CarParams) -> bool:
+  if not started:
+    return False
+  try:
+    return bool(params.get_bool("LaneTypeOnnx"))
+  except Exception:
+    return False
+
+def traffic_control_needed(started, params: Params, CP: car.CarParams) -> bool:
+  # Tesla/web traffic control: leave code on tree, do not enable for this car by default.
+  return False
+
 def sunnylink_ready_shim(started, params, CP: car.CarParams) -> bool:
   """Shim for sunnylink_ready to match the process manager signature."""
   return sunnylink_ready(params)
@@ -185,7 +210,8 @@ procs = [
 
 # sunnypilot
 procs += [
-  PythonProcess("trafficcontrold", "openpilot.sunnypilot.selfdrive.traffic_control.trafficcontrold", only_onroad),
+  # Tesla trafficcontrold stays in-tree but disabled for ID.3 product path.
+  PythonProcess("trafficcontrold", "openpilot.sunnypilot.selfdrive.traffic_control.trafficcontrold", traffic_control_needed),
   PythonProcess("alert_output", "openpilot.sunnypilot.system.alert_output",
                 lambda started, params, CP: not PC and get_hardware_profile() == HardwareProfile.C3XL),
 
@@ -203,6 +229,13 @@ procs += [
 
   # locationd
   NativeProcess("locationd_llk", "openpilot/sunnypilot/selfdrive/locationd", ["./locationd"], only_onroad),
+
+  # IQ-link UDP + EcoFlow 12V (never cycle 12V while chestnut SuperSpeed)
+  PythonProcess("iqlinkd", "openpilot.sunnypilot.nav.iqlinkd", iqlink_needed),
+  PythonProcess("ecoflowd", "openpilot.sunnypilot.system.ecoflow.daemon", ecoflow_needed),
+
+  # Xiaoge lane.onnx solid/dashed (shm only; default off)
+  PythonProcess("lane_typed", "openpilot.sunnypilot.vision.lane_type.daemon", lane_type_needed),
 ]
 
 if os.path.exists("../../sunnypilot/sunnylink/uploader.py"):

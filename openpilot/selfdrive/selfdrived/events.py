@@ -233,8 +233,8 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
     ET.NO_ENTRY: NoEntryAlert("Big Model Loading"),
   },
 
+  # Permanent only: successful small-model fallback must not soft-disable.
   EventName.bigModelFailed: {
-    ET.SOFT_DISABLE: soft_disable_alert("Big Model Failed"),
     ET.PERMANENT: NormalPermanentAlert("Big Model Failed ", "Restart the car to retry,\nsmall model is still available", duration=20.),
   },
 

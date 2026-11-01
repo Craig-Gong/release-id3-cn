@@ -184,6 +184,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"DynamicAutoStockCurveToSP", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"DynamicAutoStockSpeedKph", {PERSISTENT | BACKUP, INT, "80"}},
     {"DynamicAutoStockSpeedLowKph", {PERSISTENT | BACKUP, INT, "70"}},
+    // ID.3: Official AccelBoost provider runs apply_stop_helpers (CTM/CUT/standstill).
+    // tip default was Experimental(1); that path skips AccelBoost + empty-road soft cap.
     {"LongitudinalPlannerMode", {PERSISTENT | BACKUP, INT, "0"}},
     {"ActiveLongitudinalBackend", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, INT}},
     {"LongitudinalTuningConfig", {PERSISTENT | BACKUP, JSON}},
@@ -302,8 +304,26 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LagdToggle", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"LagdToggleDelay", {PERSISTENT | BACKUP, FLOAT, "0.2"}},
     {"LagdValueCache", {PERSISTENT, FLOAT, "0.2"}},
-    {"LaneTurnDesire", {PERSISTENT | BACKUP, BOOL, "0"}},
-    {"LaneTurnValue", {PERSISTENT | BACKUP, FLOAT, "19.0"}},
+    {"LaneTurnDesire", {PERSISTENT | BACKUP, BOOL, "1"}},
+    {"LaneTurnValue", {PERSISTENT | BACKUP, FLOAT, "28.0"}},
+    // Xiaoge lane.onnx solid/dashed assist (default off; needs /data/media/0/models/lane.onnx)
+    {"LaneTypeOnnx", {PERSISTENT | BACKUP, BOOL, "0"}},
+    // Cautious unprotected left/right: slow/hold/HUD — never gap-accept (default on)
+    {"UnprotectedTurnAssist", {PERSISTENT | BACKUP, BOOL, "1"}},
+    // Nav LC Confirm: button-confirmed lane change from IQ-link (default off; no EA_02)
+    {"NavLcConfirm", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"NavLcConfirmUrban", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"AutoGasSyncSpeed", {PERSISTENT | BACKUP, BOOL, "1"}},
+    {"TrafficStopOffset", {PERSISTENT | BACKUP, FLOAT, "3.0"}},
+    {"TrafficStopLead", {PERSISTENT | BACKUP, FLOAT, "1.5"}},
+    {"IqlinkEnabled", {PERSISTENT | BACKUP, BOOL, "1"}},
+    {"IqlinkBleEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"IqlinkBlePsk", {PERSISTENT | BACKUP | DONT_LOG, STRING, "999999"}},
+    {"IqlinkBleLinkState", {CLEAR_ON_MANAGER_START, INT, "0"}},
+    {"IqlinkBleConnected", {CLEAR_ON_MANAGER_START, BOOL, "0"}},
+    {"EcoflowEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
+    // One-shot: parked EcoFlow 12V OFF→ON to wake chestnut GPU (ecoflowd).
+    {"EcoflowGpuRecover", {CLEAR_ON_MANAGER_START, BOOL, "0"}},
     {"Blendful", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"PlanplusControl", {PERSISTENT | BACKUP, FLOAT, "1.0"}},
 

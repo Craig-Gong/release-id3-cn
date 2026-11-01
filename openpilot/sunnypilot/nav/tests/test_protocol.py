@@ -1,0 +1,262 @@
+from openpilot.sunnypilot.nav.protocol import parse_carrot
+
+
+def _parse(payload, now=10.0):
+  return parse_carrot(payload, now=now, link_ok=True, link_state=2, enabled=True)
+
+
+def test_turn_bucket_is_turn_maneuver():
+  snap = _parse({"nRoadLimitSpeed": 50, "nTBTTurnType": 1, "nTBTDist": 80})
+  assert snap is not None
+  assert snap.maneuver == "turn"
+  assert snap.send_turn is True
+  assert snap.maneuver_dir == "left"
+
+
+def test_near_lc_promotes_send_turn_but_stays_fork():
+  snap = _parse({"nRoadLimitSpeed": 50, "nTBTTurnType": 3, "nTBTDist": 80})
+  assert snap is not None
+  assert snap.maneuver == "fork"
+  assert snap.send_turn is True
+  assert snap.maneuver_dir == "left"
+
+
+def test_highway_lc_does_not_promote_send_turn():
+  snap = _parse({"nRoadLimitSpeed": 80, "nTBTTurnType": 3, "nTBTDist": 80})
+  assert snap is not None
+  assert snap.maneuver == "fork"
+  assert snap.send_turn is False
+
+
+def test_urban_lc_still_promotes_under_70():
+  snap = _parse({"nRoadLimitSpeed": 60, "nTBTTurnType": 3, "nTBTDist": 80})
+  assert snap is not None
+  assert snap.maneuver == "fork"
+  assert snap.send_turn is True
+
+
+def test_straight_lc_does_not_promote():
+  snap = _parse({
+    "nRoadLimitSpeed": 80, "nTBTTurnType": 3, "nTBTDist": 80,
+    "laneRecommend": "straight",
+  })
+  assert snap is not None
+  assert snap.maneuver == "fork"
+  assert snap.send_turn is False
+
+
+def test_far_lc_is_fork_without_send_turn():
+  snap = _parse({"nRoadLimitSpeed": 80, "nTBTTurnType": 3, "nTBTDist": 400})
+  assert snap is not None
+  assert snap.maneuver == "fork"
+  assert snap.send_turn is False
+
+
+def test_exit_is_not_send_turn():
+  snap = _parse({"nRoadLimitSpeed": 80, "nTBTTurnType": 6, "nTBTDist": 80})
+  assert snap is not None
+  assert snap.maneuver == "exit"
+  assert snap.send_turn is False
+
+
+def test_amap_merge_icons_become_fork():
+  """Raw amap MERGE_LEFT/RIGHT (65/66) → lc → fork (APK + protocol normalize)."""
+  from openpilot.sunnypilot.nav.protocol import normalize_turn_type, _turn_bucket
+  assert normalize_turn_type(65) == 3
+  assert normalize_turn_type(66) == 4
+  assert _turn_bucket(65) == "lc_left"
+  assert _turn_bucket(66) == "lc_right"
+  left = _parse({"nRoadLimitSpeed": 80, "nTBTTurnType": 65, "nTBTDist": 200})
+  right = _parse({"nRoadLimitSpeed": 80, "nTBTTurnType": 66, "nTBTDist": 200})
+  assert left is not None and left.maneuver == "fork" and left.maneuver_dir == "left"
+  assert right is not None and right.maneuver == "fork" and right.maneuver_dir == "right"
+
+
+def test_arrive_drops_send_turn():
+  snap = _parse({
+    "nRoadLimitSpeed": 40, "nTBTTurnType": 1, "nTBTDist": 40, "nGoPosDist": 80,
+  })
+  assert snap is not None
+  assert snap.maneuver == "arrive"
+  assert snap.send_turn is False
+
+
+def test_arrived_hud_then_empty_when_cleared():
+  from openpilot.sunnypilot.nav.hud_copy import ARRIVED, ARRIVE_SOON, NAV_EMPTY
+  from openpilot.sunnypilot.nav.protocol import lane_hint
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_lane_guide_view
+
+  soon = _parse({
+    "nRoadLimitSpeed": 40, "nTBTTurnType": 1, "nTBTDist": 40, "nGoPosDist": 80,
+  })
+  assert soon is not None
+  assert soon.maneuver == "arrive"
+  assert lane_hint(soon) == ARRIVE_SOON
+  soon_view = build_lane_guide_view(onroad=True, snap=soon)
+  assert soon_view.empty is False and soon_view.kind == "arrive"
+  assert soon_view.capsule is not None
+  assert soon_view.capsule[0] == "80"
+
+  done = _parse({
+    "nRoadLimitSpeed": 40, "nTBTTurnType": 1, "nTBTDist": 10, "nGoPosDist": 12,
+  })
+  assert done is not None
+  assert done.maneuver == "arrived"
+  assert lane_hint(done) == ARRIVED
+  done_view = build_lane_guide_view(onroad=True, snap=done)
+  assert done_view.empty is False and done_view.capsule is None
+
+  cleared = _parse({"nRoadLimitSpeed": 40})
+  assert cleared is not None
+  assert cleared.maneuver == "none"
+  assert lane_hint(cleared) == ""
+  empty_view = build_lane_guide_view(onroad=True, snap=cleared)
+  assert empty_view.empty is True and empty_view.text == NAV_EMPTY
+
+
+def test_keepalive_without_limit_is_none():
+  assert _parse({"trafficLight": "red"}) is None
+
+
+def test_far_turn_hud_is_straight_ahead():
+  from openpilot.sunnypilot.nav.hud_copy import STRAIGHT_AHEAD, TURN_LEFT
+  from openpilot.sunnypilot.nav.protocol import lane_hint
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_lane_guide_view
+
+  far = _parse({"nRoadLimitSpeed": 60, "nTBTTurnType": 1, "nTBTDist": 400})
+  assert far is not None and far.send_turn is False
+  assert lane_hint(far) == STRAIGHT_AHEAD
+  view = build_lane_guide_view(onroad=True, snap=far)
+  assert view.kind == "straight" and view.empty is False
+  assert view.capsule is not None
+
+  near = _parse({"nRoadLimitSpeed": 60, "nTBTTurnType": 1, "nTBTDist": 80})
+  assert near is not None and near.send_turn is True
+  assert lane_hint(near) == TURN_LEFT
+
+
+def test_turn_icon_without_dist_still_shows_turn_hint():
+  """amap often sends ICON with remain 0 — must not stick on 暂无导航推送."""
+  from openpilot.sunnypilot.nav.hud_copy import TURN_LEFT
+  from openpilot.sunnypilot.nav.protocol import lane_hint
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_lane_guide_view
+
+  bare = _parse({"nRoadLimitSpeed": 40, "nTBTTurnType": 1, "nTBTDist": 0,
+                 "szTBTMainText": "椒山路"})
+  assert bare is not None
+  assert bare.maneuver == "turn" and bare.send_turn is False
+  assert lane_hint(bare) == TURN_LEFT
+  view = build_lane_guide_view(onroad=True, snap=bare)
+  assert view.empty is False and view.kind == "turn_left"
+  assert view.text == TURN_LEFT
+
+
+def test_red_remain_go_keeps_stop_for_light():
+  """Countdown remainS==1 must not clear head-car red stop."""
+  snap = _parse({
+    "nRoadLimitSpeed": 50,
+    "trafficLight": "red",
+    "trafficLightDistM": 12,
+    "trafficLightRemainS": 1,
+  })
+  assert snap is not None
+  assert snap.remain_go is True
+  assert snap.stop_for_light is True
+  assert snap.traffic_light == "red"
+
+
+def test_guessed_light_distance_is_not_trusted():
+  snap = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "trafficLightDistM": 40})
+  assert snap.stop_for_light is True
+  assert snap.dist_ok is False
+  # No distance braking target from a guess: cruise target stays the road limit.
+  assert abs(snap.speed_target - 50 / 3.6) < 1e-6
+
+
+def test_trusted_light_distance_source():
+  snap = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "trafficLightDistM": 40,
+                 "trafficLightDistSrc": "route"})
+  assert snap.dist_ok is True
+  assert snap.speed_target < 50 / 3.6
+
+
+def test_yellow_without_real_distance_does_not_stop():
+  snap = _parse({"nRoadLimitSpeed": 50, "trafficLight": "yellow", "trafficLightDistM": 20})
+  assert snap.stop_for_light is False
+
+
+def test_light_ts_subtracts_phone_age():
+  snap = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "trafficLightAgeMs": 1500}, now=100.0)
+  assert abs(snap.light_ts - 98.5) < 1e-6
+  dark = _parse({"nRoadLimitSpeed": 50, "trafficLight": "none"}, now=100.0)
+  assert dark.light_ts == 0.0
+
+
+def test_rtor_only_near_and_not_right_arrow():
+  near = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 2, "nTBTDist": 40})
+  assert near.stop_for_light is False
+  far = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 2, "nTBTDist": 120})
+  assert far.stop_for_light is True
+  arrow = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 2, "nTBTDist": 40,
+                  "trafficLightDir": "right"})
+  assert arrow.stop_for_light is True
+
+
+def test_rtor_urban_lc_right_slight_merge():
+  """Gaode slight/merge right → carrot 4 (lc); urban RTOR must skip circular red."""
+  urban = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 4, "nTBTDist": 35})
+  assert urban is not None
+  assert urban.maneuver == "fork"
+  assert urban.maneuver_dir == "right"
+  assert urban.stop_for_light is False
+  hwy = _parse({"nRoadLimitSpeed": 80, "trafficLight": "red", "nTBTTurnType": 4, "nTBTDist": 35})
+  assert hwy is not None and hwy.stop_for_light is True
+  arrow = _parse({"nRoadLimitSpeed": 50, "trafficLight": "red", "nTBTTurnType": 4, "nTBTDist": 35,
+                  "trafficLightDir": "right"})
+  assert arrow is not None and arrow.stop_for_light is True
+
+
+def test_motorway_roadcate_blocks_urban_lc_promote():
+  """Ramp limit drop 100→60 with ROADCATE=0 must stay fork (no send_turn / no RTOR)."""
+  snap = _parse({
+    "nRoadLimitSpeed": 60, "nTBTTurnType": 3, "nTBTDist": 80, "roadcate": 0,
+  })
+  assert snap is not None
+  assert snap.maneuver == "fork"
+  assert snap.send_turn is False
+  assert snap.roadcate == 0
+  red = _parse({
+    "nRoadLimitSpeed": 60, "trafficLight": "red", "nTBTTurnType": 4, "nTBTDist": 35,
+    "roadcate": 0,
+  })
+  assert red is not None and red.stop_for_light is True
+
+
+def test_exit_name_prefers_over_next_road_on_hud():
+  from openpilot.sunnypilot.nav.hud_copy import EXIT_AHEAD, LANE_RIGHT
+  from openpilot.sunnypilot.nav.protocol import lane_hint
+  from openpilot.sunnypilot.selfdrive.controls.lib.helpers.junction_hud import build_lane_guide_view
+
+  snap = _parse({
+    "nRoadLimitSpeed": 100, "nTBTTurnType": 6, "nTBTDist": 300,
+    "szTBTMainText": "G2京沪高速",
+    "exitNameInfo": "马群收费站",
+  })
+  assert snap is not None
+  assert snap.maneuver == "exit"
+  assert snap.exit_name == "马群收费站"
+  assert lane_hint(snap) == EXIT_AHEAD
+  view = build_lane_guide_view(onroad=True, snap=snap)
+  assert view.kind == "exit"
+  assert view.enter == "马群收费站"
+
+  # Live Gaode ramp: slight→fork; still prefer exitNameInfo for the enter line.
+  fork = _parse({
+    "nRoadLimitSpeed": 100, "nTBTTurnType": 4, "nTBTDist": 300,
+    "szTBTMainText": "G2京沪高速",
+    "exitNameInfo": "马群出口",
+  })
+  assert fork is not None and fork.maneuver == "fork"
+  fview = build_lane_guide_view(onroad=True, snap=fork)
+  assert fview.enter == "马群出口"
+  assert lane_hint(fork) in (LANE_RIGHT, "") or fview.kind in ("right", "exit", "straight", "none")

@@ -15,6 +15,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.green_follow_lead import follow_lead_present
 from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlannerSP
 
 J_CRUISE_VALS = [1.6, 1.2, 0.8, 0.6]
@@ -22,9 +23,20 @@ J_CRUISE_BP = [0., 10.0, 25., 40.]
 A_CRUISE_MIN = -0.5
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 
+# Empty-road catch-up soft cap (from daily tip). EV torque + high MAX feels punchy
+# with stock ACCEL_MAX; near lead keeps stock / launch floors.
+A_EMPTY_ROAD_MAX_VALS = [1.15, 0.85, 0.55, 0.40]
+A_EMPTY_ROAD_MAX_BP = [0., 10.0, 25., 40.]
+EMPTY_ROAD_LEAD_GATE_M = 50.0
 
-def get_cruise_accel(v_cruise, v_ego, a_cruise_prev, dt):
-  target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, ACCEL_MAX)
+
+def get_empty_road_max_accel(v_ego):
+  return float(np.interp(v_ego, A_EMPTY_ROAD_MAX_BP, A_EMPTY_ROAD_MAX_VALS))
+
+
+def get_cruise_accel(v_cruise, v_ego, a_cruise_prev, dt, max_accel_override=None):
+  max_accel = ACCEL_MAX if max_accel_override is None else min(ACCEL_MAX, float(max_accel_override))
+  target_accel = np.clip(v_cruise - v_ego, A_CRUISE_MIN, max_accel)
   j_cruise = np.interp(v_ego, J_CRUISE_BP, J_CRUISE_VALS)
   target_accel = float(np.clip(target_accel, a_cruise_prev - j_cruise * dt, a_cruise_prev + j_cruise * dt))
 
@@ -35,7 +47,8 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
   def __init__(self, CP, CP_SP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
     self.mpc = LongitudinalMpc(dt=dt)
-    LongitudinalPlannerSP.__init__(self, self.CP, CP_SP, self.mpc)
+    # tip AccelBoost Official has no DEC; DEC stays on Experimental/Legacy backends.
+    LongitudinalPlannerSP.__init__(self, self.CP, CP_SP, self.mpc, enable_dec=False)
     self.fcw = False
     self.dt = dt
     self.accel_boost = AccelBoost()
@@ -106,7 +119,21 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     output_a_target_e2e = sm['modelV2'].action.desiredAcceleration
     output_should_stop_e2e = sm['modelV2'].action.shouldStop
 
-    self.a_cruise = get_cruise_accel(v_cruise, v_ego, self.a_cruise, self.dt)
+    # Soften empty-road catch-up only; near/mid lead keeps stock.
+    has_lead = False
+    try:
+      if follow_lead_present(sm):
+        has_lead = True
+      else:
+        lead = sm['radarState'].leadOne
+        d_rel = float(getattr(lead, "dRel", 0.0) or 0.0)
+        if bool(getattr(lead, "present", False)) and 0.5 < d_rel <= EMPTY_ROAD_LEAD_GATE_M:
+          has_lead = True
+    except Exception:
+      has_lead = False
+    empty_cap = None if has_lead else get_empty_road_max_accel(v_ego)
+
+    self.a_cruise = get_cruise_accel(v_cruise, v_ego, self.a_cruise, self.dt, max_accel_override=empty_cap)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
     output_a_target_e2e = self.accel_boost.update(sm, output_a_target_e2e, output_a_target_mpc, self.a_cruise)
@@ -118,6 +145,19 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
+    if empty_cap is not None:
+      self.output_a_target = min(float(self.output_a_target), float(empty_cap))
+    # CTM / standstill / TrafficStopOffset / CUT hold (LongitudinalPlannerSP)
+    self.output_a_target, self.output_should_stop = self.apply_stop_helpers(
+      sm, v_ego, float(self.output_a_target), bool(self.output_should_stop))
+    self.output_a_target = np.clip(self.output_a_target, ACCEL_MIN, ACCEL_MAX)
+    if empty_cap is not None:
+      self.output_a_target = min(float(self.output_a_target), float(empty_cap))
+    reset_slew = bool(reset_state or self.fcw)
+    self.output_a_target = self.limit_accel_onset(
+      sm, v_ego, float(self.output_a_target), self.dt, reset=reset_slew)
+    self.output_a_target = self.limit_brake_onset(
+      sm, v_ego, float(self.output_a_target), self.dt, reset=reset_slew)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
 

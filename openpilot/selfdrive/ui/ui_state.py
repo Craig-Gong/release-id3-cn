@@ -6,7 +6,7 @@ from enum import Enum
 from openpilot.cereal import messaging, log
 from opendbc.car.structs import car
 from openpilot.common.filter_simple import FirstOrderFilter
-from openpilot.common.params import Params
+from openpilot.common.params import Params, UnknownKeyName
 from openpilot.common.realtime import drop_realtime
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
@@ -103,6 +103,7 @@ class UIState(UIStateSP):
     self.chestnut_compiled: bool = chestnut_compiled()
     self.chestnut_active: bool | None = None
     self.chestnut_loading: bool = False
+    self.chestnut_loading_progress: int = 0
     self.chestnut_alert: bool = False
     self.usb_connected: bool = False
     self.usb_connected_ts: float | None = None
@@ -134,6 +135,38 @@ class UIState(UIStateSP):
 
   def add_on_body_changed_callbacks(self, callback: Callable[[], None]):
     self._on_body_changed_callbacks.append(callback)
+
+  # Local Adapter aliases for C3XL junction/eGPU HUD (official state stays chestnut_*).
+  @property
+  def usbgpu(self) -> bool:
+    return self.chestnut_present
+
+  @property
+  def usbgpu_compiled(self) -> bool:
+    return self.chestnut_compiled
+
+  @property
+  def usbgpu_active(self) -> bool | None:
+    return self.chestnut_active
+
+  @property
+  def usbgpu_loading(self) -> bool:
+    return self.chestnut_loading
+
+  @property
+  def usbgpu_loading_progress(self) -> int:
+    return self.chestnut_loading_progress
+
+  def _read_chestnut_loading_progress(self) -> int:
+    try:
+      return int(self.params.get("ChestnutLoadingProgress", return_default=True) or 0)
+    except UnknownKeyName:
+      try:
+        return int(self.params.get("UsbGpuLoadingProgress", return_default=True) or 0)
+      except UnknownKeyName:
+        return 0
+    except Exception:
+      return 0
 
   @property
   def engaged(self) -> bool:
@@ -274,6 +307,7 @@ class UIState(UIStateSP):
     self.nav_destination_set = self.params.get("NavDestination") is not None
     self.chestnut_active = self.params.get("ChestnutActive")
     self.chestnut_loading = self.params.get_bool("ChestnutLoading")
+    self.chestnut_loading_progress = self._read_chestnut_loading_progress()
     self.chestnut_alert = any(self.params.get(k) is not None for k, a in OFFROAD_ALERTS.items() if k.startswith("Offroad_Chestnut") and a["severity"] >= 0)
     now = time.monotonic()
     if cable_connected():

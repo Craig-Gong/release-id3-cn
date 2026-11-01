@@ -17,6 +17,8 @@ from openpilot.system.ui.widgets.html_render import HtmlModal
 from openpilot.system.ui.widgets.list_view import text_item, button_item, dual_button_item
 from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 from openpilot.system.ui.widgets.scroller_tici import Scroller
+from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
+from openpilot.selfdrive.locationd.c3xl_calib_reset import request_c3xl_calib_reset
 
 if gui_app.sunnypilot_ui():
   from openpilot.system.ui.sunnypilot.widgets.list_view import button_item_sp as button_item
@@ -107,7 +109,12 @@ class DeviceLayout(Widget):
       self._params.remove("LiveTorqueParameters")
       self._params.remove("LiveParametersV2")
       self._params.remove("LiveDelay")
-      self._params.put_bool("OnroadCycleRequested", True, block=True)
+      # C3XL: onroad cycle kills modeld_tinygrad; eGPU/QCOM reload often fails.
+      if get_hardware_profile() != HardwareProfile.C3XL:
+        self._params.put_bool("OnroadCycleRequested", True, block=True)
+      else:
+        cloudlog.info("C3XL calibration reset without OnroadCycle")
+        request_c3xl_calib_reset()
       self._update_calib_description()
 
     dialog = ConfirmDialog(tr("Are you sure you want to reset calibration?"), tr("Reset"), callback=reset_calibration)
@@ -156,8 +163,12 @@ class DeviceLayout(Widget):
         cloudlog.exception("invalid LiveTorqueParameters")
 
     desc += "<br><br>"
-    desc += tr("sunnypilot is continuously calibrating, resetting is rarely required. " +
-               "Resetting calibration will restart sunnypilot if the car is powered on.")
+    if get_hardware_profile() == HardwareProfile.C3XL:
+      desc += tr("sunnypilot is continuously calibrating, resetting is rarely required. " +
+                 "On C3XL, reset clears calibration without restarting the driving model.")
+    else:
+      desc += tr("sunnypilot is continuously calibrating, resetting is rarely required. " +
+                 "Resetting calibration will restart sunnypilot if the car is powered on.")
 
     self._reset_calib_btn.set_description(desc)
 

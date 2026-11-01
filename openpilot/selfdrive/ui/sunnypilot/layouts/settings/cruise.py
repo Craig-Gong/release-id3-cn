@@ -6,12 +6,10 @@ See the LICENSE.md file in the root directory for more details.
 """
 from enum import IntEnum
 
-from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_backends.registry import BackendId, get_backend
-
 from openpilot.selfdrive.ui.sunnypilot.layouts.settings.cruise_sub_layouts.speed_limit_settings import SpeedLimitSettingsLayout
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.system.ui.sunnypilot.widgets.list_view import toggle_item_sp, option_item_sp, simple_button_item_sp
+from openpilot.system.ui.sunnypilot.widgets.list_view import toggle_item_sp, option_item_sp, simple_button_item_sp, button_item_sp
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 
@@ -78,16 +76,84 @@ class CruiseLayout(Widget):
       min_value=1, max_value=3, value_change_step=1,
       inline=True)
 
+    self.dec_toggle = toggle_item_sp(
+      title=tr("Enable Dynamic Experimental Control"),
+      description=tr("Enable toggle to allow the model to determine when to use sunnypilot ACC or sunnypilot End to End Longitudinal."),
+      param="DynamicExperimentalControl")
+
     self.sla_settings_button = simple_button_item_sp(
       button_text=lambda: tr("Speed Limit"),
       button_width=800,
       callback=lambda: self._set_current_panel(PanelType.SLA)
     )
 
-    self.dec_toggle = toggle_item_sp(
-      title=tr("Experimental: Dynamic Experimental Control"),
-      description=tr("Only the Experimental longitudinal backend uses this setting to select ACC or End to End Longitudinal."),
-      param="DynamicExperimentalControl")
+    self.gas_sync_toggle = toggle_item_sp(
+      title=tr("Gas Sync Set Speed"),
+      description=tr("While engaged, hold the accelerator about 0.4 s above MAX to raise set speed to current speed. Only raises, never lowers."),
+      param="AutoGasSyncSpeed")
+
+    self.traffic_stop_offset = option_item_sp(
+      title=tr("Traffic Stop Offset"),
+      description=tr("Meters short of the model / nav light stop. Larger = earlier. Does not change follow distance. 0 disables. Default 3 m. Cap 10 m."),
+      param="TrafficStopOffset",
+      min_value=0, max_value=1000, value_change_step=50,
+      use_float_scaling=True,
+      label_callback=lambda x: f"{x / 100:.1f} m",
+      inline=True)
+
+    self.traffic_stop_lead = option_item_sp(
+      title=tr("Stop Line Extra"),
+      description=tr("Extra meters before the painted line, on top of Traffic Stop Offset. Live: about every 3 seconds, no reboot. You crossed by 1–2 m at offset 10 — start at 1.5, then 2.0 if still over. 0 disables. Does not change follow gap."),
+      param="TrafficStopLead",
+      min_value=0, max_value=500, value_change_step=50,
+      use_float_scaling=True,
+      label_callback=lambda x: f"{x / 100:.1f} m",
+      inline=True,
+      fallback=1.5)
+
+    self.iqlink_toggle = toggle_item_sp(
+      title=tr("IQ-link"),
+      description=tr("Follow phone nav over Wi‑Fi UDP :17710 (PSK 999999; EcoFlow hotspot). No Bluetooth. Off = do not control from nav; the car still listens for UDP. Green at a light waits for a close lead to move."),
+      param="IqlinkEnabled")
+
+    self.cut_toggle = toggle_item_sp(
+      title=tr("Unprotected Turn Assist"),
+      description=tr(
+        "Cautious left/right: near corner ~12 km/h, hold when stopped. "
+        "Left HUD「看对向」; right「看行人」(incl. red RTOR yield). "
+        "Never auto-accept a gap. Gas / near lead exit. Default on."
+      ),
+      param="UnprotectedTurnAssist")
+
+    self.nav_lc_toggle = toggle_item_sp(
+      title=tr("Nav LC Confirm"),
+      description=tr(
+        "IQ-link SET-confirm lane change (no auto blinker). Highway exit/fork "
+        "(~80–520 m): HUD「变道 · 按 SET」. One SET = one lane (up to 4). "
+        "Solid line (Lane Type on) blocks SET. Needs BSM + engaged. "
+        "City roads need the Urban toggle below too. Default off."
+      ),
+      param="NavLcConfirm")
+
+    self.nav_lc_urban_toggle = toggle_item_sp(
+      title=tr("Nav LC Confirm · Urban"),
+      description=tr(
+        "City fork/lc (≈35–200 m, ≤60 km/h): same SET confirm. "
+        "Must also turn on Nav LC Confirm above. Default off."
+      ),
+      param="NavLcConfirmUrban")
+
+    self.ecoflow_toggle = toggle_item_sp(
+      title=tr("EcoFlow 12V"),
+      description=tr("Delta 3 12V DC follows KL15; delayed off after lock. While parked, use Recover eGPU to pulse 12V (USB stays). Never pulses while engaged. Credentials in /data/ecoflow_params/."),
+      param="EcoflowEnabled")
+
+    self.ecoflow_recover_btn = button_item_sp(
+      title=tr("Recover eGPU"),
+      button_text=self._ecoflow_recover_label,
+      description=tr("Parked only: EcoFlow 12V off ~15 s then on. Use when chestnut hangs or eGPU drops after READY. Requires EcoFlow 12V enabled."),
+      callback=self._on_ecoflow_gpu_recover,
+      enabled=self._ecoflow_recover_enabled)
 
     items = [
       self.icbm_toggle,
@@ -97,6 +163,15 @@ class CruiseLayout(Widget):
       self.custom_acc_toggle,
       self.custom_acc_short_increment,
       self.custom_acc_long_increment,
+      self.gas_sync_toggle,
+      self.traffic_stop_offset,
+      self.traffic_stop_lead,
+      self.iqlink_toggle,
+      self.cut_toggle,
+      self.nav_lc_toggle,
+      self.nav_lc_urban_toggle,
+      self.ecoflow_toggle,
+      self.ecoflow_recover_btn,
       self.sla_settings_button,
     ]
     return items
@@ -146,11 +221,12 @@ class CruiseLayout(Widget):
 
       if has_long or has_icbm:
         self.custom_acc_toggle.action_item.set_enabled(((has_long and not ui_state.CP.pcmCruise) or has_icbm) and ui_state.is_offroad())
-        backend_param = "LongitudinalPlannerMode" if ui_state.is_offroad() else "ActiveLongitudinalBackend"
-        dec_available = ui_state.CP.brand == "tesla" and get_backend(ui_state.params.get(backend_param, return_default=True)).id == BackendId.EXPERIMENTAL
-        self.dec_toggle.action_item.set_enabled(has_long and dec_available)
+        self.dec_toggle.action_item.set_enabled(has_long)
         self.scc_v_toggle.action_item.set_enabled(True)
         self.scc_m_toggle.action_item.set_enabled(True)
+        self.gas_sync_toggle.action_item.set_enabled(has_long and not ui_state.CP.pcmCruise)
+        self.traffic_stop_offset.action_item.set_enabled(has_long)
+        self.traffic_stop_lead.action_item.set_enabled(has_long)
       else:
         ui_state.params.remove("CustomAccIncrementsEnabled")
         ui_state.params.remove("DynamicExperimentalControl")
@@ -160,6 +236,9 @@ class CruiseLayout(Widget):
         self.dec_toggle.action_item.set_enabled(False)
         self.scc_v_toggle.action_item.set_enabled(False)
         self.scc_m_toggle.action_item.set_enabled(False)
+        self.gas_sync_toggle.action_item.set_enabled(False)
+        self.traffic_stop_offset.action_item.set_enabled(False)
+        self.traffic_stop_lead.action_item.set_enabled(False)
 
     else:
       has_icbm = has_long = False
@@ -195,3 +274,29 @@ class CruiseLayout(Widget):
     self.custom_acc_long_increment.set_visible(state)
     self.custom_acc_short_increment.action_item.set_enabled(self.custom_acc_toggle.action_item.enabled)
     self.custom_acc_long_increment.action_item.set_enabled(self.custom_acc_toggle.action_item.enabled)
+
+  def _ecoflow_enabled(self) -> bool:
+    try:
+      return bool(ui_state.params.get_bool("EcoflowEnabled"))
+    except Exception:
+      return False
+
+  def _ecoflow_recover_busy(self) -> bool:
+    from openpilot.sunnypilot.system.ecoflow.recover import recover_request_pending
+    return recover_request_pending(lambda k: bool(ui_state.params.get_bool(k)))
+
+  def _ecoflow_recover_enabled(self) -> bool:
+    return self._ecoflow_enabled() and not self._ecoflow_recover_busy()
+
+  def _ecoflow_recover_label(self) -> str:
+    return tr("CYCLING") if self._ecoflow_recover_busy() else tr("RECOVER")
+
+  def _on_ecoflow_gpu_recover(self):
+    if not self._ecoflow_recover_enabled():
+      return
+    from openpilot.sunnypilot.system.ecoflow.recover import request_recover
+    request_recover()
+    try:
+      ui_state.params.put_bool("EcoflowGpuRecover", True, block=True)
+    except Exception:
+      pass

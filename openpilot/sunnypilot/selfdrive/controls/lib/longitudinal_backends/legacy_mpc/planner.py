@@ -149,6 +149,11 @@ class LegacyLongitudinalPlanner(LongitudinalPlannerSP):
       )
     self.output_a_target = float(np.clip(output_a_target, accel_clip[0], accel_clip[1]))
     self.prev_accel_clip = accel_clip
+    # ID.3 CTM / standstill / TrafficStopOffset / CUT — same helpers as Official AccelBoost.
+    # Without this, Experimental/TN backends inherit SP update_targets but never pin reds.
+    self.output_a_target, self.output_should_stop = self.apply_stop_helpers(
+      sm, v_ego, float(self.output_a_target), bool(self.output_should_stop))
+    self.output_a_target = float(np.clip(self.output_a_target, ACCEL_MIN, ACCEL_MAX))
 
   def publish(self, sm, pm):
     plan_send = messaging.new_message('longitudinalPlan')

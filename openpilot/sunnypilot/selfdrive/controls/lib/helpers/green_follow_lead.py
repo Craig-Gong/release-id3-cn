@@ -1,0 +1,320 @@
+"""Green / remainS==1 must not launch into a close stopped lead.
+
+Head car (mmWave clear): only after confirmed traffic_light=green / APK green —
+remainS==1 while still red does not launch. Vision-only phantoms are ignored
+when radarState is alive. StandstillHold owns the green dwell. Follow car:
+wait for radar lead motion or an opening gap. Close stopped queue (≤8 m) has
+no timeout; 8–12 m still times out in 4 s.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from openpilot.sunnypilot.selfdrive.controls.lib.helpers.lead_comfort_stop import (
+  MIN_GAP_M, STOP_V_MPS, comfort_stop_accel, settle_cap,
+)
+
+_DT_MDL = 0.05
+
+LEAD_QUEUE_M = 20.0
+# Nav-red ownership: mmWave tracks short of the light (not only ≤20 m queue).
+# Far red + bumper at 40–80 m must follow lead MPC, not nav hard-stop.
+LEAD_NAV_OWN_M = 100.0
+LEAD_CLOSE_M = 8.0
+LEAD_MIN_D_M = 0.5
+# Congestion: lead often creeps <0.4 before we used to release.
+LEAD_GO_SPEED_MPS = 0.25
+# Was 0.05 s (~1 frame): radar creep noise released into the bumper.
+LEAD_GO_CONFIRM_S = 0.30
+LEAD_GAP_M = 0.3
+# Only time out a *far* queue lock (≥ this). Closer stopped leads wait forever.
+FOLLOW_TIMEOUT_MIN_D_M = 12.0
+FOLLOW_TIMEOUT_S = 4.0
+# Cap when still nose-to-bumper and lead is stopped (do not punch into it).
+FOLLOW_LEAD_START_ACCEL = 1.5
+# Legacy hard floor (1.2). Congestion takeoff now uses lead_follow_comfort
+# soft floor ≤ FOLLOW_FLOOR_SOFT_A with confirm / a_lead / anticipate.
+FOLLOW_LEAD_GO_FLOOR_A = 1.2
+FOLLOW_LEAD_LAUNCH_V_EGO = 2.5
+VISION_LEAD_PROB = 0.5
+
+# Settle ~3.5 m behind a stopped lead (LongitudinalTuning.stop_distance).
+# Hold 3.5–5.0 m (no creep). Only creep when clearly farther than 5.0 m.
+# Must match LEAD_GO_SPEED_MPS: otherwise 0.25–threshold band holds the gap
+# brake while standstill/follow_launch already treat the bumper as rolling.
+STOPPED_LEAD_V_MPS = LEAD_GO_SPEED_MPS
+STOPPED_LEAD_GAP_M = 3.5
+STOPPED_LEAD_CREEP_M = 5.0
+STOPPED_LEAD_SOFT_M = 8.0
+STOPPED_LEAD_CLOSE_A = 0.25
+STOPPED_LEAD_CLOSE_V_MAX = 0.8
+RADAR_TO_CAMERA_M = 1.52
+
+
+@dataclass(frozen=True)
+class LeadSnapshot:
+  present: bool
+  d_rel: float
+  v_lead: float
+  close_queue: bool
+
+
+def _sm_get(sm: Any, key: str) -> Any:
+  if isinstance(sm, dict):
+    return sm.get(key)
+  return sm[key]
+
+
+def radar_lead_present(lead: Any) -> bool:
+  try:
+    return bool(getattr(lead, "present", False) or getattr(lead, "status", False))
+  except Exception:
+    return False
+
+
+def _from_radar(sm: Any, max_d: float = LEAD_QUEUE_M) -> LeadSnapshot | None:
+  try:
+    lead = _sm_get(sm, "radarState").leadOne
+    if not radar_lead_present(lead):
+      return None
+    d_rel = float(getattr(lead, "dRel", 0.0) or 0.0)
+    v_lead = float(getattr(lead, "vLead", 0.0) or 0.0)
+    if not (LEAD_MIN_D_M < d_rel <= float(max_d)):
+      return None
+    return LeadSnapshot(True, d_rel, v_lead, d_rel <= LEAD_CLOSE_M)
+  except Exception:
+    return None
+
+
+def _from_vision(sm: Any, max_d: float = LEAD_QUEUE_M) -> LeadSnapshot | None:
+  try:
+    ml = _sm_get(sm, "modelV2").leadsV3[0]
+    if float(ml.prob) <= VISION_LEAD_PROB:
+      return None
+    # leadsV3.x is camera-frame; align with radarState / bumper gap.
+    d_rel = float(ml.x[0]) - RADAR_TO_CAMERA_M
+    v_lead = float(ml.v[0])
+    if not (LEAD_MIN_D_M < d_rel <= float(max_d)):
+      return None
+    return LeadSnapshot(True, d_rel, v_lead, d_rel <= LEAD_CLOSE_M)
+  except Exception:
+    return None
+
+
+def read_follow_lead(sm: Any) -> LeadSnapshot:
+  radar = _from_radar(sm)
+  if radar is not None:
+    return radar
+  vision = _from_vision(sm)
+  if vision is not None:
+    return vision
+  return LeadSnapshot(False, 0.0, 0.0, False)
+
+
+def radar_state_readable(sm: Any) -> bool:
+  """True when radarState is present (even with no lead track)."""
+  try:
+    rs = _sm_get(sm, "radarState")
+    return rs is not None
+  except Exception:
+    return False
+
+
+def radar_nose_clear(sm: Any) -> bool:
+  """mmWave agrees no in-queue lead. Missing radar → not clear (head car)."""
+  if not radar_state_readable(sm):
+    return False
+  return _from_radar(sm) is None
+
+
+def read_nav_queue_lead(sm: Any) -> LeadSnapshot:
+  """Queue lead for IQ-link red/green gates.
+
+  When radarState is alive, ignore vision-only tracks (phantoms at lights used
+  to block head-car green forever). No radar → fall back to fused lead.
+  """
+  if radar_state_readable(sm):
+    radar = _from_radar(sm)
+    return radar if radar is not None else LeadSnapshot(False, 0.0, 0.0, False)
+  return read_follow_lead(sm)
+
+
+def _nav_red_own_max_m(light_d: float) -> float:
+  """Max dRel for nav-red ownership: between ego and the light, capped."""
+  max_d = LEAD_NAV_OWN_M
+  ld = float(light_d or 0.0)
+  if ld > 1.0:
+    max_d = min(LEAD_NAV_OWN_M, ld - 1.0)
+  return max(LEAD_MIN_D_M, max_d)
+
+
+def read_nav_red_lead(sm: Any, light_d: float = 0.0) -> LeadSnapshot:
+  """mmWave (preferred) lead short of the light for nav-red ownership / fuse."""
+  max_d = _nav_red_own_max_m(light_d)
+  if radar_state_readable(sm):
+    radar = _from_radar(sm, max_d=max_d)
+    return radar if radar is not None else LeadSnapshot(False, 0.0, 0.0, False)
+  vision = _from_vision(sm, max_d=max_d)
+  return vision if vision is not None else LeadSnapshot(False, 0.0, 0.0, False)
+
+
+def is_nav_head_car(sm: Any) -> bool:
+  return not read_nav_queue_lead(sm).present
+
+
+def follow_lead_present(sm: Any) -> bool:
+  return read_follow_lead(sm).present
+
+
+def follow_lead_soft_launch(sm: Any, v_ego: float) -> bool:
+  if v_ego > FOLLOW_LEAD_LAUNCH_V_EGO:
+    return False
+  return follow_lead_present(sm)
+
+
+def lead_owns_nav_stop(sm: Any, snap: Any) -> bool:
+  """Lead short of the light: follow the bumper, not nav hard-stop.
+
+  Far red with a queue lead used to disable lead-gap and force red_pin →
+  creep/slam. Must stay true when the lead *starts moving*, otherwise far
+  red snaps back and launch feels stuck/lazy. Head car (no lead) still
+  nav-stops. Ownership uses mmWave out to LEAD_NAV_OWN_M (not only 20 m).
+  """
+  if snap is None or not bool(getattr(snap, "stop_for_light", False)):
+    return False
+  light_d = float(getattr(snap, "dist_m", 0.0) or 0.0) if bool(getattr(snap, "dist_ok", False)) else 0.0
+  lead = read_nav_red_lead(sm, light_d)
+  if not lead.present:
+    return False
+  # No usable light range: any in-range lead owns (congestion).
+  if light_d <= 0.0:
+    return True
+  # Lead is between ego and the light (1 m slack for bumper vs light point).
+  return float(lead.d_rel) < (light_d - 1.0)
+
+
+def apply_stopped_lead_gap(sm: Any, v_ego: float, a_target: float, should_stop: bool,
+                           *, red_pin: bool = False, model_stop: bool = False) -> tuple[float, bool]:
+  """Keep ~3.5 m behind a stopped lead; only creep when clearly too far (>5.0 m).
+
+  While rolling, the approach uses the continuous comfort profile and only
+  requests LongControl stopping below STOP_V_MPS. Under nav red / vision
+  model_stop / red_pin: never soft-zone +a creep (MEB ANFAHREN on tiny
+  positive a → stop-creep-stop at the line).
+  """
+  # Never creep into a head-car nav red — that fights standstill hold.
+  # Queue behind a stopped bumper: lead owns; keep gap logic but ban +a.
+  stop_intent = bool(red_pin or model_stop)
+  try:
+    from openpilot.sunnypilot.nav.snapshot import light_executable, read_snapshot
+    snap = read_snapshot()
+    nav_red = bool(red_pin or (light_executable(snap) and snap.stop_for_light))
+    stop_intent = bool(stop_intent or nav_red)
+    if nav_red and not lead_owns_nav_stop(sm, snap):
+      return float(a_target), bool(should_stop)
+  except Exception:
+    if red_pin:
+      return float(a_target), bool(should_stop)
+
+  lead = read_follow_lead(sm)
+  if not lead.present or lead.v_lead >= STOPPED_LEAD_V_MPS:
+    return float(a_target), bool(should_stop)
+
+  d_rel = lead.d_rel
+  if d_rel <= LEAD_MIN_D_M:
+    return float(a_target), bool(should_stop)
+
+  # Vision red: a track past the model stop point is usually phantom /
+  # cross-traffic past the line — do not creep toward it over the line.
+  if model_stop:
+    try:
+      x_end = float(_sm_get(sm, "modelV2").position.x[-1])
+      if d_rel >= max(x_end - 1.0, 0.0):
+        return float(a_target), bool(should_stop)
+    except Exception:
+      pass
+
+  if d_rel >= STOPPED_LEAD_SOFT_M:
+    return float(a_target), bool(should_stop)
+
+  pin_zone = d_rel < STOPPED_LEAD_CREEP_M or stop_intent
+  if not pin_zone and v_ego <= STOPPED_LEAD_CLOSE_V_MAX:
+    # Soft zone: congestion creep only when NOT stopping for a light/line.
+    return min(max(float(a_target), STOPPED_LEAD_CLOSE_A * 0.5), STOPPED_LEAD_CLOSE_A), False
+
+  # Rolling toward a stopped bumper: continuous comfort profile, never +a.
+  a_cap, urgent = comfort_stop_accel(v_ego, d_rel, lead.v_lead)
+  a_target = min(float(a_target), 0.0)
+  if a_cap is not None:
+    a_target = min(a_target, a_cap)
+  if pin_zone and v_ego <= STOP_V_MPS:
+    should_stop = True
+    a_target = min(a_target, settle_cap(v_ego))
+  elif urgent and d_rel < MIN_GAP_M:
+    should_stop = True
+  return float(a_target), bool(should_stop)
+
+
+class GreenFollowLeadGate:
+  def __init__(self) -> None:
+    self._nav_go_since: float | None = None
+    self._lead_moving_s = 0.0
+    self._drel_prev: float | None = None
+
+  def reset(self) -> None:
+    self._nav_go_since = None
+    self._lead_moving_s = 0.0
+    self._drel_prev = None
+
+  def may_release(self, *, now: float, nav_go: bool, sm: Any,
+                  confirmed_green: bool = False) -> bool:
+    if not nav_go:
+      self.reset()
+      return False
+
+    lead = read_nav_queue_lead(sm)
+    if not lead.present:
+      # Head car: mmWave must say the nose is clear, and StandstillHold only
+      # treats head nav_go as ready after confirmed green (not remainS on red).
+      if not radar_nose_clear(sm):
+        return False
+      if not confirmed_green:
+        return False
+      self.reset()
+      return True
+
+    if self._nav_go_since is None:
+      self._nav_go_since = now
+
+    if lead.v_lead >= LEAD_GO_SPEED_MPS:
+      self._lead_moving_s += _DT_MDL
+    else:
+      self._lead_moving_s = 0.0
+
+    # Close or slow-creep: do not treat a one-step distance jump as "go".
+    # 0.3 m in one frame is radar noise at 2–4 m and used to release into the bumper.
+    gap_opening = False
+    if (
+      lead.d_rel >= STOPPED_LEAD_CREEP_M
+      and self._drel_prev is not None
+      and lead.d_rel > self._drel_prev + LEAD_GAP_M
+    ):
+      gap_opening = True
+    self._drel_prev = lead.d_rel
+
+    if self._lead_moving_s >= LEAD_GO_CONFIRM_S:
+      self.reset()
+      return True
+    if gap_opening:
+      self.reset()
+      return True
+
+    # Close stopped bumper: wait for real motion. No timeout.
+    if lead.v_lead < LEAD_GO_SPEED_MPS and lead.d_rel <= FOLLOW_TIMEOUT_MIN_D_M:
+      return False
+
+    if self._nav_go_since is not None and (now - self._nav_go_since) >= FOLLOW_TIMEOUT_S:
+      self.reset()
+      return True
+    return False
