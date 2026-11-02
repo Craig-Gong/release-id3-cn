@@ -66,6 +66,21 @@ def main() -> int:
   ok("PandaDFU.list()" in pandad and "skip recover on C3XL" in pandad,
      "pandad must not recover DFU pandas on C3XL")
 
+  # tip once shipped a C3XL path that GPIO-reset every prepare and DFU-recovered
+  # after empty-list timeout — that bricks the patched internal tres.
+  panda_startup = _read("openpilot/sunnypilot/hardware/panda_startup.py")
+  ok("C3XL_EMPTY_WAIT" in panda_startup, "panda_startup must keep C3XL empty-wait (no DFU)")
+  ok(
+    panda_startup.count("self.io.recover_internal()") == 1,
+    "panda_startup must call recover_internal only on non-C3XL",
+  )
+  # C3XL body starts after the non-C3XL early-return; must not reset/recover there.
+  c3xl_body = panda_startup.split("return PandaStartupResult.RECOVER", 1)[-1]
+  ok(
+    "self.io.recover_internal()" not in c3xl_body and "self.io.reset_internal()" not in c3xl_body,
+    "C3XL panda_startup must not GPIO-reset or DFU-recover",
+  )
+
   for rel in (
     "openpilot/sunnypilot/nav/iqlinkd.py",
     "openpilot/sunnypilot/nav/udp_nav.py",

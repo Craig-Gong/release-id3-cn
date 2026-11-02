@@ -7,8 +7,10 @@
 | 底座 tip | `origin/dev-sp` @ **`da86ebd1e`** |
 | 日常对照 | `dev-sp-egpu` @ **`389fff4ca`**（**勿冲、日常仍用这棵**） |
 | 日常平台 | AGNOS **19.6** + dock **`ed4e39b7`** |
-| 实验目标 | AGNOS **20.1** + dock **`8516b768`**（无安装器不刷） |
-| 预刷审计 | **2026-11-01 完成** |
+| 实验目标 | AGNOS **20.1** + dock **`8516b768`** |
+| 固件 | 十月 zip=离线不可刷；十一月 **12V-HP flasher APK**（bin≠OFFLINE）=debug 入口，**本车未 HIL → 先不刷**；暂存 `~/Desktop/UT3G_SP8516_staging/`（见 `id3-session-memory-nov2`） |
+| Git HEAD | 见 `github/dev-sp` tip（含 C3XL `panda_startup` 禁 DFU）；opendbc **`61fb0e6`** |
+| 预刷审计 | **2026-11-02**：PREFLIGHT OK（含 panda_startup 合同）；可移植单测绿 |
 
 ---
 

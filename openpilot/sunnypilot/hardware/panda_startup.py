@@ -25,6 +25,7 @@ class PandaStartupIO:
     HARDWARE.recover_internal_panda()
 
   def list_internal(self) -> list[str]:
+    # C3XL / AGNOS: internal tres is SPI. Non-C3XL tip tici may prefer USB-only list.
     if HARDWARE.get_device_type() == "tici" and get_hardware_profile() != HardwareProfile.C3XL:
       return Panda.list(usb_only=True)
     return Panda.spi_list()
@@ -41,57 +42,37 @@ class PandaStartupIO:
 
 
 class PandaStartup:
-  C3XL_APP_TIMEOUT_S = 20.0
-  C3XL_POLL_INTERVAL_S = 0.5
-  C3XL_RECOVERY_SETTLE_S = 5.0
+  C3XL_EMPTY_WAIT_S = 5.0
 
   def __init__(self, io: PandaStartupIO | None = None, profile: HardwareProfile | None = None):
     self.io = io or PandaStartupIO()
     self.profile = profile or get_hardware_profile()
 
   def prepare(self, attempt: int, should_exit: Callable[[], bool]) -> PandaStartupResult:
-    if self.profile != HardwareProfile.C3XL and HARDWARE.get_device_type() != "tici":
+    # Non-C3XL: tip alternating reset / DFU recover.
+    if self.profile != HardwareProfile.C3XL:
       if (attempt % 2) == 0:
         self.io.reset_internal()
         return PandaStartupResult.RESET
       self.io.recover_internal()
       return PandaStartupResult.RECOVER
 
-    self.io.reset_internal()
-    deadline = self.io.monotonic() + self.C3XL_APP_TIMEOUT_S
-    last_bootstub_visible = False
-
-    while self.io.monotonic() < deadline:
-      if should_exit():
-        return PandaStartupResult.INTERRUPTED
-
-      last_bootstub_visible = False
-      try:
-        serials = self.io.list_internal()
-      except Exception:
-        serials = []
-      for serial in serials:
-        try:
-          if self.io.is_bootstub(serial):
-            last_bootstub_visible = True
-          else:
-            return PandaStartupResult.APP_READY
-        except Exception:
-          continue
-
-      remaining = deadline - self.io.monotonic()
-      self.io.sleep(min(self.C3XL_POLL_INTERVAL_S, max(0.0, remaining)))
-
+    # C3XL (ID.3 daily parity): never GPIO-reset a live internal panda (clock_init
+    # deadlock) and never DFU-recover (erases sectors 0+1). Wait if the list is
+    # empty instead of recover().
     if should_exit():
       return PandaStartupResult.INTERRUPTED
-    if last_bootstub_visible:
+    try:
+      serials = self.io.list_internal()
+    except Exception:
+      serials = []
+    for serial in serials:
+      try:
+        if not self.io.is_bootstub(serial):
+          return PandaStartupResult.APP_READY
+      except Exception:
+        continue
+    if serials:
       return PandaStartupResult.BOOTSTUB_READY
-
-    self.io.recover_internal()
-    recovery_deadline = self.io.monotonic() + self.C3XL_RECOVERY_SETTLE_S
-    while self.io.monotonic() < recovery_deadline:
-      if should_exit():
-        return PandaStartupResult.INTERRUPTED
-      remaining = recovery_deadline - self.io.monotonic()
-      self.io.sleep(min(self.C3XL_POLL_INTERVAL_S, max(0.0, remaining)))
-    return PandaStartupResult.RECOVER_AFTER_TIMEOUT
+    self.io.sleep(self.C3XL_EMPTY_WAIT_S)
+    return PandaStartupResult.RESET
