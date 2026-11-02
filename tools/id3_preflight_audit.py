@@ -60,7 +60,15 @@ def main() -> int:
 
   modeld = _read("openpilot/sunnypilot/modeld_v2/modeld.py")
   ok("AM_POWER_LIMIT" in modeld and "'100'" in modeld, "C3XL PPT100 setdefault missing in modeld_v2")
-
+  ok(
+    "skip OnroadCycle" in modeld and "HardwareProfile.C3XL" in modeld,
+    "modeld_v2 must skip OnroadCycle after chestnut load fail on C3XL",
+  )
+  modeld_stock = _read("openpilot/selfdrive/modeld/modeld.py")
+  ok(
+    "skip OnroadCycle" in modeld_stock and "HardwareProfile.C3XL" in modeld_stock,
+    "stock modeld must skip OnroadCycle after chestnut load fail on C3XL",
+  )
   pandad = _read("openpilot/selfdrive/pandad/pandad.py")
   ok("skip DFU recover" in pandad, "pandad must skip DFU recover on internal panda")
   ok("PandaDFU.list()" in pandad and "skip recover on C3XL" in pandad,

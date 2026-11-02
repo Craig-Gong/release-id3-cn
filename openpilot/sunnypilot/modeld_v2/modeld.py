@@ -320,10 +320,20 @@ def main(demo=False):
     loader.join(BIG_MODEL_TIMEOUT)
     model = big_model
     if model is None and not params.get_bool("ChestnutRetry"):
-      # a crank can cut the chestnut power during the load, retry once with an onroad cycle
-      cloudlog.error("big model load failed, cycling onroad to retry")
+      # a crank can cut the chestnut power during the load; tip retries via onroad cycle.
+      # C3XL: OnroadCycle kills modeld_tinygrad and often leaves Process Not Running —
+      # stay on small model instead (same gate as calibration reset).
       params.put_bool("ChestnutRetry", True)
-      params.put_bool("OnroadCycleRequested", True)
+      try:
+        from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
+        c3xl = get_hardware_profile() == HardwareProfile.C3XL
+      except Exception:
+        c3xl = False
+      if c3xl:
+        cloudlog.error("big model load failed on C3XL; skip OnroadCycle, keep small model")
+      else:
+        cloudlog.error("big model load failed, cycling onroad to retry")
+        params.put_bool("OnroadCycleRequested", True)
     else:
       params.put_bool("ChestnutActive", model is not None)
 
